@@ -1,0 +1,59 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-primary: #0f1117;
+  --bg-secondary: #1a1d27;
+  --bg-card: #1e2130;
+  --border: #2a2d3e;
+  --accent: #4f6ef7;
+  --accent-hover: #3d5be0;
+  --text-primary: #f0f2f8;
+  --text-secondary: #8b90a7;
+  --text-muted: #555a72;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --sidebar-width: 240px;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.loading-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--text-secondary);
+  font-size: 13px;
+  letter-spacing: 0.05em;
+}
+
+.coming-soon {
+  padding: 48px;
+  color: var(--text-secondary);
+  font-size: 15px;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  font-size: 14px;
+  border-radius: 6px;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+input {
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+  border-radius: 6px;
+}
+
+a { text-decoration: none; color: inherit; }
