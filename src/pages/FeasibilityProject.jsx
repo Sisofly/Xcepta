@@ -2024,7 +2024,7 @@ export default function FeasibilityProject() {
                 occupancy_rate_stabilized:            'Stabilised Occupancy Rate',
                 downtime_pct:                         'Downtime %',
                 // Revenue
-                sale_price_per_sqm_residential:       'Sale Price — Residential (per sqm)',
+                sale_price_per_sqm_residential:       'Sale Price — Residential (per saleable sqm)',
                 sale_price_per_sqm_commercial:        'Sale Price — Commercial (per sqm)',
                 rental_yield_residential:             'Rental Yield — Residential',
                 rental_yield_commercial:              'Rental Yield — Commercial',
@@ -2097,6 +2097,12 @@ export default function FeasibilityProject() {
                 sensitivity_range_pct:                'Sensitivity Range',
                 variance_threshold_amber:             'Variance Threshold — Watch',
                 variance_threshold_red:               'Variance Threshold — Material',
+              }
+
+              // B15: per-row helper text shown beneath cleanLabel in the Jordan RE Benchmarks accordion
+              const HINT_MAP = {
+                sale_price_per_sqm_residential:
+                  'Per net saleable area, after Efficiency %. Do not enter a per-gross-sqm price.',
               }
 
               function cleanLabel(key) {
@@ -2198,7 +2204,12 @@ export default function FeasibilityProject() {
 
                                     {/* Label */}
                                     <td style={{padding:'0.65rem 1rem',color:'#c9d1d9',fontWeight:'400',minWidth:'180px'}}>
-                                      {cleanLabel(d.key)}
+                                      <div>{cleanLabel(d.key)}</div>
+                                      {HINT_MAP[d.key] && (
+                                        <p style={{fontSize:'0.7rem',color:'#8b949e',marginTop:'0.2rem',lineHeight:1.4}}>
+                                          {HINT_MAP[d.key]}
+                                        </p>
+                                      )}
                                     </td>
 
                                     {/* System Default */}
@@ -2847,7 +2858,7 @@ export default function FeasibilityProject() {
                           {/* ── Key Drivers ── */}
                           {!pppAP && (() => {
                             const KEY_DRIVERS = [
-                              {key:'sale_price_per_sqm_residential', label:'Sale Price per sqm', unit:'JOD/sqm',  hint:'Base: ~2,200'},
+                              {key:'sale_price_per_sqm_residential', label:'Sale Price per saleable sqm', unit:'JOD/sqm',  hint:'Base: ~2,200'},
                               {key:'sales_absorption_rate_pct_per_year', label:'Absorption Rate',  unit:'% p.a.',   hint:'Base: ~30%', isPct:true},
                               {key:'construction_cost_per_sqm_residential', label:'Construction Cost', unit:'JOD/sqm', hint:'Base: ~850'},
                               {key:'land_cost_pct_of_tdc', label:'Land Cost % of TDC', unit:'%', hint:'Base: ~20%', isPct:true},
