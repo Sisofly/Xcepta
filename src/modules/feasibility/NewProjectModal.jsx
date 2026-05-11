@@ -57,9 +57,9 @@ export default function NewProjectModal({ onClose }) {
     efficiency_pct: 85,
     delivery_model: 'Traditional',
     equity_pct: 30,
-    senior_debt_pct: 60,
+    senior_debt_pct: 70,
     sub_debt_pct: 0,
-    shareholder_loan_pct: 10,
+    shareholder_loan_pct: 0,
     debt_type: 'Amortizing',
     re_revenue_model: 'Sale',         // RE sub-model for assumptions only
     sale_split_pct: 50,
@@ -608,10 +608,13 @@ export default function NewProjectModal({ onClose }) {
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 {(form.re_revenue_model === 'Sale' || isMixed) && (
-                  <Field label="Sale Price per sqm — JOD (override)">
+                  <Field label="Sale Price per saleable sqm — JOD (override)">
                     <input type="number" value={form.sale_price_override}
                       onChange={e => update('sale_price_override', e.target.value)}
                       placeholder="Default ~2,200 JOD/sqm" style={inputStyle} />
+                    <p style={{ fontSize: '0.75rem', color: '#8b949e', marginTop: '0.35rem' }}>
+                      Enter price per net saleable area, after Efficiency %. Do not enter a per-gross-sqm price.
+                    </p>
                   </Field>
                 )}
                 {(form.re_revenue_model === 'Rental' || isMixed) && (

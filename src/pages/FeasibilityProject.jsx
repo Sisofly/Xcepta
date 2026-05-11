@@ -814,6 +814,19 @@ export default function FeasibilityProject() {
   // ── Approve and run a scenario (uses scenario-level drivers) ──
   async function handleApproveScenario(sc) {
     if (!sc.latestVersion) return
+    // ── B2: Capital structure validation (RE / non-PPP only) ──
+    if (!isPPPAvailabilityPayment(project, sc.assumptions || assumptions)) {
+      const eqRaw = getVal(sc.assumptions || assumptions, 'Equity %')
+      const sdRaw = getVal(sc.assumptions || assumptions, 'Senior Debt %')
+      const equityPct     = (eqRaw === null ? 0 : Number(eqRaw)) / 100
+      const seniorDebtPct = (sdRaw === null ? 0 : Number(sdRaw)) / 100
+      if (Math.abs(equityPct + seniorDebtPct - 1) > 1e-6) {
+        const x = eqRaw === null ? 0 : Number(eqRaw)
+        const y = sdRaw === null ? 0 : Number(sdRaw)
+        alert('Equity % (' + x + '%) and Senior Debt % (' + y + '%) must sum to 100%. They currently sum to ' + (x + y) + '%. Please correct before continuing.')
+        return
+      }
+    }
     const confirmed = window.confirm('Approve and run this scenario? The model will be computed with current assumptions and key drivers.')
     if (!confirmed) return
     setScApproving(sc.scenario_id)
@@ -902,6 +915,19 @@ export default function FeasibilityProject() {
 
   async function handleApprove() {
     if (!version) return
+    // ── B2: Capital structure validation (RE / non-PPP only) ──
+    if (!isPPPAvailabilityPayment(project, assumptions)) {
+      const eqRaw = getVal(assumptions, 'Equity %')
+      const sdRaw = getVal(assumptions, 'Senior Debt %')
+      const equityPct     = (eqRaw === null ? 0 : Number(eqRaw)) / 100
+      const seniorDebtPct = (sdRaw === null ? 0 : Number(sdRaw)) / 100
+      if (Math.abs(equityPct + seniorDebtPct - 1) > 1e-6) {
+        const x = eqRaw === null ? 0 : Number(eqRaw)
+        const y = sdRaw === null ? 0 : Number(sdRaw)
+        alert('Equity % (' + x + '%) and Senior Debt % (' + y + '%) must sum to 100%. They currently sum to ' + (x + y) + '%. Please correct before continuing.')
+        return
+      }
+    }
     const confirmed = window.confirm('Approve this version? This is irreversible - the baseline will be locked for variance tracking.')
     if (!confirmed) return
     setApproving(true)
@@ -3077,7 +3103,7 @@ export default function FeasibilityProject() {
           <div style={{maxWidth:'560px'}}>
             <div style={{background:'#1a2235',border:'1px solid #30363d',borderRadius:'8px',padding:'2rem',display:'flex',flexDirection:'column',gap:'1.25rem'}}>
               <div>
-                <p style={{fontSize:'0.95rem',color:'#e6edf3',fontWeight:'500',marginBottom:'0.4rem'}}>Export Board Pack</p>
+                <p style={{fontSize:'0.95rem',color:'#e6edf3',fontWeight:'500',marginBottom:'0.4rem'}}>Export Development Cash Flow Pack</p>
                 <p style={{fontSize:'0.82rem',color:'#8b949e',lineHeight:'1.5'}}>
                   Generates an investment-grade PDF with cover page, executive summary, scenario comparison, sensitivity analysis, and full appendix.
                 </p>
@@ -3097,7 +3123,7 @@ export default function FeasibilityProject() {
                 <span style={{fontSize:'0.82rem',color: hasResults ? '#3fb950' : '#f85149'}}>
                   {hasResults
                     ? 'Engine results ready — export available'
-                    : 'No results yet — open Development Cash Flow and click Run Engine'}
+                    : 'This export draws from the Development Cash Flow engine. Open the Development Cash Flow tab and click Run Engine to enable export.'}
                 </span>
               </div>
 
