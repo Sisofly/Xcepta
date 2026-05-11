@@ -1,4 +1,21 @@
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* Reset and Box Model */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* Fullscreen app foundation */
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+  background: #0f1117;
+  overflow-x: hidden;
+}
 
 :root {
   --bg-primary: #0f1117;
@@ -14,6 +31,9 @@
   --warning: #f59e0b;
   --danger: #ef4444;
   --sidebar-width: 240px;
+
+  /* Investment-grade content width */
+  --content-max-width: 1040px;
 }
 
 body {
@@ -22,6 +42,37 @@ body {
   color: var(--text-primary);
   font-size: 14px;
   line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* Only center INNER content containers */
+.module-grid,
+.dashboard-container,
+#center {
+  max-width: var(--content-max-width);
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+  padding: 0 24px;
+}
+
+/* Main app area spans full width */
+main {
+  width: 100%;
+}
+
+/* Sidebar layout */
+.app-layout {
+  display: flex;
+  width: 100%;
+  min-height: 100vh;
+}
+
+.main-content {
+  flex-grow: 1;
+  margin-left: var(--sidebar-width);
+  width: calc(100vw - var(--sidebar-width));
+  overflow-x: hidden;
 }
 
 .loading-screen {
@@ -40,6 +91,7 @@ body {
   font-size: 15px;
 }
 
+/* Global Element Styles */
 button {
   cursor: pointer;
   border: none;
@@ -54,6 +106,33 @@ input {
   font-size: 14px;
   outline: none;
   border-radius: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 8px 12px;
 }
 
-a { text-decoration: none; color: inherit; }
+input:focus {
+  border-color: var(--accent);
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 1040px) {
+  .module-grid,
+  .dashboard-container,
+  #center {
+    margin: 0;
+    padding: 16px;
+    max-width: 100%;
+  }
+
+  .main-content {
+    margin-left: 0;
+    width: 100%;
+  }
+}
