@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 
 .vercel
+
+# Local-only PDF export harness + review artifacts (not shared)
+tmp/

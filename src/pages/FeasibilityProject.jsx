@@ -1220,9 +1220,9 @@ export default function FeasibilityProject() {
         { label: 'Unleveraged IRR (Project)', value: unlevIRR !== null ? unlevIRR.toFixed(2) + '%' : 'N/A', color: irrPassColor(unlevIRR) },
         { label: 'Project NPV',               value: fmtJOD(npvVal),   color: npvVal !== null && npvVal >= 0 ? [21, 128, 61] : [185, 28, 28] },
         { label: 'Development Profit',        value: fmtJOD(devProfit), color: devProfit !== null && devProfit >= 0 ? [21, 128, 61] : [185, 28, 28] },
-        { label: 'Total Development Cost',    value: fmtJOD(totalDevCost), color: [30, 33, 43] },
+        { label: 'Total Development Cost (incl. Land & Financing)', value: fmtJOD(totalDevCost), color: [30, 33, 43] },
         { label: 'Gross Development Value',   value: fmtJOD(totalGDV),     color: [30, 33, 43] },
-        { label: 'Peak Funding Gap',
+        { label: 'Peak Equity Requirement',
           value: hasFundingGap ? fmtJOD(peakFundingGap) + ' at Month ' + peakGapMonth : 'None',
           color: hasFundingGap ? [185, 28, 28] : [21, 128, 61] },
       ]
@@ -1238,7 +1238,24 @@ export default function FeasibilityProject() {
       })
       gap(6)
 
+      // ── IRR interpretation notes ──
+      var noDebt  = (loanDrawn || 0) <= 0
+      var highIRR = (levIRR !== null && levIRR > 75) || (unlevIRR !== null && unlevIRR > 75)
+      if (noDebt) {
+        ensureSpace(8)
+        doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
+        doc.text('No debt utilized - leveraged and unleveraged IRR are equivalent in this scenario.', ML + 3, y, { maxWidth: TW })
+        y += 7
+      }
+      if (highIRR) {
+        ensureSpace(12)
+        doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
+        doc.text('High IRR is driven by pre-sales timing and low peak equity deployment. Profit on Cost and Equity Multiple should also be reviewed.', ML + 3, y, { maxWidth: TW })
+        y += 10
+      }
+
       // ── Section C: Cash Flow Summary ──
+      ensureSpace(60)
       secHead('Cash Flow Summary')
       var cfCols = [{ label: 'Item', w: 100, align: 'left' }, { label: 'Amount (JOD)', w: TW - 100, align: 'right' }]
       tHead(cfCols)
@@ -1247,7 +1264,7 @@ export default function FeasibilityProject() {
         { label: 'Total Hard Cost Draw', value: fmtN(totalHardCost),    color: [185, 28, 28] },
         { label: 'Total Soft Cost Draw', value: fmtN(totalSoftCost),    color: [185, 28, 28] },
         { label: 'Total Cost Draw',      value: fmtN(totalCostFromSch), color: [185, 28, 28] },
-        { label: 'Net Profit',           value: fmtN(devProfit),         color: devProfit !== null && devProfit >= 0 ? [21, 128, 61] : [185, 28, 28] },
+        { label: 'Development Profit (GDV minus TDC)', value: fmtN(devProfit),         color: devProfit !== null && devProfit >= 0 ? [21, 128, 61] : [185, 28, 28] },
       ]
       cfSummaryRows.forEach(function(row, idx) {
         guard(RH + 2)
@@ -1262,6 +1279,7 @@ export default function FeasibilityProject() {
       gap(6)
 
       // ── Section D: Funding Analysis ──
+      ensureSpace(85)
       secHead('Funding Analysis')
       var faCols = [{ label: 'Item', w: 100, align: 'left' }, { label: 'Value', w: TW - 100, align: 'right' }]
       tHead(faCols)
@@ -1269,8 +1287,8 @@ export default function FeasibilityProject() {
       var equityPct = totalFunding > 0 ? ((equityDeployed || 0) / totalFunding * 100).toFixed(1) + '%' : 'N/A'
       var debtPct   = totalFunding > 0 ? ((loanDrawn    || 0) / totalFunding * 100).toFixed(1) + '%' : 'N/A'
       var faRows = [
-        { label: 'Peak Funding Gap',         value: hasFundingGap ? fmtJOD(peakFundingGap) : 'None (positive CF throughout)',  color: hasFundingGap ? [185, 28, 28] : [21, 128, 61] },
-        { label: 'Month of Peak Gap',        value: hasFundingGap ? 'Month ' + peakGapMonth : '--',  color: [30, 33, 43] },
+        { label: 'Peak Equity Requirement',  value: hasFundingGap ? fmtJOD(peakFundingGap) : 'None (positive CF throughout)',  color: hasFundingGap ? [185, 28, 28] : [21, 128, 61] },
+        { label: 'Month of Peak Equity Requirement', value: hasFundingGap ? 'Month ' + peakGapMonth : '--',  color: [30, 33, 43] },
         { label: 'Equity Deployed',          value: fmtJOD(equityDeployed),  color: [30, 33, 43] },
         { label: 'Loan Drawn',               value: fmtJOD(loanDrawn),       color: [30, 33, 43] },
         { label: 'Equity %',                 value: equityPct,                color: [30, 33, 43] },
@@ -1395,10 +1413,10 @@ export default function FeasibilityProject() {
       // ══ A. FINANCIAL SUMMARY ══════════════════════════════════════════
       secHead('Financial Summary')
 
-      finRow('Total Development Cost',  fmtJOD(totalCosts),  { shade: false })
+      finRow('Total Cost Draw (Hard + Soft Costs)', fmtJOD(totalCosts),  { shade: false })
       finRow('Total Sales Inflow',       fmtJOD(totalSales),  { shade: true,  color: [21, 128, 61] })
       finDiv()
-      finRow('Net Profit',               fmtJOD(netProfit),
+      finRow('Gross Margin (Sales minus Cost Draw)', fmtJOD(netProfit),
         { bold: true, color: netProfit >= 0 ? [21, 128, 61] : [185, 28, 28] })
 
       gap(6)
@@ -1411,6 +1429,7 @@ export default function FeasibilityProject() {
       y += 10
 
       // ══ B. SOURCES & USES ════════════════════════════════════════════
+      ensureSpace(95)
       secHead('Sources & Uses')
 
       // Sources
@@ -1433,24 +1452,32 @@ export default function FeasibilityProject() {
 
       gap(6)
 
-      // Variance note
-      var svVariance = (totalEquity + totalDebt) - totalCosts
-      if (Math.abs(svVariance) > 1) {
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
-        doc.text('Sources vs Uses variance: ' + fmtJOD(svVariance) + ' (capitalized interest / rounding)', ML + 3, y)
-        y += 9
-      }
+      // Sources & Uses scope note
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
+      doc.text(
+        'Pre-sales may fund part of construction. Sources shown represent peak external capital requirement, not total project uses.',
+        ML + 3, y, { maxWidth: TW }
+      )
+      y += 11
 
       // ══ C. INVESTMENT WATERFALL ══════════════════════════════════════
+      ensureSpace(80)
       secHead('Investment Waterfall')
 
+      // KNOWN ISSUE — presentation only, do not fix here.
+      // Row 5 'Debt Repayment' currently displays finalDebt (residual loan balance at exit).
+      // When a project draws debt and economically repays it through exit cash flows, that
+      // residual is 0, so the row reads "Debt Repayment = 0" even though debt was repaid.
+      // Future fix should source repayment from the engine summary (e.g. totalLoanDrawn
+      // minus finalLoanBalance, or a dedicated debt-service field) so the waterfall reflects
+      // repayment explicitly. Tracked for the next presentation-layer session.
       var waterfallRows = [
         { label: '1.  Equity Invested',   value: fmtJOD(totalEquity),                        color: [30,  90, 185], shade: false },
         { label: '2.  Debt Drawn',         value: fmtJOD(totalDebt),                          color: [80,  90, 110], shade: true  },
         { label: '3.  Total Cost',         value: fmtJOD(totalCosts),                         color: [185, 28,  28], shade: false },
         { label: '4.  Total Sales',        value: fmtJOD(totalSales),                         color: [21, 128,  61], shade: true  },
         { label: '5.  Debt Repayment',     value: fmtJOD(finalDebt),                          color: [80,  90, 110], shade: false },
-        { label: '6.  Equity Return',      value: fmtJOD(equityReturn),
+        { label: '6.  Net Development Profit', value: fmtJOD(equityReturn),
           color: equityReturn >= 0 ? [21, 128, 61] : [185, 28, 28],                                                  shade: true  },
       ]
 
@@ -1569,6 +1596,18 @@ export default function FeasibilityProject() {
         doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(130, 135, 145)
         doc.text('Values computed at engine run time from stored inputs. Export reads stored matrix — no recalculation.', ML, y, { maxWidth: TW })
         y += 8
+
+        // Base values footer
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(90, 95, 110)
+        doc.text('Base case:', ML, y)
+        doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 110, 125)
+        doc.text(
+          'GDV ' + fmtJOD(totalGDV) +
+          '   |   Hard Cost ' + fmtJOD(totalHardCost) +
+          '   |   Soft Cost ' + fmtJOD(totalSoftCost),
+          ML + 18, y
+        )
+        y += 6
       } else {
         // Matrix not available — note in PDF without crashing
         gap(6)
