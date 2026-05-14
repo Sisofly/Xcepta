@@ -1464,21 +1464,17 @@ export default function FeasibilityProject() {
       ensureSpace(80)
       secHead('Investment Waterfall')
 
-      // KNOWN ISSUE — presentation only, do not fix here.
-      // Row 5 'Debt Repayment' currently displays finalDebt (residual loan balance at exit).
-      // When a project draws debt and economically repays it through exit cash flows, that
-      // residual is 0, so the row reads "Debt Repayment = 0" even though debt was repaid.
-      // Future fix should source repayment from the engine summary (e.g. totalLoanDrawn
-      // minus finalLoanBalance, or a dedicated debt-service field) so the waterfall reflects
-      // repayment explicitly. Tracked for the next presentation-layer session.
+      // Debt Repayment = loan principal retired during the project (drawn minus residual).
+      // Guarded to >= 0 defensively; the engine should never produce finalDebt > totalDebt.
+      var debtRepaid = Math.max(0, totalDebt - finalDebt)
       var waterfallRows = [
         { label: '1.  Equity Invested',   value: fmtJOD(totalEquity),                        color: [30,  90, 185], shade: false },
         { label: '2.  Debt Drawn',         value: fmtJOD(totalDebt),                          color: [80,  90, 110], shade: true  },
-        { label: '3.  Total Cost',         value: fmtJOD(totalCosts),                         color: [185, 28,  28], shade: false },
+        { label: '3.  Construction Cost (Hard + Soft)', value: fmtJOD(totalCosts),                color: [185, 28,  28], shade: false },
         { label: '4.  Total Sales',        value: fmtJOD(totalSales),                         color: [21, 128,  61], shade: true  },
-        { label: '5.  Debt Repayment',     value: fmtJOD(finalDebt),                          color: [80,  90, 110], shade: false },
-        { label: '6.  Net Development Profit', value: fmtJOD(equityReturn),
-          color: equityReturn >= 0 ? [21, 128, 61] : [185, 28, 28],                                                  shade: true  },
+        { label: '5.  Debt Repayment',     value: fmtJOD(debtRepaid),                         color: [80,  90, 110], shade: false },
+        { label: '6.  Net Development Profit', value: fmtJOD(devProfit),
+          color: devProfit !== null && devProfit >= 0 ? [21, 128, 61] : [185, 28, 28],                               shade: true  },
       ]
 
       waterfallRows.forEach(function(row) {
