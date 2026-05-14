@@ -986,3 +986,287 @@ describe('B24 — capitalized interest factor scaling (RE engine)', () => {
     expect(ratio).toBeCloseTo(expected, RATIO_DP)
   })
 })
+
+// =====================================================================
+// P4 — Edge cases & robustness
+// Helper: override a default value (with epsilon-defeat for falsy fallbacks)
+// =====================================================================
+function overrideDefault(key, value) {
+  return F_RE_SALE_DEFAULTS.map(d =>
+    d.key === key ? { ...d, value } : d
+  )
+}
+function setAssumption(name, value) {
+  return F_RE_SALE_ASSUMPTIONS.map(a =>
+    a.name === name ? { ...a, value } : a
+  )
+}
+
+// =====================================================================
+// B25 — Zero GFA (degenerate project)
+// gfa=0 → tdc=0 → all sizing collapses. Engine should run cleanly and
+// produce all-zero output without dividing by zero.
+// =====================================================================
+describe('B25 — zero GFA degenerate project', () => {
+  const out = runEngine(setAssumption('GFA', 0), F_RE_SALE_DEFAULTS)
+
+  test('B25.1: zero GFA → all sizing fields are 0', () => {
+    expect(out.tdc).toBe(0)
+    expect(out.equity_amount).toBe(0)
+    expect(out.debt_amount).toBe(0)
+  })
+
+  test('B25.2: zero GFA → all ops rows have revenue=0 and opex=0', () => {
+    out.cash_flows.filter(r => r.phase === 'Operations').forEach(r => {
+      expect(r.revenue).toBe(0)
+      expect(r.opex).toBe(0)
+      expect(r.interest).toBe(0)
+      expect(r.principal).toBe(0)
+    })
+  })
+
+  test('B25.3: zero GFA → IRR is null (no positive CFs, no sign change)', () => {
+    expect(out.irr).toBeNull()
+  })
+
+  test('B25.4: zero GFA → engine returns valid output shape (does not crash)', () => {
+    expect(out).toBeDefined()
+    expect(Array.isArray(out.cash_flows)).toBe(true)
+    expect(typeof out.construction_years).toBe('number')
+  })
+})
+
+// =====================================================================
+// B26 — Zero debt (fully equity financed)
+// Uses F_NO_DEBT_ASSUMPTIONS (1e-7 epsilon to defeat `||` fallback).
+// Engine's outstanding > 0.01 thresholds then treat debt as zero.
+// All operating cash flows should accrue to equity without amortization.
+// =====================================================================
+describe('B26 — zero debt fully equity financed', () => {
+  const out = runEngine(F_NO_DEBT_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+
+  test('B26.1: zero debt → equity > 0 and debt ≈ 0', () => {
+    expect(out.equity_amount).toBeGreaterThan(0)
+    expect(out.debt_amount).toBeLessThan(1)  // epsilon: TPC × 1e-9 ≈ 0.008
+  })
+
+  test('B26.2: zero debt → equity_multiple > 1 (no debt drag, equity gets all CF)', () => {
+    expect(out.equity_multiple).toBeGreaterThan(1)
+  })
+
+  test('B26.3: zero debt → IRR is positive (sale project without debt drag profits)', () => {
+    expect(out.irr).not.toBeNull()
+    expect(out.irr).toBeGreaterThan(0)
+  })
+})
+
+// =====================================================================
+// B27 — 100% debt (zero equity, fully levered)
+// Variant: Equity %=1e-7 epsilon, Senior Debt %=100. Construction year-0
+// equity outflow is essentially just the arrangement fee.
+// =====================================================================
+describe('B27 — 100% debt fully levered', () => {
+  const F_FULL_DEBT_ASSUMPTIONS = F_RE_SALE_ASSUMPTIONS.map(a => {
+    if (a.name === 'Equity %')      return { ...a, value: 1e-7 }
+    if (a.name === 'Senior Debt %') return { ...a, value: 100 }
+    return a
+  })
+  const out = runEngine(F_FULL_DEBT_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+
+  test('B27.1: full debt → equity ≈ 0 (within 1 JOD)', () => {
+    expect(out.equity_amount).toBeLessThan(1)
+  })
+
+  test('B27.2: full debt → debt ≈ TPC = 8,190,000', () => {
+    expect(out.debt_amount).toBeCloseTo(8_190_000, 0)
+  })
+
+  test('B27.3: full debt → engine returns numeric output (does not crash)', () => {
+    expect(out).toBeDefined()
+    expect(Number.isFinite(out.npv)).toBe(true)
+    // IRR may or may not be null depending on convergence — just check no crash
+  })
+})
+
+// =====================================================================
+// B28 — Capital structure does not sum to 100% (underfunded)
+// Engine reads equityPct and seniorDebtPct independently — does NOT
+// validate they sum to 1.0. A 30/50 fixture leaves 20% of TPC silently
+// unfunded; equity + debt < TPC. UI catches this; the engine does not.
+// =====================================================================
+describe('B28 — capital structure < 100% (underfunded, engine does not enforce)', () => {
+  const F_UNDERFUNDED_ASSUMPTIONS = F_RE_SALE_ASSUMPTIONS.map(a => {
+    if (a.name === 'Equity %')      return { ...a, value: 30 }
+    if (a.name === 'Senior Debt %') return { ...a, value: 50 }
+    return a
+  })
+  const out = runEngine(F_UNDERFUNDED_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+
+  test('B28.1: equity + debt < TPC (engine produces a 20% funding gap silently)', () => {
+    const totalSources = out.equity_amount + out.debt_amount
+    expect(totalSources).toBeCloseTo(out.tdc * 0.80, 0)  // 30% + 50% = 80% of TPC
+    expect(totalSources).toBeLessThan(out.tdc)
+  })
+
+  test('B28.2: underfunded fixture → engine runs without error', () => {
+    expect(out).toBeDefined()
+    expect(Array.isArray(out.cash_flows)).toBe(true)
+  })
+})
+
+// =====================================================================
+// B29 — Absorption rate > 100% (inventory clears in year 1)
+// Engine: sold = min(remSaleGfa, saleGfa × absRate). An absRate > 1 still
+// caps sold at remaining inventory, so all GFA clears in year 1.
+// =====================================================================
+describe('B29 — absorption rate above 100%', () => {
+  const out = runEngine(
+    F_RE_SALE_ASSUMPTIONS,
+    overrideDefault('sales_absorption_rate_pct_per_year', 1.5)
+  )
+  const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B29.1: absRate=1.5 → year 1 revenue clears all saleGfa = 10000 × 1200 = 12,000,000', () => {
+    expect(ops[0].revenue).toBeCloseTo(12_000_000, CURR_DP)
+  })
+
+  test('B29.2: absRate>1 → years 2+ have revenue = 0 (inventory depleted)', () => {
+    for (let i = 1; i < ops.length; i++) {
+      expect(ops[i].revenue).toBe(0)
+    }
+  })
+})
+
+// =====================================================================
+// B30 — Zero-revenue project
+// Construct via F-RE-Rental + rentYield = 1e-9 (epsilon defeats `||`
+// fallback). Operating revenue ≈ 0 but debt service still runs full
+// → all CFs negative → IRR null.
+// =====================================================================
+describe('B30 — zero-revenue project', () => {
+  const out = runEngine(
+    F_RE_RENTAL_ASSUMPTIONS,
+    overrideDefault('rental_yield_residential', 1e-9)
+  )
+  const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B30.1: zero rental yield → ops revenue ≈ 0 (effectively negligible)', () => {
+    // With rentYield = 1e-9, unrounded revenue per year is ~0.007 to 0.02 JOD;
+    // after r2() rounding some years land at exactly 0.01 or 0.02. Asserting
+    // "well below 1 JOD" is the right "effectively zero" test.
+    ops.forEach(r => {
+      expect(r.revenue).toBeLessThan(1)
+    })
+  })
+
+  test('B30.2: zero-revenue + active debt service → all ops equity_cf are negative', () => {
+    ops.forEach(r => {
+      expect(r.equity_cf).toBeLessThan(0)
+    })
+  })
+
+  test('B30.3: all-negative CFs → irrCalc returns null (no sign change)', () => {
+    expect(out.irr).toBeNull()
+  })
+})
+
+// =====================================================================
+// B31 — Very high interest rate (50%)
+// Tests stress on the financing math. capFactor balloons; year-1 interest
+// dwarfs EBITDA; cash sweep cannot retire debt; DSCR collapses.
+// =====================================================================
+describe('B31 — very high interest rate (50%)', () => {
+  const out = runEngine(
+    F_RE_SALE_ASSUMPTIONS,
+    overrideDefault('senior_debt_interest_rate', 0.50)
+  )
+  const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B31.1: 50% rate → engine returns valid numeric output', () => {
+    expect(out).toBeDefined()
+    expect(typeof out.npv).toBe('number')
+    expect(Number.isFinite(out.npv)).toBe(true)
+  })
+
+  test('B31.2: 50% rate → year-1 interest is ~10× the 8.5% baseline', () => {
+    const baseline = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    const baselineInt = baseline.cash_flows.filter(r => r.phase === 'Operations')[0].interest
+    // (5733000 × 1.5^2 × 0.5) / (5733000 × 1.085^2 × 0.085)
+    // = (1.5^2 × 0.5) / (1.085^2 × 0.085)
+    // ≈ 1.125 / 0.10 ≈ 11.25× — well above 5×
+    expect(ops[0].interest).toBeGreaterThan(baselineInt * 5)
+  })
+
+  test('B31.3: 50% rate → year-1 DSCR < 1 (debt service exceeds EBITDA)', () => {
+    expect(ops[0].dscr).not.toBeNull()
+    expect(ops[0].dscr).toBeLessThan(1)
+  })
+})
+
+// =====================================================================
+// B32 — Very long project life (50 years)
+// Stress test: engine should produce a 50-year timeline without numerical
+// overflow, infinite loop, or NaN cascade.
+// =====================================================================
+describe('B32 — very long project life (50 years)', () => {
+  const out = runEngine(setAssumption('Project Life Years', 50), F_RE_SALE_DEFAULTS)
+
+  test('B32.1: 50-yr life → cash_flows.length = constrYrs (2) + opsYrs (48) = 50', () => {
+    expect(out.cash_flows.length).toBe(50)
+  })
+
+  test('B32.2: 50-yr life → all year values are finite (no NaN/Infinity)', () => {
+    out.cash_flows.forEach(r => {
+      expect(Number.isFinite(r.revenue)).toBe(true)
+      expect(Number.isFinite(r.opex)).toBe(true)
+      expect(Number.isFinite(r.interest)).toBe(true)
+      expect(Number.isFinite(r.equity_cf)).toBe(true)
+    })
+  })
+
+  test('B32.3: 50-yr life → most years past depletion + debt-retirement are zero CFs', () => {
+    const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+    const zeroOps = ops.filter(r =>
+      r.revenue === 0 && r.opex === 0 && r.interest === 0 && r.equity_cf === 0
+    )
+    expect(zeroOps.length).toBeGreaterThan(40)  // sale-only depletes year 3, debt retired, leaving ~45 zero years
+  })
+})
+
+// =====================================================================
+// B33 — Missing optional fields / defaults
+// Engine uses `getDefault(...) || X` and `getVal(...) || X` fallbacks
+// extensively. Empty defaults table → all `|| X` defaults fire.
+// Empty assumptions → engine falls back to internal defaults for all.
+// (See annual_engine_falsy_fallback.md for the falsy-fallback quirk.)
+// =====================================================================
+describe('B33 — missing optional fields / defaults', () => {
+  test('B33.1: runEngine([], F_RE_SALE_DEFAULTS) → engine does not crash; produces empty-project shape', () => {
+    const out = runEngine([], F_RE_SALE_DEFAULTS)
+    expect(out).toBeDefined()
+    expect(Array.isArray(out.cash_flows)).toBe(true)
+    // Empty assumptions → GFA=0 (getVal returns null → || 0) → all sizes 0
+    expect(out.tdc).toBe(0)
+  })
+
+  test('B33.2: runEngine(F_RE_SALE_ASSUMPTIONS, []) → engine uses all internal default fallbacks', () => {
+    // Because F_RE_SALE_DEFAULTS values exactly match the engine's `|| X` defaults,
+    // running with empty defaults should produce an identical output.
+    const withDefaults    = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    const withoutDefaults = runEngine(F_RE_SALE_ASSUMPTIONS, [])
+    expect(withoutDefaults.tdc).toBe(withDefaults.tdc)
+    expect(withoutDefaults.equity_amount).toBe(withDefaults.equity_amount)
+    expect(withoutDefaults.debt_amount).toBe(withDefaults.debt_amount)
+    expect(withoutDefaults.irr).toBe(withDefaults.irr)
+    expect(withoutDefaults.npv).toBe(withDefaults.npv)
+    expect(withoutDefaults.equity_multiple).toBe(withDefaults.equity_multiple)
+  })
+
+  test('B33.3: runEngine([], []) → fully degenerate (zero project), engine still runs', () => {
+    const out = runEngine([], [])
+    expect(out).toBeDefined()
+    expect(out.tdc).toBe(0)
+    expect(out.irr).toBeNull()
+    expect(out.cash_flows.length).toBeGreaterThan(0)  // still has constr+ops rows, just all zero
+  })
+})
