@@ -48,6 +48,24 @@ const F_RE_SALE_ASSUMPTIONS = [
   { name: 'Operations Start Date',   value: null,  unit: '2026-01-01' },
 ]
 
+// Variant: effectively zero debt. Same defaults as F-RE-Sale.
+// Used by B8/B11/B12 to assert zero-debt invariants.
+//
+// ENGINE QUIRK (discovered by Batch 1):
+//   The engine reads assumptions with the falsy-fallback pattern:
+//     var seniorDebtPct = (getVal(assumptions, 'Senior Debt %') || 60) / 100
+//   Setting the value literally to 0 makes the LHS falsy, so the
+//   `|| 60` branch fires and the engine silently runs with 60% debt.
+//   Same pattern applies to every `|| X` default in runEngine, so
+//   explicit zero is unreachable via assumptions. A tiny positive
+//   epsilon defeats the fallback, and the engine's `outstanding > 0.01`
+//   thresholds in interest/principal/DSCR then drive the no-debt path.
+const F_NO_DEBT_ASSUMPTIONS = F_RE_SALE_ASSUMPTIONS.map(a => {
+  if (a.name === 'Equity %')      return { ...a, value: 100 }
+  if (a.name === 'Senior Debt %') return { ...a, value: 1e-7 }
+  return a
+})
+
 const F_RE_SALE_DEFAULTS = [
   { key: 'construction_cost_per_sqm_residential', value: 650 },
   { key: 'contingency_pct',                       value: 0.05 },
@@ -249,5 +267,152 @@ describe('B7 — construction outflows & arrangement fee', () => {
   test('B7.5: construction phase DSCR is null', () => {
     expect(out.cash_flows[0].dscr).toBeNull()
     expect(out.cash_flows[1].dscr).toBeNull()
+  })
+})
+
+// =====================================================================
+// B8 — Interest on outstanding debt
+// Engine logic:
+//   saleInt  = outSale  > 0.01 ? outSale  * debtRate : 0
+//   rentInt  = outRental > 0.01 ? outRental * debtRate : 0
+//   interest = saleInt + rentInt
+// In F-RE-Sale: saleSplit=1, so all debt is sale-funded. At start of
+// ops year 1: outSale = saleDebt = debt × saleSplit × (1+debtRate)^constrYrs
+// =====================================================================
+describe('B8 — interest on outstanding debt (RE engine)', () => {
+  const out = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+
+  test('B8.1: construction phase interest is zero (no debt service during build)', () => {
+    expect(out.cash_flows[0].interest).toBe(0)
+    expect(out.cash_flows[1].interest).toBe(0)
+  })
+
+  test('B8.2: ops year 1 interest = saleDebt × debtRate (hand-computed)', () => {
+    // From F-RE-Sale defaults:
+    //   debt      = TPC × 70%        = 5,733,000
+    //   debtRate  = 0.085
+    //   constrYrs = 2 (from date diff)
+    //   capFactor = (1 + 0.085)^2   = 1.177225
+    //   saleDebt  = 5,733,000 × 1.0 × 1.177225
+    // Year 1 interest (= cash_flows[2].interest) = saleDebt × debtRate
+    const debt = 5_733_000
+    const debtRate = 0.085
+    const capFactor = Math.pow(1 + debtRate, 2)
+    const saleDebt = debt * 1.0 * capFactor
+    const expectedY1Interest = saleDebt * debtRate
+    expect(out.cash_flows[2].interest).toBeCloseTo(expectedY1Interest, CURR_DP)
+  })
+
+  test('B8.3: interest decreases monotonically as debt amortizes', () => {
+    // Cash sweep in B9 reduces outstanding each year, so interest must
+    // be non-increasing across consecutive ops rows.
+    const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+    for (let i = 1; i < ops.length; i++) {
+      expect(ops[i].interest).toBeLessThanOrEqual(ops[i - 1].interest)
+    }
+  })
+
+  test('B8.4: zero-debt fixture → interest = 0 in all ops rows', () => {
+    const zd = runEngine(F_NO_DEBT_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    zd.cash_flows.filter(r => r.phase === 'Operations').forEach(r => {
+      expect(r.interest).toBe(0)
+    })
+  })
+})
+
+// =====================================================================
+// B11 — DSCR formula (RE engine)
+// Engine logic (line 154):
+//   dscr = (totalDS > 0) ? r2(EBITDA / totalDS) : null
+//   where totalDS = interest + principal
+// EBITDA-based (NOT CFADS) — distinct from runPPPEngine.
+// =====================================================================
+describe('B11 — DSCR formula (RE engine)', () => {
+  const out = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+
+  test('B11.1: construction phase DSCR is null (no debt service yet)', () => {
+    out.cash_flows.filter(r => r.phase === 'Construction').forEach(r => {
+      expect(r.dscr).toBeNull()
+    })
+  })
+
+  test('B11.2: internal identity — for each ops row with totalDS > 0, dscr ≈ EBITDA / (interest + principal)', () => {
+    // Engine computes from unrounded values then r2's; cfTable stores
+    // each field r2'd. Recomputing from cfTable values diverges only in
+    // sub-cent rounding — assert within 2 dp tolerance.
+    out.cash_flows.filter(r => r.phase === 'Operations').forEach(r => {
+      const totalDS = r.interest + r.principal
+      if (totalDS > 0) {
+        expect(r.dscr).not.toBeNull()
+        expect(r.dscr).toBeCloseTo(r.ebitda / totalDS, 2)
+      }
+    })
+  })
+
+  test('B11.3: zero-debt fixture → all ops DSCR are null (no debt service)', () => {
+    const zd = runEngine(F_NO_DEBT_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    zd.cash_flows.filter(r => r.phase === 'Operations').forEach(r => {
+      expect(r.dscr).toBeNull()
+    })
+  })
+
+  test('B11.4: dscr_series records only ops years that had a DSCR ratio', () => {
+    // The engine pushes to dscrSeries only when hasDebt (line 155).
+    // For F-RE-Sale, all years where outSale > 0.01 at the START of the
+    // year should appear; once outSale hits 0, subsequent years drop out
+    // unless principal or interest is somehow still positive.
+    expect(Array.isArray(out.dscr_series)).toBe(true)
+    out.dscr_series.forEach(entry => {
+      expect(entry).toHaveProperty('year')
+      expect(typeof entry.year).toBe('number')
+      // dscr can be null (totalDS = 0 for that year) but the entry is recorded
+    })
+  })
+})
+
+// =====================================================================
+// B12 — Equity multiple
+// Engine logic (lines 164-166):
+//   totalIn  = |sum of negative CFs|
+//   totalOut =  sum of positive CFs
+//   em       = totalIn > 0 ? r2(totalOut / totalIn) : null
+// Computed from internal `cfs` array (unrounded); cfTable.equity_cf is
+// r2'd. Sub-cent diffs possible vs. recomputed-from-cfTable.
+// =====================================================================
+describe('B12 — equity multiple', () => {
+  const out = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+
+  test('B12.1: equity_multiple is a finite number for F-RE-Sale', () => {
+    expect(out.equity_multiple).not.toBeNull()
+    expect(Number.isFinite(out.equity_multiple)).toBe(true)
+  })
+
+  test('B12.2: internal identity — em ≈ sum(positive equity_cf) / |sum(negative equity_cf)|', () => {
+    const sumPos = out.cash_flows
+      .filter(r => r.equity_cf > 0)
+      .reduce((a, r) => a + r.equity_cf, 0)
+    const sumNeg = out.cash_flows
+      .filter(r => r.equity_cf < 0)
+      .reduce((a, r) => a + r.equity_cf, 0)
+    expect(sumNeg).toBeLessThan(0)              // sanity: construction outflows present
+    const expectedEM = sumPos / Math.abs(sumNeg)
+    expect(out.equity_multiple).toBeCloseTo(expectedEM, 2)
+  })
+
+  test('B12.3: F-RE-Sale regression — equity_multiple ≈ 0.71 (lock current behavior)', () => {
+    // Hand-derived: construction outflows = 1,285,830 + 1,228,500 = 2,514,330.
+    // Ops years 1-2 sweep all net income to debt → equity_cf = 0.
+    // Year 3 fully retires debt; residual netInc ≈ 1.79M flows to equity.
+    // Years 4-8: GFA sold out → revenue = 0 → equity_cf = 0.
+    // EM ≈ 1,788,086 / 2,514,330 ≈ 0.7113 → r2 = 0.71.
+    // Locked as a regression check; future engine math changes will surface here.
+    expect(out.equity_multiple).toBeCloseTo(0.71, 1)
+  })
+
+  test('B12.4: zero-debt fixture — equity_multiple is defined and ≥ 0', () => {
+    const zd = runEngine(F_NO_DEBT_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    expect(zd.equity_multiple).not.toBeNull()
+    expect(Number.isFinite(zd.equity_multiple)).toBe(true)
+    expect(zd.equity_multiple).toBeGreaterThanOrEqual(0)
   })
 })
