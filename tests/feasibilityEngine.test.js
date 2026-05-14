@@ -66,6 +66,16 @@ const F_NO_DEBT_ASSUMPTIONS = F_RE_SALE_ASSUMPTIONS.map(a => {
   return a
 })
 
+// Variant: 100% rental project. Revenue Model="Rental" → engine sets
+// saleSplit=0, rentalSplit=1. All debt becomes rental debt and
+// amortizes via level annuity after the grace period.
+// Used by B10 to test rental amortization mechanics.
+const F_RE_RENTAL_ASSUMPTIONS = F_RE_SALE_ASSUMPTIONS.map(a => {
+  if (a.name === 'Revenue Model') return { ...a, value: null, unit: 'Rental' }
+  if (a.name === 'Sale Split %')  return { ...a, value: 0 }
+  return a
+})
+
 const F_RE_SALE_DEFAULTS = [
   { key: 'construction_cost_per_sqm_residential', value: 650 },
   { key: 'contingency_pct',                       value: 0.05 },
@@ -414,5 +424,153 @@ describe('B12 — equity multiple', () => {
     expect(zd.equity_multiple).not.toBeNull()
     expect(Number.isFinite(zd.equity_multiple)).toBe(true)
     expect(zd.equity_multiple).toBeGreaterThanOrEqual(0)
+  })
+})
+
+// =====================================================================
+// B9 — Sale debt cash sweep (RE engine)
+// Engine logic (line 148):
+//   if (outSale > 0.01) {
+//     salePrin = Math.min(outSale, Math.max(0, netInc))
+//     outSale = Math.max(0, outSale - salePrin)
+//   }
+// Principal = min(outstanding, max(0, net_income)). Negative netInc → no
+// sweep. Once outSale hits 0, no further interest or principal.
+// =====================================================================
+describe('B9 — sale debt cash sweep (RE engine)', () => {
+  const out = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+  const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B9.1: ops year 1 — principal ≤ net_income (sweep cannot exceed earnings)', () => {
+    const y1 = ops[0]
+    expect(y1.principal).toBeLessThanOrEqual(y1.net_income)
+  })
+
+  test('B9.2: principal is always ≥ 0 in every ops row (no negative payments)', () => {
+    ops.forEach(r => {
+      expect(r.principal).toBeGreaterThanOrEqual(0)
+    })
+  })
+
+  test('B9.3: sum of principal across ops years ≈ saleDebt (all debt retired)', () => {
+    // saleDebt = debt × saleSplit × (1+debtRate)^constrYrs
+    // F-RE-Sale: debt=5,733,000, saleSplit=1, constrYrs=2, debtRate=0.085
+    const debt = 5_733_000
+    const debtRate = 0.085
+    const capFactor = Math.pow(1 + debtRate, 2)
+    const saleDebt = debt * 1.0 * capFactor
+    const totalPrincipal = ops.reduce((a, r) => a + r.principal, 0)
+    expect(totalPrincipal).toBeCloseTo(saleDebt, CURR_DP)
+  })
+
+  test('B9.4: after debt is retired, subsequent years have interest = 0 and principal = 0', () => {
+    let zeroDebtSeen = false
+    ops.forEach(r => {
+      if (zeroDebtSeen) {
+        expect(r.principal).toBe(0)
+        expect(r.interest).toBe(0)
+      }
+      if (r.interest === 0 && r.principal === 0) zeroDebtSeen = true
+    })
+    // Sanity: at least one zero-debt year exists in F-RE-Sale (debt retires by year 3)
+    expect(zeroDebtSeen).toBe(true)
+  })
+})
+
+// =====================================================================
+// B10 — Rental debt annuity post-grace (RE engine)
+// Engine logic (line 149):
+//   if (outRental > 0.01 && op > graceYrs) {
+//     rentPrin = Math.max(0, Math.min(outRental, rentalAnnuity - rentInt))
+//   }
+// During grace (op ≤ graceYrs): principal = 0, interest still accrues.
+// Post-grace: principal = annuity − interest (capped by outstanding).
+// rentalAnnuity = annuity(rentalDebt, debtRate, debtTenor − graceYrs).
+// F-RE-Rental: 100% rental → all debt is rental debt.
+// =====================================================================
+describe('B10 — rental debt annuity post-grace (RE engine)', () => {
+  const out = runEngine(F_RE_RENTAL_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+  const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+  const graceYrs = 2  // matches F_RE_SALE_DEFAULTS grace_period_years
+
+  // Pre-compute the expected rental annuity for post-grace identity tests
+  const debt = 5_733_000
+  const debtRate = 0.085
+  const capFactor = Math.pow(1 + debtRate, 2)
+  const rentalDebt = debt * 1.0 * capFactor  // saleSplit=0, rentalSplit=1
+  const debtTenor = 15
+  const rentalAnnuity = annuity(rentalDebt, debtRate, debtTenor - graceYrs)
+
+  test('B10.1: grace period (op ≤ graceYrs) → principal = 0', () => {
+    for (let i = 0; i < graceYrs; i++) {
+      expect(ops[i].principal).toBe(0)
+    }
+  })
+
+  test('B10.2: grace period — interest is non-zero (debt service accrues even without principal)', () => {
+    for (let i = 0; i < graceYrs; i++) {
+      expect(ops[i].interest).toBeGreaterThan(0)
+    }
+  })
+
+  test('B10.3: post-grace — principal ≈ rentalAnnuity − interest (level amortization)', () => {
+    for (let i = graceYrs; i < ops.length; i++) {
+      const expectedPrincipal = rentalAnnuity - ops[i].interest
+      expect(ops[i].principal).toBeCloseTo(expectedPrincipal, 1)
+    }
+  })
+
+  test('B10.4: post-grace — interest + principal ≈ rentalAnnuity (constant debt service)', () => {
+    for (let i = graceYrs; i < ops.length; i++) {
+      expect(ops[i].interest + ops[i].principal).toBeCloseTo(rentalAnnuity, 1)
+    }
+  })
+})
+
+// =====================================================================
+// B13 — Cash-flow reconciliation (RE engine)
+// Internal consistency identities across all ops rows:
+//   ebitda     = revenue - opex
+//   pbt        = ebitda - interest
+//   tax        = max(0, pbt × taxRate)
+//   net_income = pbt - tax
+//   equity_cf  = net_income - principal
+// Each field is r2'd individually, so recomputing from rounded inputs
+// can diverge by ~0.01 per term. Tolerance: 1 dp (~0.05).
+// =====================================================================
+describe('B13 — cash-flow reconciliation (RE engine)', () => {
+  const out = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+  const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+  const taxRate = 0.20  // matches F_RE_SALE_DEFAULTS corporate_income_tax_rate
+
+  test('B13.1: ebitda = revenue − opex (every ops row)', () => {
+    ops.forEach(r => {
+      expect(r.ebitda).toBeCloseTo(r.revenue - r.opex, 1)
+    })
+  })
+
+  test('B13.2: pbt = ebitda − interest (every ops row)', () => {
+    ops.forEach(r => {
+      expect(r.pbt).toBeCloseTo(r.ebitda - r.interest, 1)
+    })
+  })
+
+  test('B13.3: tax = max(0, pbt × taxRate) — no loss carry-forward, no negative tax', () => {
+    ops.forEach(r => {
+      const expectedTax = Math.max(0, r.pbt * taxRate)
+      expect(r.tax).toBeCloseTo(expectedTax, 1)
+    })
+  })
+
+  test('B13.4: net_income = pbt − tax (every ops row)', () => {
+    ops.forEach(r => {
+      expect(r.net_income).toBeCloseTo(r.pbt - r.tax, 1)
+    })
+  })
+
+  test('B13.5: equity_cf = net_income − principal (every ops row)', () => {
+    ops.forEach(r => {
+      expect(r.equity_cf).toBeCloseTo(r.net_income - r.principal, 1)
+    })
   })
 })
