@@ -846,3 +846,143 @@ describe('B21 — tax behavior (RE engine)', () => {
     })
   })
 })
+
+// =====================================================================
+// Helper: clone F-RE-Sale assumptions with date overrides for B22 tests
+// =====================================================================
+function withDates(csDateStr, osDateStr) {
+  return F_RE_SALE_ASSUMPTIONS.map(a => {
+    if (a.name === 'Construction Start Date') return { ...a, value: null, unit: csDateStr }
+    if (a.name === 'Operations Start Date')   return { ...a, value: null, unit: osDateStr }
+    return a
+  })
+}
+
+// Helper: clone F-RE-Sale with Project Life Years override (or removal)
+function withLifeYears(lifeYears) {
+  if (lifeYears === undefined) {
+    return F_RE_SALE_ASSUMPTIONS.filter(a => a.name !== 'Project Life Years')
+  }
+  return F_RE_SALE_ASSUMPTIONS.map(a =>
+    a.name === 'Project Life Years' ? { ...a, value: lifeYears } : a
+  )
+}
+
+// =====================================================================
+// B22 — Construction years derived from dates (RE engine)
+// Engine logic (lines 69-75):
+//   var constrYrs = 2  // default
+//   if (csDate && osDate && csDate.length > 4 && osDate.length > 4) {
+//     var diff = (new Date(osDate) - new Date(csDate)) / (1000 * 60 * 60 * 24)
+//     constrYrs = Math.max(1, Math.round(diff / 365))
+//   }
+// - Both dates required, both with length > 4 (4 chars or fewer falls through).
+// - Rounded to nearest year, clamped to a minimum of 1.
+// =====================================================================
+describe('B22 — construction years derived from dates (RE engine)', () => {
+  test('B22.1: 1-year date diff → constrYrs = 1', () => {
+    const out = runEngine(withDates('2024-01-01', '2025-01-01'), F_RE_SALE_DEFAULTS)
+    expect(out.construction_years).toBe(1)
+  })
+
+  test('B22.2: 5-year date diff → constrYrs = 5', () => {
+    const out = runEngine(withDates('2024-01-01', '2029-01-01'), F_RE_SALE_DEFAULTS)
+    expect(out.construction_years).toBe(5)
+  })
+
+  test('B22.3: same-date diff (0 days) → constrYrs = 1 (clamped from 0)', () => {
+    const out = runEngine(withDates('2024-01-01', '2024-01-01'), F_RE_SALE_DEFAULTS)
+    expect(out.construction_years).toBe(1)
+  })
+
+  test('B22.4: missing dates → constrYrs = 2 (engine default)', () => {
+    const assumptions = F_RE_SALE_ASSUMPTIONS.filter(
+      a => a.name !== 'Construction Start Date' && a.name !== 'Operations Start Date'
+    )
+    const out = runEngine(assumptions, F_RE_SALE_DEFAULTS)
+    expect(out.construction_years).toBe(2)
+  })
+
+  test('B22.5: short-string dates (length ≤ 4) bypass parser → constrYrs = 2 (default)', () => {
+    // Engine guard `csDate.length > 4` means strings of length 4 or less fall through
+    const out = runEngine(withDates('N/A', 'TBD'), F_RE_SALE_DEFAULTS)
+    expect(out.construction_years).toBe(2)
+  })
+})
+
+// =====================================================================
+// B23 — opsYrs = max(1, lifeYears - constrYrs) clamp (RE engine)
+// Engine: var opsYrs = Math.max(1, lifeYears - constrYrs)
+// Project Life Years uses `|| 20` fallback when assumption missing
+// (note: 0 hits the falsy fallback — see annual_engine_falsy_fallback.md).
+// =====================================================================
+describe('B23 — opsYrs clamp behavior (RE engine)', () => {
+  test('B23.1: lifeYears = constrYrs (life=2, constr=2) → opsYrs = 1 (clamp floor)', () => {
+    // Use 2yr dates and life=2 → diff = 0 → max(1, 0) = 1
+    const assumptions = withLifeYears(2).map(a => {
+      if (a.name === 'Construction Start Date') return { ...a, value: null, unit: '2024-01-01' }
+      if (a.name === 'Operations Start Date')   return { ...a, value: null, unit: '2026-01-01' }
+      return a
+    })
+    const out = runEngine(assumptions, F_RE_SALE_DEFAULTS)
+    expect(out.construction_years).toBe(2)
+    expect(out.operations_years).toBe(1)
+  })
+
+  test('B23.2: lifeYears < constrYrs (life=1, constr=2) → opsYrs = 1 (negative clamped)', () => {
+    // life - constr = -1; max(1, -1) = 1
+    const assumptions = withLifeYears(1)
+    const out = runEngine(assumptions, F_RE_SALE_DEFAULTS)
+    expect(out.construction_years).toBe(2)
+    expect(out.operations_years).toBe(1)
+  })
+
+  test('B23.3: missing Project Life Years → fallback to 20, opsYrs = 20 - constrYrs = 18', () => {
+    const assumptions = withLifeYears(undefined)  // removes the assumption entry
+    const out = runEngine(assumptions, F_RE_SALE_DEFAULTS)
+    expect(out.construction_years).toBe(2)         // dates still drive this
+    expect(out.operations_years).toBe(18)          // fallback life 20 minus 2
+    expect(out.cash_flows.length).toBe(20)
+  })
+})
+
+// =====================================================================
+// B24 — Capitalized interest factor scaling (RE engine)
+// Engine: capFactor = (1 + debtRate)^constrYrs
+//         saleDebt   = debt × saleSplit   × capFactor
+//         rentalDebt = debt × rentalSplit × capFactor
+// Capitalizes interest during construction at the senior debt rate.
+// =====================================================================
+describe('B24 — capitalized interest factor scaling (RE engine)', () => {
+  const debt = 5_733_000  // TPC × 70%
+  const debtRate = 0.085
+
+  test('B24.1: F-RE-Sale (2-yr construction) — saleDebt = debt × (1+r)^2', () => {
+    const out = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+    const capFactor = Math.pow(1 + debtRate, 2)
+    const expectedSaleDebt = debt * 1.0 * capFactor
+    // Year-1 interest = capitalized saleDebt × debtRate
+    expect(ops[0].interest).toBeCloseTo(expectedSaleDebt * debtRate, CURR_DP)
+  })
+
+  test('B24.2: 5-yr construction — capFactor = (1+r)^5 → year-1 interest scales accordingly', () => {
+    const assumptions = withDates('2024-01-01', '2029-01-01')  // 5-yr build
+    const out = runEngine(assumptions, F_RE_SALE_DEFAULTS)
+    const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+    const capFactor5 = Math.pow(1 + debtRate, 5)
+    const expectedSaleDebt5 = debt * 1.0 * capFactor5
+    expect(out.construction_years).toBe(5)
+    expect(ops[0].interest).toBeCloseTo(expectedSaleDebt5 * debtRate, CURR_DP)
+  })
+
+  test('B24.3: ratio (5-yr year-1 interest / 2-yr year-1 interest) = (1+r)^3', () => {
+    const out2yr = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    const out5yr = runEngine(withDates('2024-01-01', '2029-01-01'), F_RE_SALE_DEFAULTS)
+    const int2 = out2yr.cash_flows.filter(r => r.phase === 'Operations')[0].interest
+    const int5 = out5yr.cash_flows.filter(r => r.phase === 'Operations')[0].interest
+    const ratio = int5 / int2
+    const expected = Math.pow(1 + debtRate, 3)  // (1.085)^5 / (1.085)^2 = (1.085)^3
+    expect(ratio).toBeCloseTo(expected, RATIO_DP)
+  })
+})
