@@ -957,11 +957,32 @@ export default function FeasibilityProject() {
     if (!confirmed) return
     setApproving(true)
     try {
+      // ── Run the annual / basic feasibility engine first.
+      // If it throws, the version stays a draft (no DB writes happen below).
+      const mergedDefs = getMergedDefaults(defaults, overrides)
+      const isPPP = isPPPAvailabilityPayment(project, assumptions)
+      const output = isPPP ? runPPPEngine(assumptions) : runEngine(assumptions, mergedDefs)
+
+      // ── Engine succeeded — flip the version to approved ──
       const newLabel = version.label ? version.label.replace('Draft', 'Approved') : version.label
       const { error } = await supabase.from('versions').update({
         status: 'approved', approved_at: new Date().toISOString(), label: newLabel,
       }).eq('version_id', version.version_id)
       if (error) throw error
+
+      // ── Persist engine output to model_outputs so the Results tab can render it ──
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data: userData } = await supabase.from('users')
+        .select('tenant_id').eq('user_id', user.id).single()
+      const { error: insertError } = await supabase.from('model_outputs').insert({
+        version_id: version.version_id, project_id: projectId,
+        tenant_id: userData.tenant_id,
+        irr: output.irr, npv: output.npv, equity_multiple: output.equity_multiple,
+        dscr_series: output.dscr_series, cash_flows: output.cash_flows,
+        created_by: user.id,
+      })
+      if (insertError) throw insertError
+
       const approvedVersion = { ...version, status: 'approved', approved_at: new Date().toISOString(), label: newLabel }
       setVersion(approvedVersion)
       await refreshApprovalState(version.scenario_id)
@@ -2372,13 +2393,13 @@ export default function FeasibilityProject() {
               <div>
                 <p style={{fontSize:'0.95rem',color:'#e6edf3',fontWeight:'500',marginBottom:'0.4rem'}}>Approve Year 0 Baseline</p>
                 <p style={{fontSize:'0.82rem',color:'#8b949e',lineHeight:'1.5'}}>
-                  Approving this version locks it as the baseline for FP&A variance tracking.
+                  Approving this version locks it as the baseline for FP&A variance tracking and generates the basic feasibility results.
                 </p>
               </div>
               <button onClick={handleApprove} disabled={approving}
                 style={{padding:'0.55rem 1.4rem',background:'#238636',color:'white',border:'1px solid #2ea043',
                   borderRadius:'6px',cursor:approving?'not-allowed':'pointer',fontSize:'0.875rem',fontWeight:'500',opacity:approving?0.6:1}}>
-                {approving ? 'Approving...' : 'Approve Version'}
+                {approving ? 'Approving & running model...' : 'Approve Version'}
               </button>
             </div>
           ) : (
