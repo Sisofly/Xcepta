@@ -22,7 +22,7 @@
 
 import {
   annuity, npvCalc, irrCalc, r2,
-  runEngine,
+  runEngine, runPPPEngine,
 } from '../src/modules/feasibility/annualEngine.js'
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1270,3 +1270,394 @@ describe('B33 — missing optional fields / defaults', () => {
     expect(out.cash_flows.length).toBeGreaterThan(0)  // still has constr+ops rows, just all zero
   })
 })
+
+// ═════════════════════════════════════════════════════════════════════
+// P5 — PPP Engine Validation (B34–B43)
+//
+// All tests in P5 target runPPPEngine() from annualEngine.js. The engine
+// reads PPP assumptions via pppVal() — a null-aware Number coercion
+// helper — and then applies `|| default` fallbacks. The same falsy-
+// fallback pattern as runEngine() applies here too (an explicit 0
+// collapses to the default, since 0 is falsy).
+//
+// Engine math is NOT modified — these are pure validation tests.
+//
+// Sections:
+//   B34 — Base scenario sanity (sizing, timeline, cf-row shape)
+//   B35 — Grace-period principal behavior
+//   B36 — DSCR uses CFADS (ebitda − tax), not EBITDA
+//   B37 — Fixed OPEX override (`OPEX Amount (JOD)`)
+//   B38 — Zero-debt PPP (falsy-fallback finding + ε workaround)
+//   B39 — Construction-month → years rounding (ceil)
+//   B40 — 13-mo construction → 2 yr (reinforcement)
+//   B41 — Long concession stress (99-year)
+//   B42 — Debt amortization completion (Σ principal = debt_amount)
+//   B43 — DSCR null when totalDS ≤ 1 JOD threshold
+//
+// B44 / B45 are BLOCKED. computeRequiredPayment lives in
+// src/pages/FeasibilityProject.jsx and is not exported from
+// annualEngine.js. See blocked-section placeholder at end of file.
+// ═════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────
+// Fixture: P-PPP-Base
+// 100M JOD concession PPP, 80/20 debt/equity, 24-mo construction,
+// 25-yr concession, 12M JOD/yr availability payment, 10-yr loan with
+// 2-yr grace at 7%. Used as baseline by B34–B43.
+//
+// Note: at this baseline, annual debt service after grace (~13.4M)
+// exceeds the 12M availability payment, so DSCR < 1 in repayment
+// years. That's fine — P5 tests validate engine mechanics, not
+// bankability. (B44/B45 would test the DSCR solver.)
+// ─────────────────────────────────────────────────────────────────────
+const P_PPP_BASE_ASSUMPTIONS = [
+  { name: 'Total Project Cost',          value: 100000000, unit: 'JOD' },
+  { name: 'Debt %',                      value: 80,        unit: 'percent' },
+  { name: 'Equity %',                    value: 20,        unit: 'percent' },
+  { name: 'Annual Availability Payment', value: 12000000,  unit: 'JOD/yr' },
+  { name: 'Concession Period',           value: 25,        unit: 'years' },
+  { name: 'Construction Period',         value: 24,        unit: 'months' },
+  { name: 'OPEX % of Revenue',           value: 5,         unit: 'percent' },
+  { name: 'Interest Rate',               value: 7,         unit: 'percent' },
+  { name: 'Loan Tenor',                  value: 10,        unit: 'years' },
+  { name: 'Grace Period',                value: 2,         unit: 'years' },
+  { name: 'Tax Rate',                    value: 20,        unit: 'percent' },
+  { name: 'WACC',                        value: 10,        unit: 'percent' },
+]
+
+// Helper: clone baseline with one or more field overrides.
+function pppWith(overrides) {
+  return P_PPP_BASE_ASSUMPTIONS.map(a => {
+    if (Object.prototype.hasOwnProperty.call(overrides, a.name)) {
+      return { ...a, value: overrides[a.name] }
+    }
+    return a
+  })
+}
+
+// =====================================================================
+// B34 — PPP base scenario sanity
+// Locks down sizing, timeline, and cash-flow row shape for the baseline
+// concession scenario.
+// =====================================================================
+describe('B34 — PPP base scenario sanity', () => {
+  const out = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
+
+  test('B34.1: TDC/debt/equity sizing at 80/20 of 100M', () => {
+    expect(out.tdc).toBeCloseTo(100_000_000, CURR_DP)
+    expect(out.debt_amount).toBeCloseTo(80_000_000, CURR_DP)
+    expect(out.equity_amount).toBeCloseTo(20_000_000, CURR_DP)
+  })
+
+  test('B34.2: construction_years = 2 (ceil(24/12)), operations_years = 25', () => {
+    expect(out.construction_years).toBe(2)
+    expect(out.operations_years).toBe(25)
+  })
+
+  test('B34.3: cash_flows has 27 rows (2 constr + 25 ops)', () => {
+    expect(out.cash_flows.length).toBe(27)
+  })
+
+  test('B34.4: construction rows are zero-revenue with even equity draw & capex split', () => {
+    const constrRows = out.cash_flows.filter(r => r.phase === 'Construction')
+    expect(constrRows.length).toBe(2)
+    constrRows.forEach(r => {
+      expect(r.revenue).toBe(0)
+      expect(r.opex).toBe(0)
+      expect(r.interest).toBe(0)
+      expect(r.principal).toBe(0)
+      expect(r.equity_cf).toBeCloseTo(-10_000_000, CURR_DP)  // 20M / 2 yrs
+      expect(r.capex).toBeCloseTo(50_000_000, CURR_DP)        // 100M / 2 yrs
+      expect(r.dscr).toBeNull()
+    })
+  })
+
+  test('B34.5: irr, npv, equity_multiple are populated finite numbers', () => {
+    expect(typeof out.irr).toBe('number')
+    expect(typeof out.npv).toBe('number')
+    expect(typeof out.equity_multiple).toBe('number')
+    expect(Number.isFinite(out.irr)).toBe(true)
+    expect(Number.isFinite(out.npv)).toBe(true)
+    expect(out.equity_multiple).toBeGreaterThan(0)
+  })
+})
+
+// =====================================================================
+// B35 — Grace-period principal behavior
+// During grace (op ≤ gracePeriodYrs), principal=0 regardless of cash
+// availability. Interest still accrues on the full outstanding balance.
+// Outstanding debt is unchanged through grace.
+// =====================================================================
+describe('B35 — grace-period principal behavior', () => {
+  const out = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
+  const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B35.1: principal = 0 for ops years 1 and 2 (grace = 2); > 0 for year 3', () => {
+    expect(opsRows[0].principal).toBe(0)
+    expect(opsRows[1].principal).toBe(0)
+    expect(opsRows[2].principal).toBeGreaterThan(0)  // first post-grace
+  })
+
+  test('B35.2: interest each grace year = debt × rate (balance unchanged through grace)', () => {
+    const expectedInterest = r2(80_000_000 * 0.07)  // 5,600,000
+    expect(opsRows[0].interest).toBeCloseTo(expectedInterest, CURR_DP)
+    expect(opsRows[1].interest).toBeCloseTo(expectedInterest, CURR_DP)
+    // Op 3 interest is still on full 80M (no principal yet repaid)
+    expect(opsRows[2].interest).toBeCloseTo(expectedInterest, CURR_DP)
+  })
+
+  test('B35.3: first post-grace principal = annuity − interest', () => {
+    const annuityAmt = annuity(80_000_000, 0.07, 8)  // tenor − grace = 8
+    const expectedPrincipal = r2(annuityAmt - r2(80_000_000 * 0.07))
+    expect(opsRows[2].principal).toBeCloseTo(expectedPrincipal, CURR_DP)
+  })
+})
+
+// =====================================================================
+// B36 — DSCR uses CFADS (ebitda − tax), not EBITDA
+// PPP engine computes:
+//   cfads   = ebitda − tax
+//   dscr    = totalDS > 1 ? cfads / totalDS : null
+// Distinguishes the engine from a naive EBITDA / DS metric that ignores
+// tax leakage from CFADS.
+// =====================================================================
+describe('B36 — DSCR uses CFADS, not EBITDA', () => {
+  const out = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
+  const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B36.1: engine dscr matches r2((ebitda − tax) / (interest + principal))', () => {
+    // Ops year 3 — first post-grace year with positive tax & debt service
+    const row = opsRows[2]
+    const cfads   = row.ebitda - row.tax
+    const totalDS = row.interest + row.principal
+    const expected = r2(cfads / totalDS)
+    expect(row.dscr).toBeCloseTo(expected, RATIO_DP)
+  })
+
+  test('B36.2: engine dscr < ebitda/DS in a year with positive tax (CFADS strictly tighter)', () => {
+    const row = opsRows[2]
+    const totalDS = row.interest + row.principal
+    const ebitdaDscr = row.ebitda / totalDS
+    expect(row.tax).toBeGreaterThan(0)
+    expect(row.dscr).toBeLessThan(ebitdaDscr)
+  })
+})
+
+// =====================================================================
+// B37 — Fixed OPEX override (`OPEX Amount (JOD)`)
+// Engine:
+//   var opexFixed   = pppVal(assumptions, 'OPEX Amount (JOD)')
+//   var useFixedOpex = opexFixed !== null && opexFixed > 0
+// When set and > 0  → opex = fixed (regardless of revenue/opex%)
+// When 0            → useFixedOpex=false → revenue × opex%
+// When null/absent  → pppVal returns null → revenue × opex%
+// =====================================================================
+describe('B37 — fixed OPEX override', () => {
+  test('B37.1: OPEX Amount > 0 overrides percentage opex in every ops year', () => {
+    const FIXED_OPEX = 2_500_000
+    const fixedAssumps = P_PPP_BASE_ASSUMPTIONS.concat([
+      { name: 'OPEX Amount (JOD)', value: FIXED_OPEX, unit: 'JOD' },
+    ])
+    const out = runPPPEngine(fixedAssumps)
+    const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
+    opsRows.forEach(r => {
+      expect(r.opex).toBeCloseTo(FIXED_OPEX, CURR_DP)
+    })
+  })
+
+  test('B37.2: OPEX Amount = 0 falls back to revenue × opex% (useFixedOpex requires > 0)', () => {
+    const zeroFixed = P_PPP_BASE_ASSUMPTIONS.concat([
+      { name: 'OPEX Amount (JOD)', value: 0, unit: 'JOD' },
+    ])
+    const out = runPPPEngine(zeroFixed)
+    const expectedOpex = r2(12_000_000 * 0.05)  // 600,000
+    out.cash_flows.filter(r => r.phase === 'Operations').forEach(r => {
+      expect(r.opex).toBeCloseTo(expectedOpex, CURR_DP)
+    })
+  })
+
+  test('B37.3: OPEX Amount absent → revenue × opex% (5% default)', () => {
+    const out = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)  // no OPEX Amount field
+    const expectedOpex = r2(12_000_000 * 0.05)
+    out.cash_flows.filter(r => r.phase === 'Operations').forEach(r => {
+      expect(r.opex).toBeCloseTo(expectedOpex, CURR_DP)
+    })
+  })
+})
+
+// =====================================================================
+// B38 — Zero-debt PPP
+// Same falsy-fallback quirk as runEngine: explicit `Debt %` = 0
+// collapses to the engine default (80). Tiny positive epsilon defeats
+// the fallback AND drives debt below the engine's 0.01 hasDebt floor.
+// =====================================================================
+describe('B38 — zero-debt PPP (falsy-fallback + ε workaround)', () => {
+  test('B38.1: ENGINE QUIRK — setting Debt %=0 collapses to default 80%', () => {
+    const out = runPPPEngine(pppWith({ 'Debt %': 0 }))
+    // (0 || 80) / 100 = 0.8 → debt = 100M * 0.8 = 80M (falsy fallback)
+    expect(out.debt_amount).toBeCloseTo(80_000_000, CURR_DP)
+  })
+
+  test('B38.2: tiny ε on Debt % drives effective zero-debt (no interest, no principal, null DSCR)', () => {
+    // Debt % = 1e-9 → debt = 100M * (1e-9 / 100) = 1e-3 JOD < 0.01 floor.
+    // hasDebt = false in every ops year → interest=0, principal=0.
+    const out = runPPPEngine(pppWith({ 'Debt %': 1e-9, 'Equity %': 100 }))
+    const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
+    opsRows.forEach(r => {
+      expect(r.interest).toBe(0)
+      expect(r.principal).toBe(0)
+      expect(r.dscr).toBeNull()
+    })
+    expect(out.dscr_series.length).toBe(0)
+  })
+})
+
+// =====================================================================
+// B39 — Construction-month → years rounding
+// constrYears = max(1, ceil(constrMonths / 12))
+// Verifies the rounding boundary behavior.
+// (Note: constrMonths=0 is unreachable — pppVal returns 0 → ||24 fires.)
+// =====================================================================
+describe('B39 — construction-month rounding', () => {
+  test('B39.1: ceil(months/12) maps months to construction_years', () => {
+    const cases = [
+      { months: 1,  expected: 1 },
+      { months: 11, expected: 1 },
+      { months: 12, expected: 1 },
+      { months: 13, expected: 2 },
+      { months: 24, expected: 2 },
+      { months: 25, expected: 3 },
+      { months: 36, expected: 3 },
+      { months: 37, expected: 4 },
+    ]
+    cases.forEach(c => {
+      const out = runPPPEngine(pppWith({ 'Construction Period': c.months }))
+      expect(out.construction_years).toBe(c.expected)
+    })
+  })
+})
+
+// =====================================================================
+// B40 — 13-month construction → 2 years (reinforcement)
+// Specific edge case from B39 with deeper structural assertions.
+// =====================================================================
+describe('B40 — 13-month construction → 2 years', () => {
+  const out = runPPPEngine(pppWith({ 'Construction Period': 13 }))
+
+  test('B40.1: construction_years = 2', () => {
+    expect(out.construction_years).toBe(2)
+  })
+
+  test('B40.2: cash_flows[0..1] = Construction, cash_flows[2] = Operations', () => {
+    expect(out.cash_flows[0].phase).toBe('Construction')
+    expect(out.cash_flows[1].phase).toBe('Construction')
+    expect(out.cash_flows[2].phase).toBe('Operations')
+  })
+
+  test('B40.3: Σ construction equity_cf = −equity_amount', () => {
+    const constrRows = out.cash_flows.filter(r => r.phase === 'Construction')
+    const sumEqCF = constrRows.reduce((s, r) => s + r.equity_cf, 0)
+    expect(sumEqCF).toBeCloseTo(-out.equity_amount, CURR_DP)
+  })
+})
+
+// =====================================================================
+// B41 — Long concession stress (99-year)
+// Engine must handle long concessions without crashing or producing
+// non-finite values. Years past debt-retirement (op > loanTenor) are
+// debt-free steady-state and excluded from dscr_series.
+// =====================================================================
+describe('B41 — long concession (99-year)', () => {
+  const out = runPPPEngine(pppWith({ 'Concession Period': 99 }))
+
+  test('B41.1: operations_years = 99 and cash_flows.length = constr + 99', () => {
+    expect(out.operations_years).toBe(99)
+    expect(out.cash_flows.length).toBe(out.construction_years + 99)
+  })
+
+  test('B41.2: irr and npv are finite numbers', () => {
+    expect(Number.isFinite(out.irr)).toBe(true)
+    expect(Number.isFinite(out.npv)).toBe(true)
+  })
+
+  test('B41.3: post-tenor ops years (op > 10) are debt-free (interest=0, principal=0, dscr=null)', () => {
+    const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
+    for (let i = 10; i < opsRows.length; i++) {  // op=11.. → index 10..
+      expect(opsRows[i].interest).toBe(0)
+      expect(opsRows[i].principal).toBe(0)
+      expect(opsRows[i].dscr).toBeNull()
+    }
+  })
+})
+
+// =====================================================================
+// B42 — Debt amortization completion
+// Annuity is sized over (tenor − grace) = 8 years. Post-grace ops years
+// 3..10 should fully amortize the debt. Σ principal ≈ debt_amount;
+// year 11+ is debt-free.
+// =====================================================================
+describe('B42 — debt amortization completion', () => {
+  const out = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
+  const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B42.1: at ops year 11 (post-tenor), interest=0 and principal=0', () => {
+    expect(opsRows[10].interest).toBe(0)
+    expect(opsRows[10].principal).toBe(0)
+  })
+
+  test('B42.2: Σ principal across all ops years ≈ debt_amount (within ±1 JOD)', () => {
+    const sumPrincipal = opsRows.reduce((s, r) => s + r.principal, 0)
+    expect(sumPrincipal).toBeCloseTo(out.debt_amount, 0)  // 0dp ≈ ±0.5 JOD
+  })
+
+  test('B42.3: no operations row has negative principal (Math.max clamp at 0)', () => {
+    opsRows.forEach(r => {
+      expect(r.principal).toBeGreaterThanOrEqual(0)
+    })
+  })
+})
+
+// =====================================================================
+// B43 — DSCR null when totalDS ≤ 1 JOD
+// Engine: dscr = totalDS > 1 ? r2(cfads/totalDS) : null
+// Years where interest+principal ≤ 1 JOD (e.g. post-amortization when
+// hasDebt=false) yield dscr=null and are excluded from dscr_series.
+// =====================================================================
+describe('B43 — DSCR null when totalDS ≤ 1 JOD', () => {
+  const out = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
+  const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B43.1: post-amortization ops years (op > 10) have dscr=null', () => {
+    for (let i = 10; i < opsRows.length; i++) {
+      expect(opsRows[i].dscr).toBeNull()
+    }
+  })
+
+  test('B43.2: dscr_series only includes years with totalDS > 1 (ops 1..10)', () => {
+    expect(out.dscr_series.length).toBe(10)
+    out.dscr_series.forEach(d => {
+      expect(d.year).toBeGreaterThanOrEqual(1)
+      expect(d.year).toBeLessThanOrEqual(10)
+      expect(d.dscr).not.toBeNull()
+    })
+  })
+})
+
+// =====================================================================
+// B44 / B45 — BLOCKED pending extraction
+//
+// computeRequiredPayment lives in src/pages/FeasibilityProject.jsx and
+// is not exported from annualEngine.js. It cannot be imported by Jest
+// without either:
+//   (a) extracting it into annualEngine.js, OR
+//   (b) setting up Jest mocks for supabase / jsPDF / react-router.
+//
+// Both options touch production code, which is out of scope for this
+// validation pass.
+//
+// Planned coverage (deferred):
+//   B44 — solver convergence: returns a payment that achieves
+//         minDSCR ≥ target; payment_gap = required − current.
+//   B45 — cap behavior: when no payment within (maxIterations × step)
+//         solves the target, solver returns current + 2000 × 10000.
+// =====================================================================
