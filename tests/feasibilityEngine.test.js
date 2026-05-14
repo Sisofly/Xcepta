@@ -76,6 +76,15 @@ const F_RE_RENTAL_ASSUMPTIONS = F_RE_SALE_ASSUMPTIONS.map(a => {
   return a
 })
 
+// Variant: 50/50 mixed-use. Revenue Model="Mixed" (anything other than
+// 'Sale' or 'Rental') triggers the `Sale Split %` path in the engine.
+// Used by B16 to test mixed-use revenue/debt partitioning.
+const F_RE_MIXED_ASSUMPTIONS = F_RE_SALE_ASSUMPTIONS.map(a => {
+  if (a.name === 'Revenue Model') return { ...a, value: null, unit: 'Mixed' }
+  if (a.name === 'Sale Split %')  return { ...a, value: 50 }
+  return a
+})
+
 const F_RE_SALE_DEFAULTS = [
   { key: 'construction_cost_per_sqm_residential', value: 650 },
   { key: 'contingency_pct',                       value: 0.05 },
@@ -571,6 +580,269 @@ describe('B13 — cash-flow reconciliation (RE engine)', () => {
   test('B13.5: equity_cf = net_income − principal (every ops row)', () => {
     ops.forEach(r => {
       expect(r.equity_cf).toBeCloseTo(r.net_income - r.principal, 1)
+    })
+  })
+})
+
+// =====================================================================
+// B14 — Sale-only project logic (RE engine)
+// Revenue Model='Sale' → saleSplit=1, rentalSplit=0, rentalGfa=0.
+// Signature: all revenue from sales absorption; no rental tail after
+// inventory is depleted; opex has no asset-based maint/insr component.
+// F-RE-Sale year 1 hand-calc:
+//   sold = min(10000, 10000 × 0.35) = 3500
+//   saleRev = 3500 × 1200 × (1.025)^0 = 4,200,000
+//   rentRev = 0 (rentalGfa = 0)
+// =====================================================================
+describe('B14 — sale-only project logic (RE engine)', () => {
+  const out = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+  const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B14.1: F-RE-Sale ops year 1 revenue = sold × salePrice = 4,200,000', () => {
+    const absRate = 0.35
+    const saleGfa = 10000
+    const salePrice = 1200
+    const expected = (saleGfa * absRate) * salePrice * Math.pow(1 + 0.025, 0)
+    expect(ops[0].revenue).toBeCloseTo(expected, CURR_DP)
+  })
+
+  test('B14.2: F-RE-Sale — once GFA is depleted, revenue is exactly 0 (no rental tail)', () => {
+    // After year 3 (10000 - 3 × 3500 capped), remSaleGfa = 0 → revenue = 0
+    // F-RE-Sale has no rental component, so years 4+ produce zero revenue.
+    for (let i = 3; i < ops.length; i++) {
+      expect(ops[i].revenue).toBe(0)
+    }
+  })
+})
+
+// =====================================================================
+// B15 — Rental-only project logic (RE engine)
+// Revenue Model='Rental' → saleSplit=0, rentalSplit=1, saleGfa=0.
+// All revenue from rental; occupancy ramps 0.55 + 0.15×(op-1), capped
+// at maxOcc=0.88; rpsqm = (assetVal/gfa) × rentYield × (1+rentEsc)^(op-1).
+// F-RE-Rental year 1 hand-calc:
+//   assetVal = 10000 × 1200 = 12,000,000
+//   rpsqm    = 1200 × 0.06 × (1.03)^0 = 72
+//   occ      = min(0.88, 0.55) = 0.55
+//   rentRev  = 10000 × 72 × 0.55 = 396,000
+// =====================================================================
+describe('B15 — rental-only project logic (RE engine)', () => {
+  const out = runEngine(F_RE_RENTAL_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+  const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B15.1: F-RE-Rental ops year 1 revenue ≈ 396,000 (10000 × 72 × 0.55)', () => {
+    const gfa = 10000
+    const salePrice = 1200
+    const rentYield = 0.06
+    const rpsqm = (gfa * salePrice / gfa) * rentYield
+    const occ = 0.55
+    const expected = gfa * rpsqm * occ
+    expect(ops[0].revenue).toBeCloseTo(expected, CURR_DP)
+  })
+
+  test('B15.2: F-RE-Rental revenue grows monotonically through ramp years (1→2→3→4)', () => {
+    // Occupancy: 0.55, 0.70, 0.85, 0.88 (stabilized) — increasing
+    // Rent escalation: × 1.03 each year — increasing
+    // Both effects pull revenue up during ramp
+    for (let i = 1; i < 4 && i < ops.length; i++) {
+      expect(ops[i].revenue).toBeGreaterThan(ops[i - 1].revenue)
+    }
+  })
+
+  test('B15.3: F-RE-Rental year 1 interest = rentalDebt × debtRate (no saleInt component)', () => {
+    // saleSplit=0 → saleDebt=0 → saleInt=0
+    // All debt is rental: rentalDebt = debt × 1.0 × capFactor
+    const debt = 5_733_000
+    const debtRate = 0.085
+    const capFactor = Math.pow(1 + debtRate, 2)
+    const rentalDebt = debt * 1.0 * capFactor
+    expect(ops[0].interest).toBeCloseTo(rentalDebt * debtRate, CURR_DP)
+  })
+})
+
+// =====================================================================
+// B16 — Mixed 50/50 project logic (RE engine)
+// Revenue Model='Mixed' → engine reads Sale Split %; here saleSplit=0.5.
+// Both saleGfa=5000 and rentalGfa=5000; both saleDebt and rentalDebt
+// fund the project at half scale; total debt amount unchanged from
+// 100% Sale because saleSplit + rentalSplit = 1.
+// F-RE-Mixed year 1 hand-calc:
+//   saleRev = 5000 × 0.35 × 1200 × 1            = 2,100,000
+//   rentRev = 5000 × 72 × 0.55                  =   198,000
+//   total                                       = 2,298,000
+//   year-1 interest = (saleDebt + rentalDebt) × debtRate
+//                   = (debt × capFactor) × debtRate
+//                   = same as F-RE-Sale's year-1 interest
+// =====================================================================
+describe('B16 — mixed 50/50 project logic (RE engine)', () => {
+  const out = runEngine(F_RE_MIXED_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+  const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B16.1: F-RE-Mixed year 1 revenue ≈ 2,298,000 (2.1M sale + 0.198M rental)', () => {
+    const expected = 2_100_000 + 198_000
+    expect(ops[0].revenue).toBeCloseTo(expected, CURR_DP)
+  })
+
+  test('B16.2: F-RE-Mixed year 1 interest = (saleDebt + rentalDebt) × debtRate', () => {
+    // Total debt × capFactor is preserved regardless of split → year-1 interest
+    // is the same as F-RE-Sale's year-1 interest (proven in B8.2).
+    const debt = 5_733_000
+    const debtRate = 0.085
+    const capFactor = Math.pow(1 + debtRate, 2)
+    const totalCapDebt = debt * 1.0 * capFactor  // saleSplit + rentalSplit = 1
+    expect(ops[0].interest).toBeCloseTo(totalCapDebt * debtRate, CURR_DP)
+  })
+
+  test('B16.3: F-RE-Mixed has both revenue streams (year-1 revenue > sale-only and > rental-only would be at half-saleGfa)', () => {
+    // Sanity: mixed year-1 should be > rental-only year-1 since it adds sale revenue
+    const rentalOnly = runEngine(F_RE_RENTAL_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    expect(ops[0].revenue).toBeGreaterThan(rentalOnly.cash_flows[2].revenue)
+  })
+})
+
+// =====================================================================
+// B17 — Price escalation (RE engine)
+// Engine: saleRev = sold × salePrice × (1 + priceEsc)^(op-1)
+// Default priceEsc = 0.025.
+// In years where 'sold' is constant (early years before depletion), the
+// revenue ratio year-on-year equals exactly (1 + priceEsc).
+// F-RE-Sale years 1-2 both have sold = 3500 → ratio = 1.025.
+// =====================================================================
+describe('B17 — price escalation (RE engine)', () => {
+  const out = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+  const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B17.1: F-RE-Sale year-2 / year-1 revenue ratio = (1 + priceEsc) = 1.025', () => {
+    const priceEsc = 0.025
+    const ratio = ops[1].revenue / ops[0].revenue
+    expect(ratio).toBeCloseTo(1 + priceEsc, RATIO_DP)
+  })
+})
+
+// =====================================================================
+// B18 — Rent escalation (RE engine)
+// Engine: rpsqm = (assetVal/gfa) × rentYield × (1 + rentEsc)^(op-1)
+// Default rentEsc = 0.03.
+// In post-stabilization years (occ = maxOcc = 0.88), the only year-on-year
+// revenue change comes from rent escalation, so the ratio is exactly
+// (1 + rentEsc).
+// F-RE-Rental: occ stabilizes at year 4 (op=4 → 0.55+0.15×3 = 1.0 capped at 0.88).
+// Years 4 and 5 are both stabilized → ratio = 1.03.
+// =====================================================================
+describe('B18 — rent escalation (RE engine)', () => {
+  const out = runEngine(F_RE_RENTAL_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+  const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B18.1: F-RE-Rental year-5 / year-4 revenue ratio = (1 + rentEsc) = 1.03 (post-stabilization)', () => {
+    const rentEsc = 0.03
+    // ops[3] = op 4 (stabilized first time), ops[4] = op 5 (stabilized)
+    const ratio = ops[4].revenue / ops[3].revenue
+    expect(ratio).toBeCloseTo(1 + rentEsc, RATIO_DP)
+  })
+})
+
+// =====================================================================
+// B19 — OPEX composition (RE engine)
+// Engine: opex = mgmt + maint + insr
+//   mgmt  = revenue × mgmtFee
+//   maint = assetVal × (rentalGfa / gfa) × maintPct
+//   insr  = assetVal × (rentalGfa / gfa) × insrPct
+// maint + insr is INVARIANT across years (asset-based, not revenue-based).
+// For F-RE-Sale (rentalGfa=0):   maint + insr = 0
+// For F-RE-Rental (rentalGfa=gfa): maint + insr = assetVal × (maintPct + insrPct) = 12M × 0.015 = 180,000
+// For F-RE-Mixed (rentalGfa=gfa/2): maint + insr = 90,000
+// =====================================================================
+describe('B19 — OPEX composition (RE engine)', () => {
+  const mgmtFee = 0.05  // matches F_RE_SALE_DEFAULTS property_management_fee_pct
+
+  test('B19.1: F-RE-Sale — opex = revenue × mgmtFee (no asset-based maint/insr)', () => {
+    const out = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    out.cash_flows.filter(r => r.phase === 'Operations').forEach(r => {
+      expect(r.opex).toBeCloseTo(r.revenue * mgmtFee, 1)
+    })
+  })
+
+  test('B19.2: F-RE-Rental — opex − revenue × mgmtFee = 180,000 (asset-based constant)', () => {
+    const out = runEngine(F_RE_RENTAL_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    out.cash_flows.filter(r => r.phase === 'Operations').forEach(r => {
+      expect(r.opex - r.revenue * mgmtFee).toBeCloseTo(180_000, 1)
+    })
+  })
+
+  test('B19.3: F-RE-Mixed — opex − revenue × mgmtFee = 90,000 (half asset)', () => {
+    const out = runEngine(F_RE_MIXED_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    out.cash_flows.filter(r => r.phase === 'Operations').forEach(r => {
+      expect(r.opex - r.revenue * mgmtFee).toBeCloseTo(90_000, 1)
+    })
+  })
+})
+
+// =====================================================================
+// B20 — Sale revenue depletion (RE engine)
+// Engine: each year sold = min(remSaleGfa, saleGfa × absRate);
+//         remSaleGfa = max(0, remSaleGfa − sold).
+// Once remSaleGfa < 0.01, sale revenue = 0.
+// F-RE-Sale: 10000 / (10000 × 0.35) ≈ 2.857 years → depletes by year 3.
+// =====================================================================
+describe('B20 — sale revenue depletion (RE engine)', () => {
+  const out = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+  const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+
+  test('B20.1: F-RE-Sale year 4+ revenue = 0 (inventory fully sold by year 3)', () => {
+    for (let i = 3; i < ops.length; i++) {
+      expect(ops[i].revenue).toBe(0)
+    }
+  })
+
+  test('B20.2: F-RE-Sale total units sold across all years = saleGfa (mass conservation)', () => {
+    // Per-year sold = revenue / (salePrice × (1+priceEsc)^(op-1))
+    const salePrice = 1200
+    const priceEsc = 0.025
+    let totalSold = 0
+    ops.forEach((r, i) => {
+      if (r.revenue > 0) {
+        const unitPrice = salePrice * Math.pow(1 + priceEsc, i)  // i = op - 1
+        totalSold += r.revenue / unitPrice
+      }
+    })
+    const saleGfa = 10_000  // F-RE-Sale: gfa × efficiency × saleSplit = 10000 × 1.0 × 1.0
+    expect(totalSold).toBeCloseTo(saleGfa, 0)
+  })
+})
+
+// =====================================================================
+// B21 — Tax behavior (RE engine)
+// Engine: tax = Math.max(0, pbt × taxRate)
+// Asymmetric: positive PBT taxed at flat rate; negative PBT → tax = 0;
+// no loss carry-forward (see memory: annual_engine_no_tax_nol.md).
+// Default taxRate = 0.20.
+// =====================================================================
+describe('B21 — tax behavior (RE engine)', () => {
+  const taxRate = 0.20
+
+  test('B21.1: F-RE-Sale year-1 (positive pbt) — tax = pbt × taxRate', () => {
+    const out = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+    expect(ops[0].pbt).toBeGreaterThan(0)
+    expect(ops[0].tax).toBeCloseTo(ops[0].pbt * taxRate, 1)
+  })
+
+  test('B21.2: F-RE-Rental — negative-pbt years have tax = 0 (no NOL credit)', () => {
+    const out = runEngine(F_RE_RENTAL_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+    const negPbtRows = ops.filter(r => r.pbt < 0)
+    expect(negPbtRows.length).toBeGreaterThan(0)  // sanity: ramp years have negative pbt
+    negPbtRows.forEach(r => {
+      expect(r.tax).toBe(0)
+    })
+  })
+
+  test('B21.3: F-RE-Sale — when revenue = 0 (depleted), pbt ≤ 0 and tax = 0', () => {
+    const out = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+    ops.filter(r => r.revenue === 0).forEach(r => {
+      expect(r.pbt).toBeLessThanOrEqual(0)
+      expect(r.tax).toBe(0)
     })
   })
 })
