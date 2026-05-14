@@ -913,6 +913,31 @@ export default function FeasibilityProject() {
     finally { setCreatingDraft(false) }
   }
 
+  // Refresh post-approval state from the server. Mirrors the load-effect queries
+  // for version + modelOutput + latestApprovedVersion + latestApprovedOutput.
+  // Called after handleApprove to fix stale Results / export state without a page reload.
+  async function refreshApprovalState(scenarioId) {
+    if (!scenarioId) return
+    const { data: versions } = await supabase.from('versions').select('*')
+      .eq('scenario_id', scenarioId).order('created_at', { ascending: false }).limit(1)
+    const latestVer = versions && versions.length ? versions[0] : null
+    if (latestVer) setVersion(latestVer)
+    if (latestVer && latestVer.status === 'approved') {
+      const { data: outputs } = await supabase.from('model_outputs').select('*')
+        .eq('version_id', latestVer.version_id).order('computed_at', { ascending: false }).limit(1)
+      if (outputs && outputs.length) setModelOutput(outputs[0])
+    }
+    const { data: approvedVers } = await supabase.from('versions').select('*')
+      .eq('scenario_id', scenarioId).eq('status', 'approved')
+      .order('approved_at', { ascending: false }).limit(1)
+    if (approvedVers && approvedVers.length) {
+      setLatestApprovedVersion(approvedVers[0])
+      const { data: approvedOutputs } = await supabase.from('model_outputs').select('*')
+        .eq('version_id', approvedVers[0].version_id).order('computed_at', { ascending: false }).limit(1)
+      if (approvedOutputs && approvedOutputs.length) setLatestApprovedOutput(approvedOutputs[0])
+    }
+  }
+
   async function handleApprove() {
     if (!version) return
     // ── B2: Capital structure validation (RE / non-PPP only) ──
@@ -939,6 +964,7 @@ export default function FeasibilityProject() {
       if (error) throw error
       const approvedVersion = { ...version, status: 'approved', approved_at: new Date().toISOString(), label: newLabel }
       setVersion(approvedVersion)
+      await refreshApprovalState(version.scenario_id)
       setTab('Results')
     } catch (err) { alert('Error: ' + err.message) }
     finally { setApproving(false) }
@@ -2346,13 +2372,13 @@ export default function FeasibilityProject() {
               <div>
                 <p style={{fontSize:'0.95rem',color:'#e6edf3',fontWeight:'500',marginBottom:'0.4rem'}}>Approve Year 0 Baseline</p>
                 <p style={{fontSize:'0.82rem',color:'#8b949e',lineHeight:'1.5'}}>
-                  Approving this version locks it as the baseline for FP&A variance tracking and runs the financial model.
+                  Approving this version locks it as the baseline for FP&A variance tracking.
                 </p>
               </div>
               <button onClick={handleApprove} disabled={approving}
                 style={{padding:'0.55rem 1.4rem',background:'#238636',color:'white',border:'1px solid #2ea043',
                   borderRadius:'6px',cursor:approving?'not-allowed':'pointer',fontSize:'0.875rem',fontWeight:'500',opacity:approving?0.6:1}}>
-                {approving ? 'Running model...' : 'Approve Version'}
+                {approving ? 'Approving...' : 'Approve Version'}
               </button>
             </div>
           ) : (
