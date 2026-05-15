@@ -22,7 +22,7 @@
 
 import {
   annuity, npvCalc, irrCalc, r2,
-  runEngine, runPPPEngine,
+  runEngine, runPPPEngine, computeRequiredPayment,
 } from '../src/modules/feasibility/annualEngine.js'
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1643,21 +1643,133 @@ describe('B43 — DSCR null when totalDS ≤ 1 JOD', () => {
   })
 })
 
+// ═════════════════════════════════════════════════════════════════════
+// P5 — PPP Engine Validation (Part 2)
+// B44–B45: computeRequiredPayment (DSCR solver)
+//
+// computeRequiredPayment is a linear search over the annual payment:
+//   - starts at currentPayment, steps +10,000 JOD per iteration
+//   - max 2000 iterations
+//   - returns the first payment where runPPPEngine yields minDSCR ≥ target
+//
+// Solver semantics (re-derived from annualEngine.js):
+//   - Tests payments at currentPayment + i*step for i = 0..1999
+//   - Returns immediately on success — payment_gap = 0 is possible if
+//     currentPayment already satisfies the target
+//   - If no payment in the tested range satisfies the target, the loop
+//     exits with testPayment = currentPayment + 2000*step. This returned
+//     value was NEVER tested by the engine (one step past the last
+//     tested value). No error or flag is raised — silent cap.
+//   - Default target = 1.20 when targetDSCR is null/undefined/0
+//     (falsy-fallback: `var target = targetDSCR || 1.20`)
+//
+// Extracted from FeasibilityProject.jsx in commit be79d46 (2026-05-15).
+// Behavior is byte-identical to the pre-extraction definition.
+// ═════════════════════════════════════════════════════════════════════
+
 // =====================================================================
-// B44 / B45 — BLOCKED pending extraction
-//
-// computeRequiredPayment lives in src/pages/FeasibilityProject.jsx and
-// is not exported from annualEngine.js. It cannot be imported by Jest
-// without either:
-//   (a) extracting it into annualEngine.js, OR
-//   (b) setting up Jest mocks for supabase / jsPDF / react-router.
-//
-// Both options touch production code, which is out of scope for this
-// validation pass.
-//
-// Planned coverage (deferred):
-//   B44 — solver convergence: returns a payment that achieves
-//         minDSCR ≥ target; payment_gap = required − current.
-//   B45 — cap behavior: when no payment within (maxIterations × step)
-//         solves the target, solver returns current + 2000 × 10000.
+// B44 — computeRequiredPayment achievable target
+// Baseline P_PPP_BASE has minDSCR ≈ 0.69 (last repayment year), so
+// target=1.20 requires solver iteration; target=0.5 is already
+// satisfied.
 // =====================================================================
+describe('B44 — computeRequiredPayment achievable target', () => {
+  const BASE_PAYMENT = 12_000_000  // matches P_PPP_BASE_ASSUMPTIONS
+
+  // Helper: run runPPPEngine at a specific payment value and return minDSCR
+  function minDscrAt(payment) {
+    const tested = P_PPP_BASE_ASSUMPTIONS.map(a =>
+      a.name === 'Annual Availability Payment'
+        ? { ...a, value: payment }
+        : a
+    )
+    const out = runPPPEngine(tested)
+    const dscrs = out.dscr_series
+      .filter(d => d.dscr !== null)
+      .map(d => d.dscr)
+    return dscrs.length ? Math.min.apply(null, dscrs) : null
+  }
+
+  test('B44.1: returned payment, fed back into engine, achieves minDSCR ≥ target', () => {
+    const TARGET = 1.20
+    const result = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, TARGET)
+    expect(result.required_payment).toBeGreaterThan(BASE_PAYMENT)
+    expect(minDscrAt(result.required_payment)).toBeGreaterThanOrEqual(TARGET)
+  })
+
+  test('B44.2: payment_gap = required_payment − currentPayment', () => {
+    const result = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, 1.20)
+    expect(result.payment_gap).toBe(result.required_payment - BASE_PAYMENT)
+  })
+
+  test('B44.3: default target = 1.20 when targetDSCR omitted', () => {
+    const withoutArg  = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS)
+    const withDefault = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, 1.20)
+    expect(withoutArg.required_payment).toBe(withDefault.required_payment)
+    expect(withoutArg.payment_gap).toBe(withDefault.payment_gap)
+  })
+
+  test('B44.4: if currentPayment already meets target, returns it unchanged (gap=0)', () => {
+    // Baseline minDSCR ≈ 0.69 at op=10, so target=0.5 is already satisfied.
+    const result = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, 0.5)
+    expect(result.required_payment).toBe(BASE_PAYMENT)
+    expect(result.payment_gap).toBe(0)
+  })
+
+  test('B44.5: payment_gap is a non-negative integer multiple of step (10,000)', () => {
+    const result = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, 1.20)
+    expect(result.payment_gap).toBeGreaterThanOrEqual(0)
+    expect(result.payment_gap % 10_000).toBe(0)
+  })
+})
+
+// =====================================================================
+// B45 — computeRequiredPayment unreachable target / cap behavior
+// Target=5.0 requires payment ≈ 88M, way beyond the cap of
+// currentPayment + 2000*10K = 32M from a 12M base. Solver caps out.
+// =====================================================================
+describe('B45 — computeRequiredPayment unreachable target / cap', () => {
+  const BASE_PAYMENT = 12_000_000
+  const CAP_DELTA    = 20_000_000  // 2000 iterations × 10K step
+  const UNREACHABLE  = 5.0
+
+  function minDscrAt(payment) {
+    const tested = P_PPP_BASE_ASSUMPTIONS.map(a =>
+      a.name === 'Annual Availability Payment'
+        ? { ...a, value: payment }
+        : a
+    )
+    const out = runPPPEngine(tested)
+    const dscrs = out.dscr_series
+      .filter(d => d.dscr !== null)
+      .map(d => d.dscr)
+    return dscrs.length ? Math.min.apply(null, dscrs) : null
+  }
+
+  test('B45.1: unreachable target → returns currentPayment + 2000*step (cap)', () => {
+    const result = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, UNREACHABLE)
+    expect(result.required_payment).toBe(BASE_PAYMENT + CAP_DELTA)
+    expect(result.payment_gap).toBe(CAP_DELTA)
+  })
+
+  test('B45.2: FINDING — cap-returned payment, fed to engine, still yields minDSCR < target', () => {
+    // Solver silently fails to flag unreachability. The returned
+    // required_payment was never actually tested by the engine (it's
+    // one step past the last tested value). Caller cannot distinguish
+    // a valid convergence from a budget exhaustion.
+    const result = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, UNREACHABLE)
+    const minDSCR = minDscrAt(result.required_payment)
+    expect(minDSCR).not.toBeNull()
+    expect(minDSCR).toBeLessThan(UNREACHABLE)
+  })
+
+  test('B45.3: one step below cap (last tested payment) also fails target', () => {
+    // Confirms the solver exhausted its 2000-iteration budget rather
+    // than hitting an early-exit edge case.
+    const result = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, UNREACHABLE)
+    const lastTested = result.required_payment - 10_000
+    const minDSCR = minDscrAt(lastTested)
+    expect(minDSCR).not.toBeNull()
+    expect(minDSCR).toBeLessThan(UNREACHABLE)
+  })
+})
