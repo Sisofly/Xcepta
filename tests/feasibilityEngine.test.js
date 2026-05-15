@@ -2270,3 +2270,348 @@ describe('B49 — recommendation tiers: Proceed / Conditions / Do Not Proceed', 
     expect(b.PPP_DSCR_FLOOR).toBe(PPP_DSCR_FLOOR)
   })
 })
+
+// ═════════════════════════════════════════════════════════════════════
+// P7 — Sensitivity & Monotonicity
+// B50–B56
+//
+// Tests that runEngine and runPPPEngine outputs respond in the correct
+// direction when individual inputs are varied, and that sensitivity
+// grids contain no directional inversions.
+//
+// All assertions are relative (A < B < C) rather than absolute, so
+// they remain valid even if engine math is later recalibrated.
+//
+// RE engine leverage note (B53):
+//   The sale-debt cash-sweep model (principal = min(outstanding, netInc))
+//   directs ALL equity cash flows to debt repayment until the capitalized
+//   saleDebt is retired. At baseline (1200/sqm, 8.5%), this takes 2 full
+//   ops years, leaving equity with only the year-3 surplus. Because that
+//   surplus is less than the equity invested (EM ≈ 0.71, B12.3), the
+//   baseline is a LOSS for equity. The unlevered investor (same project,
+//   no debt) keeps all post-tax revenue → EM > 1. Negative leverage.
+//   At 3000/sqm the debt repays in ops year 1; years 2–3 surplus flows
+//   entirely to equity → levered EM >> unlevered EM. Positive leverage.
+// ═════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────
+// P7 helpers
+// ─────────────────────────────────────────────────────────────────────
+
+// Override a single key in the defaults array (non-mutating).
+function withDefault(defs, key, val) {
+  return defs.map(d => d.key === key ? { ...d, value: val } : d)
+}
+
+// Return the minimum DSCR from a runPPPEngine output object.
+function pppMinDscr(out) {
+  const vals = out.dscr_series.filter(d => d.dscr !== null).map(d => d.dscr)
+  return vals.length ? Math.min.apply(null, vals) : null
+}
+
+// =====================================================================
+// B50 — Higher sale price → higher IRR / NPV / EM
+// Prices chosen above the project's equity-breakeven (~1500/sqm) so
+// all three data points produce a positive EM and a computable IRR.
+// =====================================================================
+describe('B50 — sale price monotonically lifts IRR / NPV / EM', () => {
+  const PRICES = [1500, 2000, 2500]   // JOD / sqm
+  const outs = PRICES.map(p =>
+    runEngine(
+      F_RE_SALE_ASSUMPTIONS,
+      withDefault(F_RE_SALE_DEFAULTS, 'sale_price_per_sqm_residential', p),
+    )
+  )
+
+  test('B50.1: IRR is non-null and increases with sale price', () => {
+    outs.forEach(o => expect(o.irr).not.toBeNull())
+    expect(outs[0].irr).toBeLessThan(outs[1].irr)
+    expect(outs[1].irr).toBeLessThan(outs[2].irr)
+  })
+
+  test('B50.2: NPV increases with sale price', () => {
+    expect(outs[0].npv).toBeLessThan(outs[1].npv)
+    expect(outs[1].npv).toBeLessThan(outs[2].npv)
+  })
+
+  test('B50.3: equity multiple (EM) increases with sale price', () => {
+    expect(outs[0].equity_multiple).toBeLessThan(outs[1].equity_multiple)
+    expect(outs[1].equity_multiple).toBeLessThan(outs[2].equity_multiple)
+  })
+})
+
+// =====================================================================
+// B51 — Higher construction cost → lower IRR / NPV / EM
+// A sale price of 2000/sqm is used throughout to keep returns
+// positive; monotonicity doesn't require positive IRR, but avoids
+// the null-IRR edge cases that arise near breakeven.
+// =====================================================================
+describe('B51 — construction cost monotonically depresses IRR / NPV / EM', () => {
+  const BASE_DEFS = withDefault(F_RE_SALE_DEFAULTS, 'sale_price_per_sqm_residential', 2000)
+  const COSTS = [500, 650, 800]       // JOD / sqm
+  const outs = COSTS.map(c =>
+    runEngine(
+      F_RE_SALE_ASSUMPTIONS,
+      withDefault(BASE_DEFS, 'construction_cost_per_sqm_residential', c),
+    )
+  )
+
+  test('B51.1: TPC (tdc field) increases with construction cost', () => {
+    // Confirms the cost delta reaches the engine; validates other B51 tests.
+    expect(outs[0].tdc).toBeLessThan(outs[1].tdc)
+    expect(outs[1].tdc).toBeLessThan(outs[2].tdc)
+  })
+
+  test('B51.2: IRR decreases with construction cost', () => {
+    expect(outs[0].irr).toBeGreaterThan(outs[1].irr)
+    expect(outs[1].irr).toBeGreaterThan(outs[2].irr)
+  })
+
+  test('B51.3: NPV decreases with construction cost', () => {
+    expect(outs[0].npv).toBeGreaterThan(outs[1].npv)
+    expect(outs[1].npv).toBeGreaterThan(outs[2].npv)
+  })
+
+  test('B51.4: equity multiple (EM) decreases with construction cost', () => {
+    expect(outs[0].equity_multiple).toBeGreaterThan(outs[1].equity_multiple)
+    expect(outs[1].equity_multiple).toBeGreaterThan(outs[2].equity_multiple)
+  })
+})
+
+// =====================================================================
+// B52 — Higher interest rate → lower equity IRR / EM / NPV
+// Revenue is fixed (sale price 2000/sqm). Rising debt rate raises
+// capitalized saleDebt, increases interest expense each ops year,
+// and delays full debt retirement — depressing equity returns.
+// =====================================================================
+describe('B52 — interest rate monotonically depresses equity IRR / EM / NPV', () => {
+  const BASE_DEFS = withDefault(F_RE_SALE_DEFAULTS, 'sale_price_per_sqm_residential', 2000)
+  const RATES = [0.05, 0.085, 0.12]   // 5%, 8.5%, 12%
+  const outs = RATES.map(r =>
+    runEngine(
+      F_RE_SALE_ASSUMPTIONS,
+      withDefault(BASE_DEFS, 'senior_debt_interest_rate', r),
+    )
+  )
+
+  test('B52.1: equity IRR decreases as debt interest rate rises', () => {
+    expect(outs[0].irr).toBeGreaterThan(outs[1].irr)
+    expect(outs[1].irr).toBeGreaterThan(outs[2].irr)
+  })
+
+  test('B52.2: equity multiple (EM) decreases as debt interest rate rises', () => {
+    expect(outs[0].equity_multiple).toBeGreaterThan(outs[1].equity_multiple)
+    expect(outs[1].equity_multiple).toBeGreaterThan(outs[2].equity_multiple)
+  })
+
+  test('B52.3: NPV decreases as debt interest rate rises (equity CFs shrink; WACC fixed)', () => {
+    // Higher debt interest → lower equity_cf → NPV at the constant discount
+    // rate (WACC) falls.  WACC itself is not varied here — only debtRate.
+    expect(outs[0].npv).toBeGreaterThan(outs[1].npv)
+    expect(outs[1].npv).toBeGreaterThan(outs[2].npv)
+  })
+})
+
+// =====================================================================
+// B53 — Leverage lift: positive and negative leverage cases
+//
+// "Leverage sign" = levered_metric − unlevered_metric.
+//   Positive leverage: levered IRR > unlevered IRR
+//   Negative leverage: levered IRR < unlevered IRR
+//
+// Positive-leverage scenario (3000/sqm):
+//   Debt retires in ops year 1; surplus flows entirely to equity for
+//   years 2–3 → levered EM ≈ 6.7× vs unlevered EM ≈ 2.9×.
+//
+// Negative-leverage scenario (1200/sqm, baseline — FINDING):
+//   Cash-sweep locks all equity CF into debt repayment for ops years 1–2.
+//   Equity only recovers the year-3 residual, which is LESS than the
+//   equity invested (EM ≈ 0.71, locked B12.3). The unlevered investor
+//   earns a nominal gain on the same project (EM > 1) — confirming
+//   that the baseline runs in negative-leverage territory.
+// =====================================================================
+describe('B53 — leverage lift (positive and negative)', () => {
+  // ── Positive leverage: high-return project (3000/sqm) ──────────────
+  const HIGH_DEFS   = withDefault(F_RE_SALE_DEFAULTS, 'sale_price_per_sqm_residential', 3000)
+  const levHighOut  = runEngine(F_RE_SALE_ASSUMPTIONS, HIGH_DEFS)
+  const unlHighOut  = runEngine(F_NO_DEBT_ASSUMPTIONS, HIGH_DEFS)
+
+  test('B53.1: positive leverage — levered IRR > unlevered IRR at 3000/sqm', () => {
+    expect(levHighOut.irr).not.toBeNull()
+    expect(unlHighOut.irr).not.toBeNull()
+    expect(levHighOut.irr).toBeGreaterThan(unlHighOut.irr)
+  })
+
+  test('B53.2: positive leverage — levered EM > unlevered EM at 3000/sqm', () => {
+    expect(levHighOut.equity_multiple).toBeGreaterThan(unlHighOut.equity_multiple)
+  })
+
+  // ── Negative leverage: baseline (1200/sqm, 8.5%) — FINDING ─────────
+  const levBaseOut  = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS) // 70% debt, 8.5%
+  const unlBaseOut  = runEngine(F_NO_DEBT_ASSUMPTIONS, F_RE_SALE_DEFAULTS) // ε-debt ≈ all-equity
+
+  test('B53.3: FINDING — baseline shows negative leverage: levered EM < unlevered EM', () => {
+    // levered EM ≈ 0.71 (equity loses money — locked B12.3)
+    // unlevered EM > 1 (equity gains a nominal positive return)
+    // The sale-debt cash-sweep directs all netInc to debt for ops years 1–2;
+    // equity recovers only the year-3 residual, which is less than invested.
+    expect(levBaseOut.equity_multiple).toBeLessThan(unlBaseOut.equity_multiple)
+    expect(levBaseOut.equity_multiple).toBeLessThan(1.0)   // levered equity loses
+    expect(unlBaseOut.equity_multiple).toBeGreaterThan(1.0) // unlevered equity gains
+  })
+
+  test('B53.4: FINDING — baseline levered NPV < unlevered NPV', () => {
+    expect(levBaseOut.npv).toBeLessThan(unlBaseOut.npv)
+  })
+
+  test('B53.5: leverage sign flips between low-return (1200) and high-return (3000) scenarios', () => {
+    // Low:  levered EM − unlevered EM < 0  (negative leverage)
+    // High: levered EM − unlevered EM > 0  (positive leverage)
+    const diffLow  = levBaseOut.equity_multiple - unlBaseOut.equity_multiple
+    const diffHigh = levHighOut.equity_multiple - unlHighOut.equity_multiple
+    expect(diffLow).toBeLessThan(0)
+    expect(diffHigh).toBeGreaterThan(0)
+  })
+})
+
+// =====================================================================
+// B54 — PPP higher annual payment → higher IRR / NPV / minDSCR
+// Payment drives all three simultaneously: revenue ↑ → EBITDA ↑ →
+// CFADS ↑ → DSCR ↑ and equity_cf ↑ → IRR / NPV ↑.
+// =====================================================================
+describe('B54 — PPP annual payment monotonically lifts IRR / NPV / minDSCR', () => {
+  const PAYMENTS = [10_000_000, 12_000_000, 15_000_000]  // JOD / yr
+  const outs = PAYMENTS.map(p => runPPPEngine(pppWith({ 'Annual Availability Payment': p })))
+
+  test('B54.1: IRR is non-null and increases with annual availability payment', () => {
+    outs.forEach(o => expect(o.irr).not.toBeNull())
+    expect(outs[0].irr).toBeLessThan(outs[1].irr)
+    expect(outs[1].irr).toBeLessThan(outs[2].irr)
+  })
+
+  test('B54.2: NPV increases with annual availability payment', () => {
+    expect(outs[0].npv).toBeLessThan(outs[1].npv)
+    expect(outs[1].npv).toBeLessThan(outs[2].npv)
+  })
+
+  test('B54.3: minDSCR increases with annual availability payment', () => {
+    const dscrs = outs.map(pppMinDscr)
+    dscrs.forEach(d => expect(d).not.toBeNull())
+    expect(dscrs[0]).toBeLessThan(dscrs[1])
+    expect(dscrs[1]).toBeLessThan(dscrs[2])
+  })
+})
+
+// =====================================================================
+// B55 — PPP longer concession period → higher IRR / NPV / EM
+// A longer concession period adds post-amortization "free-cash" ops
+// years (dscr=null, full equity CF). Because the debt tenor (10 yr)
+// is fixed, additional years beyond year 12 (constr 2 + ops 10) are
+// pure equity income, lifting all three return metrics.
+// =====================================================================
+describe('B55 — PPP concession period monotonically lifts IRR / NPV / EM', () => {
+  const PERIODS = [20, 25, 30]        // years
+  const outs = PERIODS.map(p => runPPPEngine(pppWith({ 'Concession Period': p })))
+
+  test('B55.1: IRR is non-null and increases with concession period', () => {
+    outs.forEach(o => expect(o.irr).not.toBeNull())
+    expect(outs[0].irr).toBeLessThan(outs[1].irr)
+    expect(outs[1].irr).toBeLessThan(outs[2].irr)
+  })
+
+  test('B55.2: NPV increases with concession period', () => {
+    expect(outs[0].npv).toBeLessThan(outs[1].npv)
+    expect(outs[1].npv).toBeLessThan(outs[2].npv)
+  })
+
+  test('B55.3: equity multiple (EM) increases with concession period', () => {
+    expect(outs[0].equity_multiple).toBeLessThan(outs[1].equity_multiple)
+    expect(outs[1].equity_multiple).toBeLessThan(outs[2].equity_multiple)
+  })
+})
+
+// =====================================================================
+// B56 — Sensitivity matrix: strict monotonicity, no directional inversions
+//
+// Two 5-point sweeps:
+//   Price sweep: 5 prices at fixed cost 650/sqm. Step = +300/sqm
+//     ≈ +3M additional revenue per step → well above the r2() rounding
+//     floor for IRR distinguishability.
+//   Cost  sweep: 5 costs at fixed price 2000/sqm. Step = +150/sqm
+//     ≈ +1.5M additional TPC per step.
+//
+// Both sweeps check IRR, NPV, and EM for strict monotonicity.
+// A cross-check spot-tests price dominance at a mid-range cost.
+// =====================================================================
+describe('B56 — sensitivity matrix: strict monotonicity, no inversions', () => {
+  // ── Price sweep ────────────────────────────────────────────────────
+  const PRICE_SWEEP = [1200, 1500, 1800, 2100, 2400]
+  const priceOuts = PRICE_SWEEP.map(p =>
+    runEngine(
+      F_RE_SALE_ASSUMPTIONS,
+      withDefault(F_RE_SALE_DEFAULTS, 'sale_price_per_sqm_residential', p),
+    )
+  )
+
+  test('B56.1: IRR strictly increases across the price sweep (no inversions)', () => {
+    for (let i = 1; i < priceOuts.length; i++) {
+      expect(priceOuts[i].irr).toBeGreaterThan(priceOuts[i - 1].irr)
+    }
+  })
+
+  test('B56.2: NPV strictly increases across the price sweep (no inversions)', () => {
+    for (let i = 1; i < priceOuts.length; i++) {
+      expect(priceOuts[i].npv).toBeGreaterThan(priceOuts[i - 1].npv)
+    }
+  })
+
+  test('B56.3: EM strictly increases across the price sweep (no inversions)', () => {
+    for (let i = 1; i < priceOuts.length; i++) {
+      expect(priceOuts[i].equity_multiple).toBeGreaterThan(priceOuts[i - 1].equity_multiple)
+    }
+  })
+
+  // ── Cost sweep ─────────────────────────────────────────────────────
+  const PRICE_FOR_COST_SWEEP = 2000   // fixed; keeps returns positive across the range
+  const COST_SWEEP = [450, 600, 750, 900, 1050]
+  const BASE_DEFS_COST = withDefault(F_RE_SALE_DEFAULTS, 'sale_price_per_sqm_residential', PRICE_FOR_COST_SWEEP)
+  const costOuts = COST_SWEEP.map(c =>
+    runEngine(
+      F_RE_SALE_ASSUMPTIONS,
+      withDefault(BASE_DEFS_COST, 'construction_cost_per_sqm_residential', c),
+    )
+  )
+
+  test('B56.4: IRR strictly decreases across the cost sweep (no inversions)', () => {
+    for (let i = 1; i < costOuts.length; i++) {
+      expect(costOuts[i].irr).toBeLessThan(costOuts[i - 1].irr)
+    }
+  })
+
+  test('B56.5: NPV strictly decreases across the cost sweep (no inversions)', () => {
+    for (let i = 1; i < costOuts.length; i++) {
+      expect(costOuts[i].npv).toBeLessThan(costOuts[i - 1].npv)
+    }
+  })
+
+  test('B56.6: EM strictly decreases across the cost sweep (no inversions)', () => {
+    for (let i = 1; i < costOuts.length; i++) {
+      expect(costOuts[i].equity_multiple).toBeLessThan(costOuts[i - 1].equity_multiple)
+    }
+  })
+
+  // ── Cross-check: price dominance holds at a mid-range cost ─────────
+  test('B56.7: cross-check — price dominance holds at mid-range cost (750/sqm)', () => {
+    // Confirm that the price-lift signal survives at a cost different from
+    // the default 650/sqm, ruling out a cost-specific coincidence.
+    const MID_COST_DEFS = withDefault(
+      withDefault(F_RE_SALE_DEFAULTS, 'construction_cost_per_sqm_residential', 750),
+      'sale_price_per_sqm_residential', 0,  // placeholder; overridden below
+    )
+    const p1 = runEngine(F_RE_SALE_ASSUMPTIONS, withDefault(MID_COST_DEFS, 'sale_price_per_sqm_residential', 1400))
+    const p2 = runEngine(F_RE_SALE_ASSUMPTIONS, withDefault(MID_COST_DEFS, 'sale_price_per_sqm_residential', 1800))
+    const p3 = runEngine(F_RE_SALE_ASSUMPTIONS, withDefault(MID_COST_DEFS, 'sale_price_per_sqm_residential', 2200))
+    expect(p1.irr).toBeLessThan(p2.irr)
+    expect(p2.irr).toBeLessThan(p3.irr)
+  })
+})
