@@ -23,6 +23,7 @@
 import {
   annuity, npvCalc, irrCalc, r2,
   runEngine, runPPPEngine, computeRequiredPayment,
+  computePPPBankability, PPP_DSCR_FLOOR, PPP_IRR_HURDLE,
 } from '../src/modules/feasibility/annualEngine.js'
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1771,5 +1772,501 @@ describe('B45 — computeRequiredPayment unreachable target / cap', () => {
     const minDSCR = minDscrAt(lastTested)
     expect(minDSCR).not.toBeNull()
     expect(minDSCR).toBeLessThan(UNREACHABLE)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════
+// P6 — PPP Bankability Validation
+// B46–B49: computePPPBankability
+//
+// computePPPBankability(modelOutput, dscrFloor) derives a bankability
+// verdict from stored engine output. Pure function — does not re-run
+// the PPP engine; reads irr, npv, dscr_series, and cash_flows.
+//
+// Gate logic (annualEngine.js):
+//   irrOk  = irr !== null && irr >= PPP_IRR_HURDLE (10%)
+//   npvOk  = npv !== null && npv >= 0
+//   dscrOk = minDSCR === null || minDSCR >= floor
+//   failures = count of [!irrOk, !npvOk, !dscrOk]
+//
+// Recommendation tiers:
+//   failures=0   → "Proceed"
+//   failures=1   → "Proceed with Conditions"
+//   failures≥2   → "Do Not Proceed"
+//
+// dscrFloor guard (not a plain ||, but shares the falsy-0 effect):
+//   floor = (dscrFloor != null && dscrFloor > 0) ? dscrFloor : PPP_DSCR_FLOOR
+//   → dscrFloor=0 collapses to PPP_DSCR_FLOOR=1.20 (FINDING B46.11)
+//
+// SSV / liquidity logic (cash_flows ops rows):
+//   constrCount = count of phase==='Construction' rows
+//   annualOpex  = first positive opex on an ops row
+//   liquidityThreshold = annualOpex / 4
+//   ssvBalance accumulates equity_cf during trapped years (dscr < floor),
+//   resets to 0 on non-trapped years; warning fires when
+//   liquidityThreshold > 0 && ssvBalance < liquidityThreshold.
+//   FINDING (B48.3): ssvBalance resets to 0 on every non-trapped year;
+//   0 < threshold → warning fires on ALL ops years when opex > 0.
+//
+// Year convention (same as runPPPEngine):
+//   construction cash_flows: year=0, 1, ..., constrYears-1
+//   operations   cash_flows: year=constrYears + op - 1  (op = 1..opsYears)
+//   dscr_series:             { year: op }  (ops-relative, 1-indexed)
+//
+// Extracted from FeasibilityProject.jsx in commit be79d46 (2026-05-15).
+// ═════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────
+// Synthetic modelOutput builder — mirrors runPPPEngine return shape
+// ─────────────────────────────────────────────────────────────────────
+function makeBankabilityInput({ irr = null, npv = null, dscrSeries = [], cashFlows = [] } = {}) {
+  return { irr, npv, dscr_series: dscrSeries, cash_flows: cashFlows }
+}
+
+// Build a cash_flows array: 2 construction rows (years 0,1) + ops rows
+// from opsSpecs.  Each opsSpec: { dscr, equity_cf, opex }.
+// Ops row year: 2 + index (matching runPPPEngine convention for constrYears=2).
+function makeOpsFlows(opsSpecs) {
+  const constr = [
+    { phase: 'Construction', year: 0, opex: 0, equity_cf: -10_000_000, dscr: null },
+    { phase: 'Construction', year: 1, opex: 0, equity_cf: -10_000_000, dscr: null },
+  ]
+  const ops = opsSpecs.map((s, i) => ({
+    phase: 'Operations',
+    year: 2 + i,               // total year (0-indexed; matches constrYears=2 convention)
+    opex:     s.opex     ?? 0,
+    equity_cf: s.equity_cf ?? 0,
+    dscr:     s.dscr     ?? null,
+  }))
+  return [...constr, ...ops]
+}
+
+// =====================================================================
+// B46 — Bankability gates: IRR, NPV, DSCR thresholds
+// Tests each gate independently with synthetic modelOutput objects for
+// precise boundary control.  Integration test (B46.12) uses the actual
+// runPPPEngine output to confirm the plumbing is wired correctly.
+// =====================================================================
+describe('B46 — bankability gates: IRR, NPV, DSCR thresholds', () => {
+  test('B46.1: null modelOutput returns null', () => {
+    expect(computePPPBankability(null)).toBeNull()
+  })
+
+  test('B46.2: irr = PPP_IRR_HURDLE (10) → irrOk=true', () => {
+    const m = makeBankabilityInput({ irr: PPP_IRR_HURDLE, npv: 0 })
+    expect(computePPPBankability(m).irrOk).toBe(true)
+  })
+
+  test('B46.3: irr just below hurdle (9.99) → irrOk=false', () => {
+    const m = makeBankabilityInput({ irr: 9.99, npv: 0 })
+    expect(computePPPBankability(m).irrOk).toBe(false)
+  })
+
+  test('B46.4: irr=null → irrOk=false', () => {
+    const m = makeBankabilityInput({ irr: null, npv: 0 })
+    expect(computePPPBankability(m).irrOk).toBe(false)
+  })
+
+  test('B46.5: npv=0 (at boundary) → npvOk=true', () => {
+    const m = makeBankabilityInput({ irr: PPP_IRR_HURDLE, npv: 0 })
+    expect(computePPPBankability(m).npvOk).toBe(true)
+  })
+
+  test('B46.6: npv=-1 → npvOk=false', () => {
+    const m = makeBankabilityInput({ irr: PPP_IRR_HURDLE, npv: -1 })
+    expect(computePPPBankability(m).npvOk).toBe(false)
+  })
+
+  test('B46.7: empty dscr_series → minDSCR=null → dscrOk=true (no-debt path)', () => {
+    const m = makeBankabilityInput({ irr: PPP_IRR_HURDLE, npv: 0 })
+    const b = computePPPBankability(m)
+    expect(b.minDSCR).toBeNull()
+    expect(b.dscrOk).toBe(true)
+  })
+
+  test('B46.8: minDSCR = PPP_DSCR_FLOOR exactly (1.20) → dscrOk=true', () => {
+    const m = makeBankabilityInput({
+      irr: PPP_IRR_HURDLE, npv: 0,
+      dscrSeries: [{ year: 1, dscr: PPP_DSCR_FLOOR }],
+    })
+    expect(computePPPBankability(m).dscrOk).toBe(true)
+  })
+
+  test('B46.9: minDSCR just below floor (1.19) → dscrOk=false', () => {
+    const m = makeBankabilityInput({
+      irr: PPP_IRR_HURDLE, npv: 0,
+      dscrSeries: [{ year: 1, dscr: 1.19 }],
+    })
+    expect(computePPPBankability(m).dscrOk).toBe(false)
+  })
+
+  test('B46.10: custom dscrFloor=1.30 overrides default 1.20', () => {
+    const m = makeBankabilityInput({
+      irr: PPP_IRR_HURDLE, npv: 0,
+      dscrSeries: [{ year: 1, dscr: 1.25 }],   // 1.25 ≥ 1.20 but < 1.30
+    })
+    expect(computePPPBankability(m).dscrOk).toBe(true)         // default floor=1.20
+    expect(computePPPBankability(m, 1.30).dscrOk).toBe(false)  // custom floor=1.30
+  })
+
+  test('B46.11: FINDING — dscrFloor=0 collapses to PPP_DSCR_FLOOR=1.20', () => {
+    // Guard: (dscrFloor != null && dscrFloor > 0) ? dscrFloor : PPP_DSCR_FLOOR
+    // dscrFloor=0 → 0 > 0 is false → falls back to 1.20
+    // Callers cannot pass 0 to mean "accept any DSCR".
+    const m = makeBankabilityInput({
+      irr: PPP_IRR_HURDLE, npv: 0,
+      dscrSeries: [{ year: 1, dscr: 1.25 }],   // 1.25 ≥ 1.20 → dscrOk=true at default floor
+    })
+    const b = computePPPBankability(m, 0)
+    expect(b.PPP_DSCR_FLOOR).toBe(PPP_DSCR_FLOOR)  // floor was reset to default 1.20
+    expect(b.dscrOk).toBe(true)                      // treated as default, not as "floor=0"
+  })
+
+  test('B46.12: integration — runPPPEngine output feeds computePPPBankability correctly', () => {
+    // Confirms the two functions are wired: engine output shape matches
+    // what the bankability function expects.
+    const pppOut = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
+    const b = computePPPBankability(pppOut)
+    expect(b).not.toBeNull()
+    expect(b.PPP_IRR_HURDLE).toBe(PPP_IRR_HURDLE)   // constants threaded through
+    expect(b.PPP_DSCR_FLOOR).toBe(PPP_DSCR_FLOOR)
+    expect(typeof b.irrOk).toBe('boolean')
+    expect(typeof b.npvOk).toBe('boolean')
+    expect(typeof b.dscrOk).toBe('boolean')
+    expect(typeof b.failures).toBe('number')
+    expect(b.failures).toBeGreaterThanOrEqual(0)
+    expect(b.failures).toBeLessThanOrEqual(3)
+    expect(['Proceed', 'Proceed with Conditions', 'Do Not Proceed'])
+      .toContain(b.recommendation)
+  })
+
+  test('B46.13: integration — baseline minDSCR from dscr_series matches bankability minDSCR', () => {
+    // Confirms minDSCR is derived from Math.min of dscr_series (not cash_flows.dscr).
+    const pppOut = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
+    const dscrVals = pppOut.dscr_series.filter(d => d.dscr !== null).map(d => d.dscr)
+    const expectedMin = Math.min.apply(null, dscrVals)
+    const b = computePPPBankability(pppOut)
+    expect(b.minDSCR).toBeCloseTo(expectedMin, RATIO_DP)
+  })
+})
+
+// =====================================================================
+// B47 — Cash-trap years when DSCR < floor
+// cashTrapYears is derived from dscr_series (ops-relative year numbers),
+// NOT from cash_flows.dscr.  Years at exactly floor are NOT trapped.
+// =====================================================================
+describe('B47 — cash-trap years (DSCR < floor)', () => {
+  test('B47.1: no entries below floor → cashTrapYears=[]', () => {
+    const m = makeBankabilityInput({
+      dscrSeries: [
+        { year: 1, dscr: 1.50 },
+        { year: 2, dscr: 1.80 },
+        { year: 3, dscr: 1.20 },   // exactly at floor
+      ],
+    })
+    expect(computePPPBankability(m).cashTrapYears).toEqual([])
+  })
+
+  test('B47.2: years with dscr < floor appear in cashTrapYears', () => {
+    const m = makeBankabilityInput({
+      dscrSeries: [
+        { year: 1, dscr: 0.80 },   // trapped
+        { year: 2, dscr: 1.20 },   // exactly at floor — NOT trapped
+        { year: 3, dscr: 1.50 },   // clear
+        { year: 4, dscr: 0.95 },   // trapped
+      ],
+    })
+    expect(computePPPBankability(m).cashTrapYears).toEqual([1, 4])
+  })
+
+  test('B47.3: dscr = PPP_DSCR_FLOOR exactly → NOT a trap year (strict <)', () => {
+    const m = makeBankabilityInput({
+      dscrSeries: [{ year: 5, dscr: PPP_DSCR_FLOOR }],
+    })
+    expect(computePPPBankability(m).cashTrapYears).toEqual([])
+  })
+
+  test('B47.4: null dscr entries in dscr_series excluded from trap calculation', () => {
+    // dscr_series can contain null entries; only non-null < floor are trapped.
+    const m = makeBankabilityInput({
+      dscrSeries: [
+        { year: 1, dscr: null },   // no debt service — excluded
+        { year: 2, dscr: 0.80 },   // trapped
+        { year: 3, dscr: 1.50 },   // clear
+      ],
+    })
+    expect(computePPPBankability(m).cashTrapYears).toEqual([2])
+  })
+
+  test('B47.5: custom dscrFloor shifts the trap threshold', () => {
+    const m = makeBankabilityInput({
+      dscrSeries: [{ year: 3, dscr: 1.25 }],
+    })
+    // 1.25 is not a trap at default floor=1.20 but is a trap at floor=1.30
+    expect(computePPPBankability(m).cashTrapYears).toEqual([])
+    expect(computePPPBankability(m, 1.30).cashTrapYears).toEqual([3])
+  })
+
+  test('B47.6: all dscr_series entries below floor → all years trapped', () => {
+    const m = makeBankabilityInput({
+      dscrSeries: [
+        { year: 1, dscr: 0.70 },
+        { year: 2, dscr: 0.85 },
+        { year: 3, dscr: 1.10 },
+      ],
+    })
+    expect(computePPPBankability(m).cashTrapYears).toEqual([1, 2, 3])
+  })
+
+  test('B47.7: integration — baseline PPP cashTrapYears come from dscr_series (ops years 1..10)', () => {
+    // Baseline payment=12M yields minDSCR ≈ 0.69 in the last repayment year
+    // → at least one cash-trap year exists.
+    const pppOut = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
+    const b = computePPPBankability(pppOut)
+    expect(b.cashTrapYears.length).toBeGreaterThan(0)
+    // All trap years are within the ops range (1..opsYears)
+    b.cashTrapYears.forEach(yr => {
+      expect(yr).toBeGreaterThanOrEqual(1)
+    })
+  })
+})
+
+// =====================================================================
+// B48 — Liquidity warnings when SSV balance < 3 months OPEX
+//
+// SSV (service-support-vehicle) logic in computePPPBankability:
+//   constrCount         = count of phase==='Construction' rows
+//   annualOpex          = first positive opex from ops rows (iteration stops)
+//   liquidityThreshold  = annualOpex / 4   (≈ 3 months of opex)
+//   ssvBalance          = accumulates equity_cf in trapped years
+//                         resets to 0 on non-trapped years
+//   warning when: liquidityThreshold > 0 && ssvBalance < liquidityThreshold
+//
+// Year fields in the warning:
+//   ops_year   = r.year − constrCount + 1
+//   total_year = r.year   (raw year from cash_flows row)
+//   balance    = Math.round(ssvBalance)
+//
+// FINDING (B48.3): After every non-trapped year ssvBalance=0.
+//   0 < liquidityThreshold (if opex > 0) → warning fires on EVERY
+//   non-trapped ops year.  Warnings are not scoped to trap sequences.
+// =====================================================================
+describe('B48 — liquidity warnings (SSV balance < 3 months OPEX)', () => {
+  const OPEX_AMT = 4_000_000          // annual opex → threshold = 1,000,000
+  const THRESHOLD = OPEX_AMT / 4      // 1,000,000
+
+  test('B48.1: liquidityThreshold = annualOpex / 4 (first positive ops opex)', () => {
+    // Two ops rows: first has opex=0 (skipped), second has OPEX_AMT (anchors threshold)
+    const cf = makeOpsFlows([
+      { opex: 0,        equity_cf: 0, dscr: 2.00 },  // opex=0 → skipped by engine
+      { opex: OPEX_AMT, equity_cf: 0, dscr: 2.00 },  // first positive → threshold=OPEX_AMT/4
+    ])
+    // No trapped years → all ssvBalance=0 < THRESHOLD → both rows warn
+    const b = computePPPBankability(makeBankabilityInput({ cashFlows: cf }))
+    // Threshold is OPEX_AMT/4 — confirmed by warnings present on rows with opex=OPEX_AMT
+    expect(b.liquidityWarnings.length).toBeGreaterThan(0)
+    // Row with opex=0 comes first — balance=0 but threshold=0 at that point,
+    // so no warning yet; once threshold anchors on OPEX_AMT row, warnings fire.
+    // The concrete check: all warnings have balance < THRESHOLD.
+    b.liquidityWarnings.forEach(w => expect(w.balance).toBeLessThan(THRESHOLD))
+  })
+
+  test('B48.2: trapped year accumulates equity_cf in SSV; warning fires when balance < threshold', () => {
+    const EQUITY_CF = 500_000   // positive equity CF during trap
+    const cf = makeOpsFlows([
+      { opex: OPEX_AMT, equity_cf: EQUITY_CF, dscr: 0.80 },  // trapped, ssvBalance=500K < 1M
+    ])
+    const b = computePPPBankability(makeBankabilityInput({ cashFlows: cf }))
+    expect(b.liquidityWarnings.length).toBe(1)
+    expect(b.liquidityWarnings[0].balance).toBe(Math.round(EQUITY_CF))   // 500,000
+    expect(b.liquidityWarnings[0].balance).toBeLessThan(THRESHOLD)
+  })
+
+  test('B48.3: FINDING — non-trapped year resets ssvBalance=0; warning fires (0 < threshold)', () => {
+    // Scenario: 1 trapped year followed by 3 free-cash years.
+    // On each free year: ssvBalance=0 → 0 < THRESHOLD → warning fires.
+    // Total warnings = 4 (trapped year + 3 non-trapped years all warn).
+    const cf = makeOpsFlows([
+      { opex: OPEX_AMT, equity_cf: 500_000,  dscr: 0.80 },  // trapped   → ssvBalance=500K, warning
+      { opex: OPEX_AMT, equity_cf: 800_000,  dscr: 1.50 },  // not trapped → ssvBalance=0,  warning (FINDING)
+      { opex: OPEX_AMT, equity_cf: 900_000,  dscr: 2.00 },  // not trapped → ssvBalance=0,  warning (FINDING)
+      { opex: OPEX_AMT, equity_cf: 1_000_000, dscr: 2.50 }, // not trapped → ssvBalance=0,  warning (FINDING)
+    ])
+    const b = computePPPBankability(makeBankabilityInput({ cashFlows: cf }))
+    // All 4 ops years generate warnings: 1 trapped + 3 non-trapped (balance=0 < 1M)
+    expect(b.liquidityWarnings.length).toBe(4)
+    // The three non-trapped years all report balance=0
+    const nonTrapWarnings = b.liquidityWarnings.slice(1)
+    nonTrapWarnings.forEach(w => expect(w.balance).toBe(0))
+  })
+
+  test('B48.4: annualOpex=0 → liquidityThreshold=0 → no warnings (guard: threshold > 0)', () => {
+    // All ops rows have opex=0: annualOpex stays 0, threshold=0, guard prevents warnings.
+    const cf = makeOpsFlows([
+      { opex: 0, equity_cf: -200_000, dscr: 0.80 },  // trapped
+      { opex: 0, equity_cf:  500_000, dscr: 2.00 },  // not trapped
+    ])
+    const b = computePPPBankability(makeBankabilityInput({ cashFlows: cf }))
+    expect(b.liquidityWarnings).toEqual([])
+  })
+
+  test('B48.5: consecutive trapped years accumulate ssvBalance additively', () => {
+    // Three trapped years: balances grow; once balance ≥ threshold, warning stops.
+    const EQ = 400_000   // equity CF each trapped year
+    const cf = makeOpsFlows([
+      { opex: OPEX_AMT, equity_cf: EQ, dscr: 0.80 },   // balance=400K < 1M → warn
+      { opex: OPEX_AMT, equity_cf: EQ, dscr: 0.80 },   // balance=800K < 1M → warn
+      { opex: OPEX_AMT, equity_cf: EQ, dscr: 0.80 },   // balance=1200K ≥ 1M → no warn
+    ])
+    const b = computePPPBankability(makeBankabilityInput({ cashFlows: cf }))
+    // Only first two trapped years are below threshold
+    expect(b.liquidityWarnings.length).toBe(2)
+    expect(b.liquidityWarnings[0].balance).toBe(EQ)           // 400,000
+    expect(b.liquidityWarnings[1].balance).toBe(EQ + EQ)      // 800,000
+  })
+
+  test('B48.6: balance in warning is Math.round(ssvBalance) — integer cents dropped', () => {
+    const FRACTIONAL_EQ = 333_333.33
+    const cf = makeOpsFlows([
+      { opex: OPEX_AMT, equity_cf: FRACTIONAL_EQ, dscr: 0.80 },  // trapped
+    ])
+    const b = computePPPBankability(makeBankabilityInput({ cashFlows: cf }))
+    expect(b.liquidityWarnings.length).toBe(1)
+    expect(b.liquidityWarnings[0].balance).toBe(Math.round(FRACTIONAL_EQ))
+  })
+
+  test('B48.7: warning ops_year and total_year computed from cash_flows row year', () => {
+    // With 2 construction rows (year=0,1) and first ops row at year=2:
+    //   ops_year   = 2 − 2 + 1 = 1
+    //   total_year = 2
+    const cf = makeOpsFlows([
+      { opex: OPEX_AMT, equity_cf: 200_000, dscr: 0.80 },  // year=2, trapped → warns
+    ])
+    const b = computePPPBankability(makeBankabilityInput({ cashFlows: cf }))
+    expect(b.liquidityWarnings.length).toBe(1)
+    expect(b.liquidityWarnings[0].ops_year).toBe(1)
+    expect(b.liquidityWarnings[0].total_year).toBe(2)
+  })
+})
+
+// =====================================================================
+// B49 — Recommendation tiers: Proceed / Conditions / Do Not Proceed
+//
+// Tier logic:
+//   failures=0 → "Proceed"
+//     investmentCase: irr > PPP_IRR_HURDLE*1.3 (>13) → "Strong Investment Case"
+//                     else                            → "Acceptable Investment Case"
+//     verdictColor:  '#3fb950'
+//   failures=1 → "Proceed with Conditions"
+//     investmentCase: "Acceptable Investment Case"
+//     verdictColor:  '#d29922'
+//   failures≥2 → "Do Not Proceed"
+//     investmentCase: "Weak Investment Case"
+//     verdictColor:  '#f85149'
+// =====================================================================
+describe('B49 — recommendation tiers: Proceed / Conditions / Do Not Proceed', () => {
+  const STRONG_IRR_THRESHOLD = PPP_IRR_HURDLE * 1.3  // 13 — strong-case boundary
+
+  // All-pass model: irr=15, npv=5M, minDSCR=1.50
+  const allPass = makeBankabilityInput({
+    irr: 15, npv: 5_000_000,
+    dscrSeries: [{ year: 1, dscr: 1.50 }, { year: 2, dscr: 1.80 }],
+  })
+
+  // One-failure models (one gate fails, others pass)
+  const failIrr  = makeBankabilityInput({ irr: 5,   npv: 5_000_000,  dscrSeries: [{ year: 1, dscr: 1.50 }] })
+  const failNpv  = makeBankabilityInput({ irr: 15,  npv: -1_000_000, dscrSeries: [{ year: 1, dscr: 1.50 }] })
+  const failDscr = makeBankabilityInput({ irr: 15,  npv: 5_000_000,  dscrSeries: [{ year: 1, dscr: 0.80 }] })
+
+  // Two-failure model: irr fails, npv fails
+  const failTwo  = makeBankabilityInput({ irr: 5,   npv: -1_000_000, dscrSeries: [{ year: 1, dscr: 1.50 }] })
+
+  // Three-failure model: all fail
+  const failAll  = makeBankabilityInput({ irr: 5,   npv: -1_000_000, dscrSeries: [{ year: 1, dscr: 0.80 }] })
+
+  test('B49.1: 0 failures → recommendation="Proceed", failures=0', () => {
+    const b = computePPPBankability(allPass)
+    expect(b.recommendation).toBe('Proceed')
+    expect(b.failures).toBe(0)
+  })
+
+  test('B49.2: 1 failure (irr) → "Proceed with Conditions"', () => {
+    const b = computePPPBankability(failIrr)
+    expect(b.recommendation).toBe('Proceed with Conditions')
+    expect(b.failures).toBe(1)
+  })
+
+  test('B49.3: 1 failure (npv) → "Proceed with Conditions"', () => {
+    const b = computePPPBankability(failNpv)
+    expect(b.recommendation).toBe('Proceed with Conditions')
+    expect(b.failures).toBe(1)
+  })
+
+  test('B49.4: 1 failure (dscr) → "Proceed with Conditions"', () => {
+    const b = computePPPBankability(failDscr)
+    expect(b.recommendation).toBe('Proceed with Conditions')
+    expect(b.failures).toBe(1)
+  })
+
+  test('B49.5: 2 failures → "Do Not Proceed"', () => {
+    const b = computePPPBankability(failTwo)
+    expect(b.recommendation).toBe('Do Not Proceed')
+    expect(b.failures).toBe(2)
+  })
+
+  test('B49.6: 3 failures → "Do Not Proceed"', () => {
+    const b = computePPPBankability(failAll)
+    expect(b.recommendation).toBe('Do Not Proceed')
+    expect(b.failures).toBe(3)
+  })
+
+  test('B49.7: Proceed — irr > 13 (strong threshold) → "Strong Investment Case"', () => {
+    const strong = makeBankabilityInput({
+      irr: STRONG_IRR_THRESHOLD + 0.01,  // just above 13
+      npv: 5_000_000, dscrSeries: [{ year: 1, dscr: 1.50 }],
+    })
+    const b = computePPPBankability(strong)
+    expect(b.recommendation).toBe('Proceed')
+    expect(b.investmentCase).toBe('Strong Investment Case')
+  })
+
+  test('B49.8: Proceed — irr = 13 (exactly at strong threshold, not >) → "Acceptable Investment Case"', () => {
+    const acceptable = makeBankabilityInput({
+      irr: STRONG_IRR_THRESHOLD,   // exactly 13 — irr > 13 is false
+      npv: 5_000_000, dscrSeries: [{ year: 1, dscr: 1.50 }],
+    })
+    const b = computePPPBankability(acceptable)
+    expect(b.recommendation).toBe('Proceed')
+    expect(b.investmentCase).toBe('Acceptable Investment Case')
+  })
+
+  test('B49.9: Proceed with Conditions → "Acceptable Investment Case" regardless of irr', () => {
+    // irr=15 (would be "Strong" at Proceed) but failures=1 → fixed "Acceptable"
+    const b = computePPPBankability(failDscr)   // irr=15, only dscr fails
+    expect(b.recommendation).toBe('Proceed with Conditions')
+    expect(b.investmentCase).toBe('Acceptable Investment Case')
+  })
+
+  test('B49.10: Do Not Proceed → "Weak Investment Case"', () => {
+    const b = computePPPBankability(failAll)
+    expect(b.investmentCase).toBe('Weak Investment Case')
+  })
+
+  test('B49.11: verdictColor for Proceed = #3fb950', () => {
+    expect(computePPPBankability(allPass).verdictColor).toBe('#3fb950')
+  })
+
+  test('B49.12: verdictColor for Proceed with Conditions = #d29922', () => {
+    expect(computePPPBankability(failIrr).verdictColor).toBe('#d29922')
+  })
+
+  test('B49.13: verdictColor for Do Not Proceed = #f85149', () => {
+    expect(computePPPBankability(failAll).verdictColor).toBe('#f85149')
+  })
+
+  test('B49.14: output always carries PPP_IRR_HURDLE and PPP_DSCR_FLOOR constants', () => {
+    const b = computePPPBankability(allPass)
+    expect(b.PPP_IRR_HURDLE).toBe(PPP_IRR_HURDLE)
+    expect(b.PPP_DSCR_FLOOR).toBe(PPP_DSCR_FLOOR)
   })
 })
