@@ -2889,3 +2889,179 @@ describe('B56 — sensitivity matrix: strict monotonicity, no inversions', () =>
     expect(p2.irr).toBeLessThan(p3.irr)
   })
 })
+
+// ═════════════════════════════════════════════════════════════════════
+// B57 — RE engine falsy-fallback hardening (Batch 2C tests-first)
+//
+// Tests added BEFORE the production code change. The engine still uses
+// the legacy `(getVal(...) || X)` and `(getDefault(...) || X)` patterns,
+// so several assertions below are EXPECTED TO FAIL today. Each failing
+// test locks the FUTURE correct behavior after Batch 2C migration.
+//
+// Once the engine is migrated to safeNum/safePct and the two new
+// validators (PROJECT_LIFE_INVALID, LOAN_TENOR_INVALID) are in place,
+// every test in this block must pass without further test edits.
+//
+// Pre-implementation expectations:
+//   B57.1, B57.2, B57.3 — PROJECT_LIFE_INVALID throw/diagnostic       FAIL
+//   B57.4               — Project Life Years = 1 minimum runs         PASS
+//   B57.5               — LOAN_TENOR_INVALID with senior debt > 0     FAIL
+//   B57.6               — loan_tenor_years = 0 with no debt runs      PASS
+//   B57.7  – B57.14     — explicit-zero respect on 8 RE defaults      FAIL
+//   B57.15              — Sale Split % = 0 in Mixed mode = all rental FAIL
+// ═════════════════════════════════════════════════════════════════════
+describe('B57 — RE engine falsy-fallback hardening (Batch 2C tests-first)', () => {
+  // ─── PROJECT_LIFE_INVALID validator ───────────────────────────────
+  test('B57.1: Project Life Years = 0 → throws PROJECT_LIFE_INVALID', () => {
+    const assumps = F_RE_SALE_ASSUMPTIONS.map(a =>
+      a.name === 'Project Life Years' ? { ...a, value: 0 } : a
+    )
+    expect(() => runEngine(assumps, F_RE_SALE_DEFAULTS))
+      .toThrow(/PROJECT_LIFE_INVALID/)
+  })
+
+  test('B57.2: Project Life Years = -5 → throws PROJECT_LIFE_INVALID', () => {
+    const assumps = F_RE_SALE_ASSUMPTIONS.map(a =>
+      a.name === 'Project Life Years' ? { ...a, value: -5 } : a
+    )
+    expect(() => runEngine(assumps, F_RE_SALE_DEFAULTS))
+      .toThrow(/PROJECT_LIFE_INVALID/)
+  })
+
+  test('B57.3: PROJECT_LIFE_INVALID error carries machine-readable diagnostic fields', () => {
+    const assumps = F_RE_SALE_ASSUMPTIONS.map(a =>
+      a.name === 'Project Life Years' ? { ...a, value: 0 } : a
+    )
+    try {
+      runEngine(assumps, F_RE_SALE_DEFAULTS)
+      throw new Error('runEngine should have thrown')
+    } catch (e) {
+      expect(e.code).toBe('PROJECT_LIFE_INVALID')
+      expect(e.value).toBe(0)
+    }
+  })
+
+  test('B57.4: Project Life Years = 1 (minimum valid) → runs (downstream Math.max clamps opsYrs to 1)', () => {
+    // Already passes today: lifeYears=1 truthy → no fallback; downstream
+    // opsYrs = max(1, 1−2) = 1. This test should continue to pass after
+    // the F01 validator is added (1 ≥ 1 → no throw).
+    const assumps = F_RE_SALE_ASSUMPTIONS.map(a =>
+      a.name === 'Project Life Years' ? { ...a, value: 1 } : a
+    )
+    const out = runEngine(assumps, F_RE_SALE_DEFAULTS)
+    expect(out).toBeDefined()
+    expect(out.operations_years).toBe(1)
+  })
+
+  // ─── LOAN_TENOR_INVALID validator ─────────────────────────────────
+  test('B57.5: loan_tenor_years = 0 with Senior Debt % > 0 → throws LOAN_TENOR_INVALID', () => {
+    const defs = withDefault(F_RE_SALE_DEFAULTS, 'loan_tenor_years', 0)
+    expect(() => runEngine(F_RE_SALE_ASSUMPTIONS, defs))   // F_RE_SALE has 70% debt
+      .toThrow(/LOAN_TENOR_INVALID/)
+  })
+
+  test('B57.6: loan_tenor_years = 0 with Senior Debt % = 0 → runs (loan terms inert)', () => {
+    // The 2C LOAN_TENOR_INVALID validator only fires when seniorDebtPct > 0;
+    // a strictly zero-debt project should run without complaint. We use an
+    // inline 100/0 fixture (NOT the legacy F_NO_DEBT_ASSUMPTIONS, which
+    // carries a 1e-7 ε workaround left over from pre-F08 days — that ε is
+    // truthy and would correctly trip the validator).
+    const zeroDebt = F_RE_SALE_ASSUMPTIONS.map(a => {
+      if (a.name === 'Equity %')      return { ...a, value: 100 }
+      if (a.name === 'Senior Debt %') return { ...a, value: 0 }
+      return a
+    })
+    const defs = withDefault(F_RE_SALE_DEFAULTS, 'loan_tenor_years', 0)
+    const out = runEngine(zeroDebt, defs)
+    expect(out).toBeDefined()
+    expect(Array.isArray(out.cash_flows)).toBe(true)
+  })
+
+  // ─── Explicit-zero respect on 8 defaults ──────────────────────────
+  test('B57.7: senior_debt_interest_rate = 0 → engine runs at 0% interest in every ops year', () => {
+    const defs = withDefault(F_RE_SALE_DEFAULTS, 'senior_debt_interest_rate', 0)
+    const out = runEngine(F_RE_SALE_ASSUMPTIONS, defs)
+    const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+    ops.forEach(r => expect(r.interest).toBe(0))
+  })
+
+  test('B57.8: corporate_income_tax_rate = 0 → engine runs at 0% tax in every ops year', () => {
+    const defs = withDefault(F_RE_SALE_DEFAULTS, 'corporate_income_tax_rate', 0)
+    const out = runEngine(F_RE_SALE_ASSUMPTIONS, defs)
+    const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+    ops.forEach(r => expect(r.tax).toBe(0))
+  })
+
+  test('B57.9: discount_rate_wacc = 0 → NPV equals the simple (undiscounted) sum of equity cashflows', () => {
+    const defs = withDefault(F_RE_SALE_DEFAULTS, 'discount_rate_wacc', 0)
+    const out = runEngine(F_RE_SALE_ASSUMPTIONS, defs)
+    const cfsSum = out.cash_flows.reduce((s, r) => s + r.equity_cf, 0)
+    expect(out.npv).toBeCloseTo(cfsSum, 0)
+  })
+
+  test('B57.10: contingency_pct = 0 → TDC excludes the contingency multiplier (TPC = 7,800,000)', () => {
+    // Hand-derivation: 10000 × 650 × (1 + 0) = 6,500,000 TDC; land = 20% =
+    // 1,300,000; TPC = 7,800,000. (Today: 5% silent fallback gives 8,190,000.)
+    const defs = withDefault(F_RE_SALE_DEFAULTS, 'contingency_pct', 0)
+    const out = runEngine(F_RE_SALE_ASSUMPTIONS, defs)
+    expect(out.tdc).toBeCloseTo(7_800_000, CURR_DP)
+  })
+
+  test('B57.11: land_cost_pct_of_tdc = 0 → TPC equals TDC alone (no land cost)', () => {
+    // Hand-derivation: 10000 × 650 × 1.05 = 6,825,000 TDC; land = 0; TPC =
+    // 6,825,000. (Today: 20% silent fallback gives 8,190,000.)
+    const defs = withDefault(F_RE_SALE_DEFAULTS, 'land_cost_pct_of_tdc', 0)
+    const out = runEngine(F_RE_SALE_ASSUMPTIONS, defs)
+    expect(out.tdc).toBeCloseTo(6_825_000, CURR_DP)
+  })
+
+  test('B57.12: property_management_fee_pct = 0 → opex = 0 in sale-only ops years', () => {
+    // F_RE_SALE is 100% sale, so opex = mgmt only (no maintenance, no
+    // insurance because rentalGfa = 0). With mgmt fee 0, opex must be 0.
+    const defs = withDefault(F_RE_SALE_DEFAULTS, 'property_management_fee_pct', 0)
+    const out = runEngine(F_RE_SALE_ASSUMPTIONS, defs)
+    const ops = out.cash_flows.filter(r => r.phase === 'Operations')
+    ops.forEach(r => expect(r.opex).toBe(0))
+  })
+
+  test('B57.13: maintenance_cost_pct_of_value = 0 → rental opex excludes maintenance component', () => {
+    // F_RE_RENTAL is 100% rental, so opex includes mgmt + maint + insurance.
+    // Compare explicit-0 maintenance to the baseline (default 1%): explicit
+    // 0 must produce strictly smaller opex in every ops year (the maint
+    // component is removed).
+    const explicit0 = runEngine(F_RE_RENTAL_ASSUMPTIONS,
+      withDefault(F_RE_SALE_DEFAULTS, 'maintenance_cost_pct_of_value', 0))
+    const baseline  = runEngine(F_RE_RENTAL_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+    const ops0 = explicit0.cash_flows.filter(r => r.phase === 'Operations')
+    const opsB = baseline.cash_flows.filter(r => r.phase === 'Operations')
+    for (let i = 0; i < ops0.length; i++) {
+      expect(ops0[i].opex).toBeLessThan(opsB[i].opex)
+    }
+  })
+
+  test('B57.14: debt_arrangement_fee_pct = 0 → year-0 equity_cf carries no fee load', () => {
+    // Today: arr fee = debt × 1% = 5,733,000 × 0.01 = 57,330, loaded into
+    // year-0 equity_cf alongside equity/2 = 1,228,500 → year-0 = -1,285,830.
+    // After fix: arr fee = 0 → year-0 = -1,228,500 (no fee load).
+    const defs = withDefault(F_RE_SALE_DEFAULTS, 'debt_arrangement_fee_pct', 0)
+    const out = runEngine(F_RE_SALE_ASSUMPTIONS, defs)
+    expect(out.cash_flows[0].equity_cf).toBeCloseTo(-1_228_500, CURR_DP)
+  })
+
+  // ─── Sale Split % in Mixed mode ───────────────────────────────────
+  test('B57.15: Sale Split % = 0 in Mixed mode → engine treats project as all-rental', () => {
+    // F_RE_MIXED_ASSUMPTIONS has Sale Split %=50 by default. Overriding to
+    // 0 should change saleSplit to 0 (all-rental), dramatically reducing
+    // year-1 ops revenue (no high-margin sale revenue). Today the falsy
+    // fallback collapses 0 → 50, so both runs produce identical output.
+    const explicit0 = runEngine(
+      F_RE_MIXED_ASSUMPTIONS.map(a => a.name === 'Sale Split %' ? { ...a, value: 0 } : a),
+      F_RE_SALE_DEFAULTS,
+    )
+    const baseline = runEngine(F_RE_MIXED_ASSUMPTIONS, F_RE_SALE_DEFAULTS)  // 50% split
+    // Year 1 ops (cash_flows index 2) revenue must be at most half of the
+    // 50/50 baseline once the explicit zero is respected (no sale revenue
+    // → only rental yield × asset × occupancy).
+    expect(explicit0.cash_flows[2].revenue).toBeLessThan(baseline.cash_flows[2].revenue / 2)
+  })
+})

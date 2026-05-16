@@ -124,14 +124,28 @@ function runEngine(assumptions, defaults) {
   var revenueModel  = getUnit(assumptions, 'Revenue Model') || 'Sale'
   var isSale        = revenueModel === 'Sale'
   var isRental      = revenueModel === 'Rental'
-  var saleSplit     = isSale ? 1 : isRental ? 0 : (getVal(assumptions, 'Sale Split %') || 50) / 100
+  // F01 (Batch 2C, 2026-05-16): explicit-zero respect on Sale Split % so a
+  // legitimate "0% sale = all rental" Mixed-mode project is not silently
+  // collapsed to 50/50. Null/undefined still falls back to 50.
+  var saleSplit     = isSale ? 1 : isRental ? 0 : safePct(getVal(assumptions, 'Sale Split %'), 50)
   var rentalSplit   = 1 - saleSplit
   var efficiency    = getVal(assumptions, 'Efficiency %')
   efficiency        = efficiency !== null ? efficiency / 100 : 1.0
   var saleableGfa   = gfa * efficiency
   var saleGfa       = saleableGfa * saleSplit
   var rentalGfa     = saleableGfa * rentalSplit
-  var lifeYears     = getVal(assumptions, 'Project Life Years') || 20
+  // F01 (Batch 2C): explicit-zero respect + PROJECT_LIFE_INVALID validator.
+  // Null/undefined still defaults to 20. 0 or negative is rejected upfront
+  // (deterministic error before any computation runs).
+  var lifeYears     = safeNum(getVal(assumptions, 'Project Life Years'), 20)
+  if (lifeYears < 1) {
+    var plErr = new Error(
+      'PROJECT_LIFE_INVALID: Project Life Years must be >= 1; received ' + lifeYears + '.'
+    )
+    plErr.code  = 'PROJECT_LIFE_INVALID'
+    plErr.value = lifeYears
+    throw plErr
+  }
   var csDate        = getUnit(assumptions, 'Construction Start Date')
   var osDate        = getUnit(assumptions, 'Operations Start Date')
   var constrYrs     = 2
@@ -141,24 +155,43 @@ function runEngine(assumptions, defaults) {
   }
   var opsYrs = Math.max(1, lifeYears - constrYrs)
 
-  var constCost   = getDefault(defaults, 'construction_cost_per_sqm_residential') || 650
-  var contingency = getDefault(defaults, 'contingency_pct') || 0.05
-  var landPct     = getDefault(defaults, 'land_cost_pct_of_tdc') || 0.20
-  var salePrice   = getDefault(defaults, 'sale_price_per_sqm_residential') || 1200
-  var absRate     = getDefault(defaults, 'sales_absorption_rate_pct_per_year') || 0.35
-  var rentYield   = getDefault(defaults, 'rental_yield_residential') || 0.06
-  var maxOcc      = getDefault(defaults, 'occupancy_rate_stabilized') || 0.88
-  var rentEsc     = getDefault(defaults, 'rent_escalation_pct_per_year') || 0.03
-  var priceEsc    = getDefault(defaults, 'price_escalation_pa') || 0.025
-  var mgmtFee     = getDefault(defaults, 'property_management_fee_pct') || 0.05
-  var maintPct    = getDefault(defaults, 'maintenance_cost_pct_of_value') || 0.01
-  var insrPct     = getDefault(defaults, 'insurance_pct_of_value') || 0.005
-  var debtRate    = getDefault(defaults, 'senior_debt_interest_rate') || 0.085
-  var debtTenor   = getDefault(defaults, 'loan_tenor_years') || 15
-  var graceYrs    = getDefault(defaults, 'grace_period_years') || 2
-  var taxRate     = getDefault(defaults, 'corporate_income_tax_rate') || 0.20
-  var wacc        = getDefault(defaults, 'discount_rate_wacc') || 0.12
-  var arrFeeRate  = getDefault(defaults, 'debt_arrangement_fee_pct') || 0.01
+  // F01 (Batch 2C, 2026-05-16): explicit-zero respect on all 18 RE defaults.
+  // The legacy `(getDefault(...) || X)` pattern silently collapsed an
+  // explicit zero in the project defaults table to the engine fallback.
+  // After 2C, null/missing keys still fall back to the institutional
+  // default below; an explicit zero is respected (e.g. 0% interest for
+  // sovereign-backed projects, 0% tax for tax-free zones, 0% land cost
+  // for granted/leased land, etc.).
+  var constCost   = safeNum(getDefault(defaults, 'construction_cost_per_sqm_residential'), 650)
+  var contingency = safeNum(getDefault(defaults, 'contingency_pct'), 0.05)
+  var landPct     = safeNum(getDefault(defaults, 'land_cost_pct_of_tdc'), 0.20)
+  var salePrice   = safeNum(getDefault(defaults, 'sale_price_per_sqm_residential'), 1200)
+  var absRate     = safeNum(getDefault(defaults, 'sales_absorption_rate_pct_per_year'), 0.35)
+  var rentYield   = safeNum(getDefault(defaults, 'rental_yield_residential'), 0.06)
+  var maxOcc      = safeNum(getDefault(defaults, 'occupancy_rate_stabilized'), 0.88)
+  var rentEsc     = safeNum(getDefault(defaults, 'rent_escalation_pct_per_year'), 0.03)
+  var priceEsc    = safeNum(getDefault(defaults, 'price_escalation_pa'), 0.025)
+  var mgmtFee     = safeNum(getDefault(defaults, 'property_management_fee_pct'), 0.05)
+  var maintPct    = safeNum(getDefault(defaults, 'maintenance_cost_pct_of_value'), 0.01)
+  var insrPct     = safeNum(getDefault(defaults, 'insurance_pct_of_value'), 0.005)
+  var debtRate    = safeNum(getDefault(defaults, 'senior_debt_interest_rate'), 0.085)
+  var debtTenor   = safeNum(getDefault(defaults, 'loan_tenor_years'), 15)
+  var graceYrs    = safeNum(getDefault(defaults, 'grace_period_years'), 2)
+  var taxRate     = safeNum(getDefault(defaults, 'corporate_income_tax_rate'), 0.20)
+  var wacc        = safeNum(getDefault(defaults, 'discount_rate_wacc'), 0.12)
+  var arrFeeRate  = safeNum(getDefault(defaults, 'debt_arrangement_fee_pct'), 0.01)
+
+  // F01 (Batch 2C): LOAN_TENOR_INVALID validator.
+  // Reject zero-tenor loans only when senior debt > 0; zero-tenor with
+  // zero debt is harmless because loan-term derivations are inert.
+  if (seniorDebtPct > 0 && debtTenor < 1) {
+    var ltErr = new Error(
+      'LOAN_TENOR_INVALID: Loan tenor must be >= 1 year when senior debt > 0; received ' + debtTenor + '.'
+    )
+    ltErr.code  = 'LOAN_TENOR_INVALID'
+    ltErr.value = debtTenor
+    throw ltErr
+  }
 
   var tdc         = gfa * constCost * (1 + contingency)
   var land        = tdc * landPct
