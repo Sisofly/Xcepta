@@ -1563,22 +1563,33 @@ describe('B37 — fixed OPEX override', () => {
 })
 
 // =====================================================================
-// B38 — Zero-debt PPP
-// Same falsy-fallback quirk as runEngine: explicit `Debt %` = 0
-// collapses to the engine default (80). Tiny positive epsilon defeats
-// the fallback AND drives debt below the engine's 0.01 hasDebt floor.
+// B38 — PPP input falsy-fallback hardened (Batch 2A, 2026-05-16)
+//
+// Before Batch 2A, runPPPEngine read its 10 numeric inputs with the
+// `(pppVal(...) || X)` falsy-fallback pattern, so an explicit zero
+// silently collapsed to the engine default. After 2A, each input is
+// read with safeNum/safePct; null/undefined still falls back to the
+// default but an explicit zero is respected. Concession Period and
+// Construction Period gain a deterministic ≥ 1 validator that throws
+// CONCESSION_PERIOD_INVALID / CONSTRUCTION_PERIOD_INVALID.
+//
+// B38.1 and B38.2 were inverted (they previously locked the
+// silent-default and ε-workaround behaviors). B38.3–B38.12 added.
 // =====================================================================
-describe('B38 — zero-debt PPP (falsy-fallback + ε workaround)', () => {
-  test('B38.1: ENGINE QUIRK — setting Debt %=0 collapses to default 80%', () => {
-    const out = runPPPEngine(pppWith({ 'Debt %': 0 }))
-    // (0 || 80) / 100 = 0.8 → debt = 100M * 0.8 = 80M (falsy fallback)
-    expect(out.debt_amount).toBeCloseTo(80_000_000, CURR_DP)
+describe('B38 — PPP input falsy-fallback hardened (Batch 2A)', () => {
+  test('B38.1: Debt %=0 is respected (no falsy fallback to 80%)', () => {
+    // After 2A: explicit 0 means 0% debt. debt_amount = TPC × 0 = 0.
+    // (Pre-2A this test locked the silent 80% default; now inverted.)
+    const out = runPPPEngine(pppWith({ 'Debt %': 0, 'Equity %': 100 }))
+    expect(out.debt_amount).toBe(0)
+    expect(out.equity_amount).toBeCloseTo(out.tdc, CURR_DP)
   })
 
-  test('B38.2: tiny ε on Debt % drives effective zero-debt (no interest, no principal, null DSCR)', () => {
-    // Debt % = 1e-9 → debt = 100M * (1e-9 / 100) = 1e-3 JOD < 0.01 floor.
-    // hasDebt = false in every ops year → interest=0, principal=0.
-    const out = runPPPEngine(pppWith({ 'Debt %': 1e-9, 'Equity %': 100 }))
+  test('B38.2: Debt %=0 directly produces zero-debt cash flows (no ε workaround required)', () => {
+    // After 2A: the 1e-9 ε trick is no longer needed. Passing 0 directly
+    // gives the same zero-debt cash-flow shape (interest=0, principal=0,
+    // dscr=null in every ops year; dscr_series empty).
+    const out = runPPPEngine(pppWith({ 'Debt %': 0, 'Equity %': 100 }))
     const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
     opsRows.forEach(r => {
       expect(r.interest).toBe(0)
@@ -1586,6 +1597,73 @@ describe('B38 — zero-debt PPP (falsy-fallback + ε workaround)', () => {
       expect(r.dscr).toBeNull()
     })
     expect(out.dscr_series.length).toBe(0)
+  })
+
+  test('B38.3: Concession Period=0 → throws CONCESSION_PERIOD_INVALID', () => {
+    expect(() => runPPPEngine(pppWith({ 'Concession Period': 0 })))
+      .toThrow(/CONCESSION_PERIOD_INVALID/)
+  })
+
+  test('B38.4: Construction Period=0 (months) → throws CONSTRUCTION_PERIOD_INVALID', () => {
+    expect(() => runPPPEngine(pppWith({ 'Construction Period': 0 })))
+      .toThrow(/CONSTRUCTION_PERIOD_INVALID/)
+  })
+
+  test('B38.5: Concession Period=1 (minimum valid) → runs (1 ops year)', () => {
+    const out = runPPPEngine(pppWith({ 'Concession Period': 1 }))
+    expect(out).toBeDefined()
+    expect(out.operations_years).toBe(1)
+  })
+
+  test('B38.6: Construction Period=6 months (sub-year) → runs (1 construction year via ceil)', () => {
+    // ceil(6 / 12) = 1. Validator passes (6 ≥ 1); downstream Math.max(1, ...) clamps.
+    const out = runPPPEngine(pppWith({ 'Construction Period': 6 }))
+    expect(out).toBeDefined()
+    expect(out.construction_years).toBe(1)
+  })
+
+  test('B38.7: Interest Rate=0 → engine runs at 0% interest in every ops year', () => {
+    // After 2A: explicit 0% interest is respected. Common for sovereign-backed PPPs.
+    const out = runPPPEngine(pppWith({ 'Interest Rate': 0 }))
+    const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
+    opsRows.forEach(r => expect(r.interest).toBe(0))
+  })
+
+  test('B38.8: Tax Rate=0 → engine runs at 0% tax in every ops year', () => {
+    // After 2A: explicit 0% tax is respected. Common for tax-free zones.
+    const out = runPPPEngine(pppWith({ 'Tax Rate': 0 }))
+    const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
+    opsRows.forEach(r => expect(r.tax).toBe(0))
+  })
+
+  test('B38.9: OPEX % of Revenue=0 → engine runs at 0 opex when no fixed-opex override', () => {
+    // After 2A: explicit 0% opex respected. (B37 covers the fixed-opex
+    // override path; this test exercises the percentage path with no override.)
+    const out = runPPPEngine(pppWith({ 'OPEX % of Revenue': 0 }))
+    const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
+    opsRows.forEach(r => expect(r.opex).toBe(0))
+  })
+
+  test('B38.10: Grace Period=0 → ops year 1 immediately has positive principal repayment', () => {
+    // After 2A: explicit 0 grace respected. No deferred principal.
+    const out = runPPPEngine(pppWith({ 'Grace Period': 0 }))
+    const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
+    expect(opsRows[0].principal).toBeGreaterThan(0)
+  })
+
+  test('B38.11: WACC=0 → NPV equals the simple (undiscounted) sum of equity cash flows', () => {
+    // After 2A: explicit 0% WACC respected. At rate=0, NPV = Σ cf / (1+0)^t = Σ cf.
+    const out = runPPPEngine(pppWith({ 'WACC': 0 }))
+    const cfsSum = out.cash_flows.reduce((s, r) => s + r.equity_cf, 0)
+    expect(out.npv).toBeCloseTo(cfsSum, 0)
+  })
+
+  test('B38.12: Loan Tenor=0 + Debt %=0 → runs (loan terms inert when no debt)', () => {
+    // After 2A: explicit 0 tenor respected. With Debt %=0 there is no debt,
+    // so loan-term derivations are inert. No validator on Loan Tenor in 2A.
+    const out = runPPPEngine(pppWith({ 'Loan Tenor': 0, 'Debt %': 0, 'Equity %': 100 }))
+    expect(out).toBeDefined()
+    expect(out.debt_amount).toBe(0)
   })
 })
 

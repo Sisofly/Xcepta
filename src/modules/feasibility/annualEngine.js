@@ -72,6 +72,26 @@ function irrCalc(cfs) {
 }
 function r2(n) { return Math.round(n * 100) / 100 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Null-aware numeric helpers (Fix Batch 2A, 2026-05-16)
+//
+// safeNum:  null/undefined → defaultVal; finite Number → respected (incl. 0);
+//           NaN/Infinity/unparseable → defaultVal (more defensive than `||`).
+// safePct:  same as safeNum, then ÷100. For percentage-shaped inputs.
+//
+// Replaces the long-standing `(value || default)` pattern across the engines
+// so that an explicit zero is no longer silently collapsed to the default.
+// Used by the F08 validation block and the PPP-input derivation in 2A.
+// ─────────────────────────────────────────────────────────────────────────────
+function safeNum(value, defaultVal) {
+  if (value === null || value === undefined) return defaultVal
+  var n = Number(value)
+  return Number.isFinite(n) ? n : defaultVal
+}
+function safePct(value, defaultVal) {
+  return safeNum(value, defaultVal) / 100
+}
+
 function runEngine(assumptions, defaults) {
   var gfa           = getVal(assumptions, 'GFA') || 0
 
@@ -85,10 +105,9 @@ function runEngine(assumptions, defaults) {
   // Sum must equal 100% within ±0.01 percentage-points (= 1e-4 fraction;
   // handles 2dp form-input rounding). Wider than the UI guard's 1e-6;
   // UI fires first as a friendly precheck, engine is defense in depth.
-  var eqRaw = getVal(assumptions, 'Equity %')
-  var sdRaw = getVal(assumptions, 'Senior Debt %')
-  var eqNum = eqRaw === null ? 0 : Number(eqRaw)
-  var sdNum = sdRaw === null ? 0 : Number(sdRaw)
+  // Refactored to use safeNum in Batch 2A (byte-equivalent for getVal sources).
+  var eqNum = safeNum(getVal(assumptions, 'Equity %'), 0)
+  var sdNum = safeNum(getVal(assumptions, 'Senior Debt %'), 0)
   if (Math.abs(eqNum + sdNum - 100) > 0.01) {
     var capErr = new Error(
       'CAPITAL_STRUCTURE_INVALID: Equity % (' + eqNum + ') + Senior Debt % (' +
@@ -228,18 +247,46 @@ function pppVal(assumptions, name) {
 }
 
 function runPPPEngine(assumptions) {
+  // ── F02 (Batch 2A, 2026-05-16): explicit-zero respect on PPP inputs ──
+  // Replaces the legacy `(pppVal(...) || X)` falsy-fallback pattern.
+  // safeNum/safePct distinguish missing/null (→ default) from explicit zero
+  // (→ respected). TPC and Annual Availability Payment keep the legacy
+  // `|| 0` form because the no-input default IS 0 (no-op for explicit 0).
   var tpc             = pppVal(assumptions, 'Total Project Cost')          || 0
-  var debtPct         = (pppVal(assumptions, 'Debt %')                     || 80) / 100
-  var equityPct       = (pppVal(assumptions, 'Equity %')                   || 20) / 100
+  var debtPct         = safePct(pppVal(assumptions, 'Debt %'), 80)
+  var equityPct       = safePct(pppVal(assumptions, 'Equity %'), 20)
   var annualPayment   = pppVal(assumptions, 'Annual Availability Payment') || 0
-  var concessionYrs   = pppVal(assumptions, 'Concession Period')           || 25
-  var constrMonths    = pppVal(assumptions, 'Construction Period')          || 24
-  var opexPct         = (pppVal(assumptions, 'OPEX % of Revenue')          || 5)  / 100
-  var interestRate    = (pppVal(assumptions, 'Interest Rate')              || 7)  / 100
-  var loanTenorYrs    = pppVal(assumptions, 'Loan Tenor')                  || 10
-  var gracePeriodYrs  = pppVal(assumptions, 'Grace Period')                || 2
-  var taxRate         = (pppVal(assumptions, 'Tax Rate')                   || 20) / 100
-  var wacc            = (pppVal(assumptions, 'WACC')                       || 10) / 100
+  var concessionYrs   = safeNum(pppVal(assumptions, 'Concession Period'), 25)
+  var constrMonths    = safeNum(pppVal(assumptions, 'Construction Period'), 24)
+  var opexPct         = safePct(pppVal(assumptions, 'OPEX % of Revenue'), 5)
+  var interestRate    = safePct(pppVal(assumptions, 'Interest Rate'), 7)
+  var loanTenorYrs    = safeNum(pppVal(assumptions, 'Loan Tenor'), 10)
+  var gracePeriodYrs  = safeNum(pppVal(assumptions, 'Grace Period'), 2)
+  var taxRate         = safePct(pppVal(assumptions, 'Tax Rate'), 20)
+  var wacc            = safePct(pppVal(assumptions, 'WACC'), 10)
+
+  // ── F02 validation: Concession Period and Construction Period must be ≥ 1 ──
+  // The old `|| 25` / `|| 24` falsy fallbacks combined with downstream
+  // Math.max(1, ...) clamps silently produced a 1-year fallback when the
+  // user passed an explicit zero. After Batch 2A, an explicit zero is
+  // respected here — and zero (or negative) values are rejected with a
+  // deterministic, machine-readable error before any computation runs.
+  if (concessionYrs < 1) {
+    var cpErr = new Error(
+      'CONCESSION_PERIOD_INVALID: Concession Period must be >= 1 year; received ' + concessionYrs + '.'
+    )
+    cpErr.code  = 'CONCESSION_PERIOD_INVALID'
+    cpErr.value = concessionYrs
+    throw cpErr
+  }
+  if (constrMonths < 1) {
+    var cmErr = new Error(
+      'CONSTRUCTION_PERIOD_INVALID: Construction Period must be >= 1 month; received ' + constrMonths + '.'
+    )
+    cmErr.code  = 'CONSTRUCTION_PERIOD_INVALID'
+    cmErr.value = constrMonths
+    throw cmErr
+  }
 
   var constrYears = Math.max(1, Math.ceil(constrMonths / 12))
   var opsYears    = Math.max(1, concessionYrs)  // concession = service/operations period; total life = constrYears + opsYears
