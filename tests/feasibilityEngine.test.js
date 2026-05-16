@@ -1542,14 +1542,17 @@ describe('B37 — fixed OPEX override', () => {
     })
   })
 
-  test('B37.2: OPEX Amount = 0 falls back to revenue × opex% (useFixedOpex requires > 0)', () => {
+  test('B37.2: OPEX Amount = 0 → fixed zero opex (F09: useFixedOpex respects explicit 0)', () => {
+    // After F09 (Batch 2B, 2026-05-16): the engine no longer collapses an
+    // explicit zero to the percentage fall-through. `OPEX Amount = 0` now
+    // means "fixed zero opex" in every ops year. Null/missing still falls
+    // through to revenue × opex% (covered by B37.3).
     const zeroFixed = P_PPP_BASE_ASSUMPTIONS.concat([
       { name: 'OPEX Amount (JOD)', value: 0, unit: 'JOD' },
     ])
     const out = runPPPEngine(zeroFixed)
-    const expectedOpex = r2(12_000_000 * 0.05)  // 600,000
     out.cash_flows.filter(r => r.phase === 'Operations').forEach(r => {
-      expect(r.opex).toBeCloseTo(expectedOpex, CURR_DP)
+      expect(r.opex).toBe(0)
     })
   })
 
@@ -1897,6 +1900,30 @@ describe('B44 — computeRequiredPayment achievable target', () => {
       .toBeCloseTo(result.achieved_min_dscr, RATIO_DP)
   })
 
+  test('B44.8: F03 fix — targetDSCR=0 is respected (converge at currentPayment, "accept any DSCR")', () => {
+    // After F03 (Batch 2B): safeNum(targetDSCR, 1.20) respects an explicit 0.
+    // Baseline minDSCR ≈ 0.69 ≥ 0 → solver converges at currentPayment in
+    // iteration 0. Pre-fix the falsy `||` would have used 1.20 instead.
+    const result = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, 0)
+    expect(result.converged).toBe(true)
+    expect(result.target_dscr).toBe(0)
+    expect(result.required_payment).toBe(BASE_PAYMENT)
+    expect(result.payment_gap).toBe(0)
+    expect(result.achieved_min_dscr).not.toBeNull()
+    expect(result.achieved_min_dscr).toBeGreaterThanOrEqual(0)
+  })
+
+  test('B44.9: F07 defensive — baseline solver still converges (regression guard for the Number.isFinite filter)', () => {
+    // F07 swaps the dscr filter from `!== null` to Number.isFinite. No
+    // current input path emits NaN/Infinity (Batch 2A safeNum guards all
+    // PPP inputs), but the filter must continue to accept finite values
+    // exactly as before. This test pins the baseline-converges contract.
+    const result = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, 1.20)
+    expect(result.converged).toBe(true)
+    expect(result.required_payment).toBeGreaterThan(BASE_PAYMENT)
+    expect(Number.isFinite(result.achieved_min_dscr)).toBe(true)
+  })
+
   test('B44.7: API surface — result has the full structured shape', () => {
     const result = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, 1.20)
     expect(result).toHaveProperty('converged')
@@ -2125,17 +2152,32 @@ describe('B46 — bankability gates: IRR, NPV, DSCR thresholds', () => {
     expect(computePPPBankability(m, 1.30).dscrOk).toBe(false)  // custom floor=1.30
   })
 
-  test('B46.11: FINDING — dscrFloor=0 collapses to PPP_DSCR_FLOOR=1.20', () => {
-    // Guard: (dscrFloor != null && dscrFloor > 0) ? dscrFloor : PPP_DSCR_FLOOR
-    // dscrFloor=0 → 0 > 0 is false → falls back to 1.20
-    // Callers cannot pass 0 to mean "accept any DSCR".
+  test('B46.11: dscrFloor=0 is respected — means "no DSCR constraint" (F04 fix)', () => {
+    // After F04 (Batch 2B, 2026-05-16): safeNum(dscrFloor, PPP_DSCR_FLOOR)
+    // respects an explicit zero. Floor used by the gate is 0; any
+    // non-negative minDSCR passes dscrOk. Null/undefined still defaults to
+    // PPP_DSCR_FLOOR=1.20.
     const m = makeBankabilityInput({
       irr: PPP_IRR_HURDLE, npv: 0,
-      dscrSeries: [{ year: 1, dscr: 1.25 }],   // 1.25 ≥ 1.20 → dscrOk=true at default floor
+      dscrSeries: [{ year: 1, dscr: 0.50 }],   // even 0.50 is OK against floor=0
     })
     const b = computePPPBankability(m, 0)
-    expect(b.PPP_DSCR_FLOOR).toBe(PPP_DSCR_FLOOR)  // floor was reset to default 1.20
-    expect(b.dscrOk).toBe(true)                      // treated as default, not as "floor=0"
+    expect(b.PPP_DSCR_FLOOR).toBe(0)              // floor preserved as 0
+    expect(b.dscrOk).toBe(true)                    // 0.50 ≥ 0
+    expect(b.cashTrapYears).toEqual([])            // nothing trapped against floor=0
+  })
+
+  test('B46.11.b: F04 — dscrFloor=null/undefined still defaults to PPP_DSCR_FLOOR (1.20)', () => {
+    // Companion to B46.11: confirms safeNum's null/undefined branch
+    // preserves the institutional default behaviour. Only an explicit
+    // numeric 0 is now respected; missing / null still falls back to 1.20.
+    const m = makeBankabilityInput({
+      irr: PPP_IRR_HURDLE, npv: 0,
+      dscrSeries: [{ year: 1, dscr: 1.25 }],
+    })
+    expect(computePPPBankability(m, null).PPP_DSCR_FLOOR).toBe(PPP_DSCR_FLOOR)
+    expect(computePPPBankability(m, undefined).PPP_DSCR_FLOOR).toBe(PPP_DSCR_FLOOR)
+    expect(computePPPBankability(m).PPP_DSCR_FLOOR).toBe(PPP_DSCR_FLOOR)        // arg omitted
   })
 
   test('B46.12: integration — runPPPEngine output feeds computePPPBankability correctly', () => {
@@ -2263,28 +2305,29 @@ describe('B47 — cash-trap years (DSCR < floor)', () => {
 //   total_year = r.year   (raw year from cash_flows row)
 //   balance    = Math.round(ssvBalance)
 //
-// FINDING (B48.3): After every non-trapped year ssvBalance=0.
-//   0 < liquidityThreshold (if opex > 0) → warning fires on EVERY
-//   non-trapped ops year.  Warnings are not scoped to trap sequences.
+// F11 FIX (Batch 2B, 2026-05-16): liquidity warnings are now scoped to
+//   trapped years only. Non-trapped years previously fired a spurious
+//   warning after ssvBalance reset (0 < threshold). The fix adds the
+//   `trapped &&` guard to the emit condition so warnings reflect genuine
+//   trap-window liquidity stress.
 // =====================================================================
 describe('B48 — liquidity warnings (SSV balance < 3 months OPEX)', () => {
   const OPEX_AMT = 4_000_000          // annual opex → threshold = 1,000,000
   const THRESHOLD = OPEX_AMT / 4      // 1,000,000
 
-  test('B48.1: liquidityThreshold = annualOpex / 4 (first positive ops opex)', () => {
-    // Two ops rows: first has opex=0 (skipped), second has OPEX_AMT (anchors threshold)
+  test('B48.1: liquidityThreshold = annualOpex / 4 (anchored by first positive ops opex)', () => {
+    // After F11 the threshold can only be characterised via a trapped year
+    // (non-trapped years no longer warn). Row 0: opex=0 (engine skips it
+    // when scanning for annualOpex). Row 1: opex=OPEX_AMT (anchors
+    // annualOpex; threshold=OPEX_AMT/4). Row 1 is trapped with equity_cf
+    // just below the threshold → exactly one warning fires.
     const cf = makeOpsFlows([
-      { opex: 0,        equity_cf: 0, dscr: 2.00 },  // opex=0 → skipped by engine
-      { opex: OPEX_AMT, equity_cf: 0, dscr: 2.00 },  // first positive → threshold=OPEX_AMT/4
+      { opex: 0,        equity_cf: 0, dscr: 2.00 },                    // not trapped, opex=0
+      { opex: OPEX_AMT, equity_cf: THRESHOLD - 1, dscr: 0.80 },         // trapped, balance < threshold
     ])
-    // No trapped years → all ssvBalance=0 < THRESHOLD → both rows warn
     const b = computePPPBankability(makeBankabilityInput({ cashFlows: cf }))
-    // Threshold is OPEX_AMT/4 — confirmed by warnings present on rows with opex=OPEX_AMT
-    expect(b.liquidityWarnings.length).toBeGreaterThan(0)
-    // Row with opex=0 comes first — balance=0 but threshold=0 at that point,
-    // so no warning yet; once threshold anchors on OPEX_AMT row, warnings fire.
-    // The concrete check: all warnings have balance < THRESHOLD.
-    b.liquidityWarnings.forEach(w => expect(w.balance).toBeLessThan(THRESHOLD))
+    expect(b.liquidityWarnings.length).toBe(1)
+    expect(b.liquidityWarnings[0].balance).toBe(THRESHOLD - 1)
   })
 
   test('B48.2: trapped year accumulates equity_cf in SSV; warning fires when balance < threshold', () => {
@@ -2298,22 +2341,21 @@ describe('B48 — liquidity warnings (SSV balance < 3 months OPEX)', () => {
     expect(b.liquidityWarnings[0].balance).toBeLessThan(THRESHOLD)
   })
 
-  test('B48.3: FINDING — non-trapped year resets ssvBalance=0; warning fires (0 < threshold)', () => {
-    // Scenario: 1 trapped year followed by 3 free-cash years.
-    // On each free year: ssvBalance=0 → 0 < THRESHOLD → warning fires.
-    // Total warnings = 4 (trapped year + 3 non-trapped years all warn).
+  test('B48.3: F11 fix — non-trapped year does NOT generate a warning (scope restricted)', () => {
+    // After F11 (Batch 2B, 2026-05-16): the `trapped &&` guard means only
+    // trapped years can fire a liquidity warning. The same 1-trapped +
+    // 3-non-trapped sequence now produces exactly 1 warning, not 4. The
+    // pre-fix behaviour (warning on every non-trapped year via the 0 <
+    // threshold path) is removed.
     const cf = makeOpsFlows([
-      { opex: OPEX_AMT, equity_cf: 500_000,  dscr: 0.80 },  // trapped   → ssvBalance=500K, warning
-      { opex: OPEX_AMT, equity_cf: 800_000,  dscr: 1.50 },  // not trapped → ssvBalance=0,  warning (FINDING)
-      { opex: OPEX_AMT, equity_cf: 900_000,  dscr: 2.00 },  // not trapped → ssvBalance=0,  warning (FINDING)
-      { opex: OPEX_AMT, equity_cf: 1_000_000, dscr: 2.50 }, // not trapped → ssvBalance=0,  warning (FINDING)
+      { opex: OPEX_AMT, equity_cf: 500_000,  dscr: 0.80 },  // trapped, balance 500K < 1M → warning
+      { opex: OPEX_AMT, equity_cf: 800_000,  dscr: 1.50 },  // not trapped → no warning (F11)
+      { opex: OPEX_AMT, equity_cf: 900_000,  dscr: 2.00 },  // not trapped → no warning (F11)
+      { opex: OPEX_AMT, equity_cf: 1_000_000, dscr: 2.50 }, // not trapped → no warning (F11)
     ])
     const b = computePPPBankability(makeBankabilityInput({ cashFlows: cf }))
-    // All 4 ops years generate warnings: 1 trapped + 3 non-trapped (balance=0 < 1M)
-    expect(b.liquidityWarnings.length).toBe(4)
-    // The three non-trapped years all report balance=0
-    const nonTrapWarnings = b.liquidityWarnings.slice(1)
-    nonTrapWarnings.forEach(w => expect(w.balance).toBe(0))
+    expect(b.liquidityWarnings.length).toBe(1)
+    expect(b.liquidityWarnings[0].balance).toBe(500_000)
   })
 
   test('B48.4: annualOpex=0 → liquidityThreshold=0 → no warnings (guard: threshold > 0)', () => {
@@ -2362,6 +2404,22 @@ describe('B48 — liquidity warnings (SSV balance < 3 months OPEX)', () => {
     expect(b.liquidityWarnings.length).toBe(1)
     expect(b.liquidityWarnings[0].ops_year).toBe(1)
     expect(b.liquidityWarnings[0].total_year).toBe(2)
+  })
+
+  test('B48.8: F11 fix — trap → recovery → trap reuses the SSV reset semantics without spurious warnings', () => {
+    // Sequence: trapped (balance 400K, warn), trapped (800K, warn), not
+    // trapped (reset to 0, NO warning per F11), trapped (400K, warn).
+    // Pre-fix: 4 warnings (the not-trapped year would have warned at 0).
+    // Post-fix: 3 warnings, only on trapped years that fell below threshold.
+    const cf = makeOpsFlows([
+      { opex: OPEX_AMT, equity_cf: 400_000, dscr: 0.80 },   // trapped → 400K < 1M → warn
+      { opex: OPEX_AMT, equity_cf: 400_000, dscr: 0.80 },   // trapped → 800K < 1M → warn
+      { opex: OPEX_AMT, equity_cf: 999_999, dscr: 1.50 },   // NOT trapped → reset to 0 → NO warn (F11)
+      { opex: OPEX_AMT, equity_cf: 400_000, dscr: 0.80 },   // trapped again → 400K < 1M → warn
+    ])
+    const b = computePPPBankability(makeBankabilityInput({ cashFlows: cf }))
+    expect(b.liquidityWarnings.length).toBe(3)
+    expect(b.liquidityWarnings.map(w => w.balance)).toEqual([400_000, 800_000, 400_000])
   })
 })
 

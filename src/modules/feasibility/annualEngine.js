@@ -295,7 +295,10 @@ function runPPPEngine(assumptions) {
 
   // OPEX: use fixed JOD amount if stored, otherwise % of revenue (default)
   var opexFixed   = pppVal(assumptions, 'OPEX Amount (JOD)')
-  var useFixedOpex = opexFixed !== null && opexFixed > 0
+  // F09 (Batch 2B, 2026-05-16): explicit zero respected — `OPEX Amount = 0`
+  // now means "fixed zero opex", not a fall-through to revenue × opex%.
+  // Null/missing still falls through to the percentage path.
+  var useFixedOpex = opexFixed !== null && opexFixed >= 0
 
   // Level annuity repayment over (loanTenor - grace) years
   var repayYears  = Math.max(1, loanTenorYrs - gracePeriodYrs)
@@ -395,7 +398,10 @@ function runPPPEngine(assumptions) {
 //                        every iteration produced an empty dscr_series)
 function computeRequiredPayment(assumptions, targetDSCR) {
   var currentPayment = pppVal(assumptions, 'Annual Availability Payment') || 0
-  var target = targetDSCR || 1.20
+  // F03 (Batch 2B, 2026-05-16): explicit `targetDSCR = 0` respected — means
+  // "accept any non-negative DSCR" (converge at currentPayment). Null/
+  // undefined still falls back to the institutional default of 1.20.
+  var target = safeNum(targetDSCR, 1.20)
   var step = 10000
   var maxIterations = 2000
   var testPayment = currentPayment
@@ -408,8 +414,14 @@ function computeRequiredPayment(assumptions, targetDSCR) {
       return a
     })
     var result = runPPPEngine(testAssumptions)
+    // F07 (Batch 2B, 2026-05-16): defensive NaN / Infinity guard.
+    // Number.isFinite excludes null, undefined, NaN, and ±Infinity in one
+    // strict (non-coercing) check. No currently-reachable trigger from
+    // normal inputs (Batch 2A's safeNum eliminates NaN at the PPP input
+    // boundary), but this hardens the solver against any future regression
+    // that lets NaN enter dscr_series.
     var dscrVals = (result.dscr_series || [])
-      .filter(function(d) { return d.dscr !== null })
+      .filter(function(d) { return Number.isFinite(d.dscr) })
       .map(function(d) { return d.dscr })
     minDSCR = dscrVals.length ? Math.min.apply(null, dscrVals) : null
     if (minDSCR !== null && minDSCR >= target) {
@@ -449,8 +461,10 @@ var PPP_IRR_HURDLE  = 10    // % equity IRR
 
 function computePPPBankability(modelOutput, dscrFloor) {
   if (!modelOutput) return null
-  // Use caller-supplied floor (user target DSCR) or fall back to global constant
-  var floor = (dscrFloor != null && dscrFloor > 0) ? dscrFloor : PPP_DSCR_FLOOR
+  // F04 (Batch 2B, 2026-05-16): explicit `dscrFloor = 0` respected — means
+  // "no DSCR constraint" (any non-negative minDSCR passes the gate). Null/
+  // undefined/NaN still falls back to the institutional default of 1.20.
+  var floor = safeNum(dscrFloor, PPP_DSCR_FLOOR)
 
   var irr = modelOutput.irr !== null && modelOutput.irr !== undefined ? Number(modelOutput.irr) : null
   var npv = modelOutput.npv !== null && modelOutput.npv !== undefined ? Number(modelOutput.npv) : null
@@ -492,7 +506,12 @@ function computePPPBankability(modelOutput, dscrFloor) {
     }
 
     var opsYr = r.year - constrCount + 1
-    if (liquidityThreshold > 0 && ssvBalance < liquidityThreshold) {
+    // F11 (Batch 2B, 2026-05-16): only fire a liquidity warning during a
+    // trapped year. Pre-fix, ssvBalance reset to 0 on every non-trapped year
+    // then immediately fired a warning (0 < threshold). Result: warnings on
+    // every ops year when opex > 0, even outside cash-trap sequences. After
+    // the fix, warnings are scoped to genuine trap-window liquidity stress.
+    if (trapped && liquidityThreshold > 0 && ssvBalance < liquidityThreshold) {
       liquidityWarnings.push({ ops_year: opsYr, total_year: r.year, balance: Math.round(ssvBalance) })
     }
   })
