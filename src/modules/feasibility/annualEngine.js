@@ -334,13 +334,26 @@ function runPPPEngine(assumptions) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Solver: find minimum annual payment to achieve targetDSCR
-// Only iterates over payment — all other assumptions are fixed
+// Only iterates over payment — all other assumptions are fixed.
+//
+// Fix Batch 1B (F05 + F06, 2026-05-16): returns a structured object that
+// explicitly distinguishes convergence from cap exhaustion. The returned
+// required_payment is always the LAST ACTUALLY-EVALUATED value (no longer
+// one step past the last tested value).
+//   converged          — true iff the loop broke because minDSCR ≥ target
+//   required_payment   — last payment value the engine was run against
+//   payment_gap        — required_payment − currentPayment
+//   target_dscr        — target DSCR used (after the targetDSCR || 1.20 default)
+//   achieved_min_dscr  — minDSCR at the last engine evaluation (null only if
+//                        every iteration produced an empty dscr_series)
 function computeRequiredPayment(assumptions, targetDSCR) {
   var currentPayment = pppVal(assumptions, 'Annual Availability Payment') || 0
   var target = targetDSCR || 1.20
   var step = 10000
   var maxIterations = 2000
   var testPayment = currentPayment
+  var minDSCR = null
+  var converged = false
 
   for (var i = 0; i < maxIterations; i++) {
     var testAssumptions = assumptions.map(function(a) {
@@ -351,14 +364,23 @@ function computeRequiredPayment(assumptions, targetDSCR) {
     var dscrVals = (result.dscr_series || [])
       .filter(function(d) { return d.dscr !== null })
       .map(function(d) { return d.dscr })
-    var minDSCR = dscrVals.length ? Math.min.apply(null, dscrVals) : null
-    if (minDSCR !== null && minDSCR >= target) break
-    testPayment += step
+    minDSCR = dscrVals.length ? Math.min.apply(null, dscrVals) : null
+    if (minDSCR !== null && minDSCR >= target) {
+      converged = true
+      break
+    }
+    // F06: only advance to the next candidate if another iteration will
+    // follow. Prevents returning a payment value that was never actually
+    // evaluated by runPPPEngine.
+    if (i < maxIterations - 1) testPayment += step
   }
 
   return {
+    converged: converged,
     required_payment: testPayment,
     payment_gap: testPayment - currentPayment,
+    target_dscr: target,
+    achieved_min_dscr: minDSCR,
   }
 }
 
