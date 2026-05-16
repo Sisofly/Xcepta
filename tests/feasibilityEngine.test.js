@@ -1090,26 +1090,94 @@ describe('B27 — 100% debt fully levered', () => {
 })
 
 // =====================================================================
-// B28 — Capital structure does not sum to 100% (underfunded)
-// Engine reads equityPct and seniorDebtPct independently — does NOT
-// validate they sum to 1.0. A 30/50 fixture leaves 20% of TPC silently
-// unfunded; equity + debt < TPC. UI catches this; the engine does not.
+// B28 — Capital structure must sum to 100% (F08 fix, 2026-05-16)
+//
+// Before the fix, runEngine read equityPct and seniorDebtPct independently
+// and did NOT validate they sum to 1.0 — a 30/50 fixture silently left
+// 20% of TPC unfunded. After the F08 fix, runEngine throws a deterministic
+// error with code='CAPITAL_STRUCTURE_INVALID' when |sum − 100%| > 0.01 pp.
+//
+// Tolerance: ±0.01 percentage-points (=1e-4 fraction-space). Wider than the
+// UI guard's 1e-6; UI fires first as a friendly precheck, engine is
+// defense in depth.
+//
+// Side-effect of honoring the user's spec (100/0 and 0/100 must pass):
+// the validation reads raw values via `=== null` check, so explicit zero
+// is respected for Equity % and Senior Debt %. This is a narrow F01
+// carve-out for these two fields only; F01 falsy-fallback on the other
+// ~16 inputs is unchanged in this batch.
 // =====================================================================
-describe('B28 — capital structure < 100% (underfunded, engine does not enforce)', () => {
-  const F_UNDERFUNDED_ASSUMPTIONS = F_RE_SALE_ASSUMPTIONS.map(a => {
-    if (a.name === 'Equity %')      return { ...a, value: 30 }
-    if (a.name === 'Senior Debt %') return { ...a, value: 50 }
-    return a
-  })
-  const out = runEngine(F_UNDERFUNDED_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
+describe('B28 — capital structure validation (engine throws on sum ≠ 100%)', () => {
+  // Helper: build an underfunded / overfunded assumption set
+  function withCapStructure(eqPct, sdPct) {
+    return F_RE_SALE_ASSUMPTIONS.map(a => {
+      if (a.name === 'Equity %')      return { ...a, value: eqPct }
+      if (a.name === 'Senior Debt %') return { ...a, value: sdPct }
+      return a
+    })
+  }
 
-  test('B28.1: equity + debt < TPC (engine produces a 20% funding gap silently)', () => {
-    const totalSources = out.equity_amount + out.debt_amount
-    expect(totalSources).toBeCloseTo(out.tdc * 0.80, 0)  // 30% + 50% = 80% of TPC
-    expect(totalSources).toBeLessThan(out.tdc)
+  test('B28.1: underfunded 30/50 (sum 80%) → throws CAPITAL_STRUCTURE_INVALID', () => {
+    expect(() => runEngine(withCapStructure(30, 50), F_RE_SALE_DEFAULTS))
+      .toThrow(/CAPITAL_STRUCTURE_INVALID/)
   })
 
-  test('B28.2: underfunded fixture → engine runs without error', () => {
+  test('B28.2: thrown error carries machine-readable diagnostic fields', () => {
+    try {
+      runEngine(withCapStructure(30, 50), F_RE_SALE_DEFAULTS)
+      throw new Error('runEngine should have thrown')
+    } catch (e) {
+      expect(e.code).toBe('CAPITAL_STRUCTURE_INVALID')
+      expect(e.equity_pct).toBe(30)
+      expect(e.senior_debt_pct).toBe(50)
+      expect(e.sum).toBe(80)
+    }
+  })
+
+  test('B28.3: overfunded 60/50 (sum 110%) → throws CAPITAL_STRUCTURE_INVALID', () => {
+    expect(() => runEngine(withCapStructure(60, 50), F_RE_SALE_DEFAULTS))
+      .toThrow(/CAPITAL_STRUCTURE_INVALID/)
+  })
+
+  test('B28.4: 40/40 underfunded (sum 80%) → throws CAPITAL_STRUCTURE_INVALID', () => {
+    expect(() => runEngine(withCapStructure(40, 40), F_RE_SALE_DEFAULTS))
+      .toThrow(/CAPITAL_STRUCTURE_INVALID/)
+  })
+
+  test('B28.5: 100/0 boundary valid (all-equity, explicit zero on debt) → runs', () => {
+    // Explicit zero on Senior Debt % is now respected (narrow F01 carve-out).
+    // Sum = 100 exact; engine must produce a valid output.
+    const out = runEngine(withCapStructure(100, 0), F_RE_SALE_DEFAULTS)
+    expect(out).toBeDefined()
+    expect(Array.isArray(out.cash_flows)).toBe(true)
+    expect(out.equity_amount).toBeCloseTo(out.tdc * 1.0, CURR_DP)
+    expect(out.debt_amount).toBeCloseTo(0, CURR_DP)
+  })
+
+  test('B28.6: 0/100 boundary valid (all-debt, explicit zero on equity) → runs', () => {
+    const out = runEngine(withCapStructure(0, 100), F_RE_SALE_DEFAULTS)
+    expect(out).toBeDefined()
+    expect(Array.isArray(out.cash_flows)).toBe(true)
+    expect(out.equity_amount).toBeCloseTo(0, CURR_DP)
+    expect(out.debt_amount).toBeCloseTo(out.tdc * 1.0, CURR_DP)
+  })
+
+  test('B28.7: within tolerance — 30 / 69.995 (sum 99.995, gap 0.005 pp) → runs', () => {
+    // Comfortably inside the ±0.01 pp window. (Note: 30 + 69.99 sometimes
+    // evaluates to 99.989999...01 in IEEE 754, putting gap slightly above
+    // 0.01 pp; using 69.995 keeps the test deterministic across hosts.)
+    const out = runEngine(withCapStructure(30, 69.995), F_RE_SALE_DEFAULTS)
+    expect(out).toBeDefined()
+  })
+
+  test('B28.8: just outside tolerance — 30 / 69.98 (sum 99.98, gap 0.02 pp) → throws', () => {
+    expect(() => runEngine(withCapStructure(30, 69.98), F_RE_SALE_DEFAULTS))
+      .toThrow(/CAPITAL_STRUCTURE_INVALID/)
+  })
+
+  test('B28.9: F_NO_DEBT_ASSUMPTIONS (100 + 1e-7) → runs (well inside tolerance)', () => {
+    // Regression guard for the ε-debt fixture used by B8.4, B11.3, B12.4, B53.
+    const out = runEngine(F_NO_DEBT_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
     expect(out).toBeDefined()
     expect(Array.isArray(out.cash_flows)).toBe(true)
   })
@@ -1238,21 +1306,30 @@ describe('B32 — very long project life (50 years)', () => {
 // B33 — Missing optional fields / defaults
 // Engine uses `getDefault(...) || X` and `getVal(...) || X` fallbacks
 // extensively. Empty defaults table → all `|| X` defaults fire.
-// Empty assumptions → engine falls back to internal defaults for all.
-// (See annual_engine_falsy_fallback.md for the falsy-fallback quirk.)
+//
+// CAPITAL-STRUCTURE NOTE (after F08 fix, 2026-05-16):
+// Equity % and Senior Debt % now use a null-aware fallback to 0 (aligned
+// with the UI guard in handleApprove / handleApproveScenario). The old
+// internal defaults (30 / 60) were themselves a silent funding-gap source
+// (sum 90%) and have been removed. Empty assumptions now produce 0 + 0 = 0,
+// which fails the F08 sum-to-100% validation; runEngine throws
+// CAPITAL_STRUCTURE_INVALID before any output is produced. B33.1 and B33.3
+// lock the new throw behavior; B33.2 still runs because F_RE_SALE_ASSUMPTIONS
+// provides 30/70 explicitly (sum 100%).
+// (See annual_engine_falsy_fallback.md for the broader falsy-fallback quirk.)
 // =====================================================================
 describe('B33 — missing optional fields / defaults', () => {
-  test('B33.1: runEngine([], F_RE_SALE_DEFAULTS) → engine does not crash; produces empty-project shape', () => {
-    const out = runEngine([], F_RE_SALE_DEFAULTS)
-    expect(out).toBeDefined()
-    expect(Array.isArray(out.cash_flows)).toBe(true)
-    // Empty assumptions → GFA=0 (getVal returns null → || 0) → all sizes 0
-    expect(out.tdc).toBe(0)
+  test('B33.1: runEngine([], F_RE_SALE_DEFAULTS) → throws CAPITAL_STRUCTURE_INVALID', () => {
+    // Empty assumptions → Equity % and Senior Debt % both default to 0
+    // (null-aware fallback). Sum 0 + 0 = 0 fails F08 validation → throws.
+    expect(() => runEngine([], F_RE_SALE_DEFAULTS))
+      .toThrow(/CAPITAL_STRUCTURE_INVALID/)
   })
 
   test('B33.2: runEngine(F_RE_SALE_ASSUMPTIONS, []) → engine uses all internal default fallbacks', () => {
-    // Because F_RE_SALE_DEFAULTS values exactly match the engine's `|| X` defaults,
-    // running with empty defaults should produce an identical output.
+    // F_RE_SALE_ASSUMPTIONS supplies Equity %=30 / Senior Debt %=70 explicitly,
+    // so F08 validation passes. F_RE_SALE_DEFAULTS values match the engine's
+    // `|| X` defaults for all *other* fields, so output should match.
     const withDefaults    = runEngine(F_RE_SALE_ASSUMPTIONS, F_RE_SALE_DEFAULTS)
     const withoutDefaults = runEngine(F_RE_SALE_ASSUMPTIONS, [])
     expect(withoutDefaults.tdc).toBe(withDefaults.tdc)
@@ -1263,12 +1340,11 @@ describe('B33 — missing optional fields / defaults', () => {
     expect(withoutDefaults.equity_multiple).toBe(withDefaults.equity_multiple)
   })
 
-  test('B33.3: runEngine([], []) → fully degenerate (zero project), engine still runs', () => {
-    const out = runEngine([], [])
-    expect(out).toBeDefined()
-    expect(out.tdc).toBe(0)
-    expect(out.irr).toBeNull()
-    expect(out.cash_flows.length).toBeGreaterThan(0)  // still has constr+ops rows, just all zero
+  test('B33.3: runEngine([], []) → throws CAPITAL_STRUCTURE_INVALID (same root cause as B33.1)', () => {
+    // Same as B33.1: missing Equity %/Senior Debt % → null-aware fallback
+    // to 0/0 → sum 0 → fails F08 validation → throws.
+    expect(() => runEngine([], []))
+      .toThrow(/CAPITAL_STRUCTURE_INVALID/)
   })
 })
 

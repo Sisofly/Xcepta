@@ -74,8 +74,34 @@ function r2(n) { return Math.round(n * 100) / 100 }
 
 function runEngine(assumptions, defaults) {
   var gfa           = getVal(assumptions, 'GFA') || 0
-  var equityPct     = (getVal(assumptions, 'Equity %') || 30) / 100
-  var seniorDebtPct = (getVal(assumptions, 'Senior Debt %') || 60) / 100
+
+  // ── F08: Capital structure validation (engine-side hardening) ──
+  // Raw values respect explicit zero (no falsy-fallback collapse on these
+  // two fields specifically) so legitimate 100/0 and 0/100 structures pass.
+  // Missing/null fields fall back to 0 to align with UI guard semantics
+  // (handleApprove / handleApproveScenario in FeasibilityProject.jsx both
+  // treat null as 0). The old internal defaults (30 / 60) summed to only
+  // 90%, which was itself a silent funding-gap source — removed by F08.
+  // Sum must equal 100% within ±0.01 percentage-points (= 1e-4 fraction;
+  // handles 2dp form-input rounding). Wider than the UI guard's 1e-6;
+  // UI fires first as a friendly precheck, engine is defense in depth.
+  var eqRaw = getVal(assumptions, 'Equity %')
+  var sdRaw = getVal(assumptions, 'Senior Debt %')
+  var eqNum = eqRaw === null ? 0 : Number(eqRaw)
+  var sdNum = sdRaw === null ? 0 : Number(sdRaw)
+  if (Math.abs(eqNum + sdNum - 100) > 0.01) {
+    var capErr = new Error(
+      'CAPITAL_STRUCTURE_INVALID: Equity % (' + eqNum + ') + Senior Debt % (' +
+      sdNum + ') must sum to 100%; currently sums to ' + (eqNum + sdNum) + '%.'
+    )
+    capErr.code           = 'CAPITAL_STRUCTURE_INVALID'
+    capErr.equity_pct     = eqNum
+    capErr.senior_debt_pct = sdNum
+    capErr.sum            = eqNum + sdNum
+    throw capErr
+  }
+  var equityPct     = eqNum / 100
+  var seniorDebtPct = sdNum / 100
   var revenueModel  = getUnit(assumptions, 'Revenue Model') || 'Sale'
   var isSale        = revenueModel === 'Sale'
   var isRental      = revenueModel === 'Rental'
