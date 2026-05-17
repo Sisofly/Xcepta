@@ -195,7 +195,7 @@ const S = {
     borderBottom: `1px solid ${colors.borderMuted}`,
   },
   kpiCard: (accent) => ({
-    background: '#161b22',
+    background: colors.surface,
     border: `1px solid ${accent}33`,
     borderRadius: '8px',
     padding: '1rem 1.25rem',
@@ -219,12 +219,12 @@ const S = {
 
 // ─── KPI card ─────────────────────────────────────────────────────────────────
 
-function KpiCard({ label, value, accent = '#58a6ff', sub }) {
+function KpiCard({ label, value, accent = colors.accent, sub }) {
   return (
     <div style={S.kpiCard(accent)}>
       <div style={S.kpiLabel}>{label}</div>
       <div style={S.kpiVal(accent)}>{value}</div>
-      {sub && <div style={{ fontSize: '0.72rem', color: '#484f58' }}>{sub}</div>}
+      {sub && <div style={{ fontSize: '0.72rem', color: colors.textMuted }}>{sub}</div>}
     </div>
   )
 }
@@ -655,8 +655,8 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
               <KpiCard label="Unleveraged IRR"  value={s.unleveragedIRR}            accent={irrColor(s.unleveragedIRR)} sub="Project-level" />
               <KpiCard label="Leveraged IRR"    value={s.leveragedIRR}              accent={irrColor(s.leveragedIRR)}   sub="Equity-level" />
               <KpiCard label="Leverage Lift"    value={s.leverageLift}              accent="#a371f7" />
-              <KpiCard label="Project NPV"      value={'JOD ' + fmt(s.projectNPV)} accent="#58a6ff" sub={`@${(cfg.discountRate * 100).toFixed(1)}% WACC`} />
-              <KpiCard label="Equity NPV"       value={'JOD ' + fmt(s.equityNPV)}  accent="#58a6ff" />
+              <KpiCard label="Project NPV"      value={'JOD ' + fmt(s.projectNPV)} accent={colors.accent} sub={`@${(cfg.discountRate * 100).toFixed(1)}% WACC`} />
+              <KpiCard label="Equity NPV"       value={'JOD ' + fmt(s.equityNPV)}  accent={colors.accent} />
               <KpiCard label="Peak Funding Gap" value={peakGapRow ? 'JOD ' + fmt(Math.abs(peakGapRow.cumulative)) : '—'} accent={hasFundingGap ? colors.danger : colors.textMuted} sub={peakGapRow && hasFundingGap ? 'Month ' + peakGapRow.month : 'No gap'} />
             </div>
           </div>
@@ -665,11 +665,11 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
           <div>
             <p style={S.section}>Profitability</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-              <KpiCard label="Development Profit" value={'JOD ' + fmt(s.developmentProfit)} accent="#3fb950" />
-              <KpiCard label="Profit on Cost"      value={s.profitOnCostPct}                 accent="#3fb950" />
-              <KpiCard label="Profit on GDV"       value={s.profitOnGDVpct}                  accent="#3fb950" />
-              <KpiCard label="Total GDV"           value={'JOD ' + fmt(s.totalGDV)}          accent="#8b949e" />
-              <KpiCard label="Net Exit Proceeds"   value={'JOD ' + fmt(s.netExitProceeds)}   accent="#8b949e" />
+              <KpiCard label="Development Profit" value={'JOD ' + fmt(s.developmentProfit)} accent={colors.success} />
+              <KpiCard label="Profit on Cost"      value={s.profitOnCostPct}                 accent={colors.success} />
+              <KpiCard label="Profit on GDV"       value={s.profitOnGDVpct}                  accent={colors.success} />
+              <KpiCard label="Total GDV"           value={'JOD ' + fmt(s.totalGDV)}          accent={colors.textMuted} />
+              <KpiCard label="Net Exit Proceeds"   value={'JOD ' + fmt(s.netExitProceeds)}   accent={colors.textMuted} />
             </div>
           </div>
 
@@ -677,11 +677,11 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
           <div>
             <p style={S.section}>Cost Breakdown</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-              <KpiCard label="Total Dev Cost"  value={'JOD ' + fmt(s.totalDevelopmentCost)} accent="#d29922" />
-              <KpiCard label="Land Cost"       value={'JOD ' + fmt(s.landCost)}             accent="#8b949e" />
-              <KpiCard label="Hard Cost"       value={'JOD ' + fmt(s.totalHardCost)}        accent="#8b949e" />
-              <KpiCard label="Soft Cost"       value={'JOD ' + fmt(s.totalSoftCost)}        accent="#8b949e" />
-              <KpiCard label="Financing Cost"  value={'JOD ' + fmt(s.totalFinancingCost)}   accent="#8b949e" sub="Cap. interest" />
+              <KpiCard label="Total Dev Cost"  value={'JOD ' + fmt(s.totalDevelopmentCost)} accent={colors.warning} />
+              <KpiCard label="Land Cost"       value={'JOD ' + fmt(s.landCost)}             accent={colors.textMuted} />
+              <KpiCard label="Hard Cost"       value={'JOD ' + fmt(s.totalHardCost)}        accent={colors.textMuted} />
+              <KpiCard label="Soft Cost"       value={'JOD ' + fmt(s.totalSoftCost)}        accent={colors.textMuted} />
+              <KpiCard label="Financing Cost"  value={'JOD ' + fmt(s.totalFinancingCost)}   accent={colors.textMuted} sub="Cap. interest" />
             </div>
           </div>
 
@@ -689,14 +689,14 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
           <div>
             <p style={S.section}>Financing</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-              <KpiCard label="Equity Deployed"    value={'JOD ' + fmt(s.totalEquityDeployed)} accent="#58a6ff" />
-              <KpiCard label="Loan Drawn"         value={'JOD ' + fmt(s.totalLoanDrawn)}      accent="#58a6ff" />
-              <KpiCard label="Final Loan Balance" value={'JOD ' + fmt(s.finalLoanBalance)}    accent={s.finalLoanBalance > 0 ? '#d29922' : '#3fb950'} />
-              <KpiCard label="LTV"                value={fmtPct(s.ltv)}                       accent="#8b949e" />
+              <KpiCard label="Equity Deployed"    value={'JOD ' + fmt(s.totalEquityDeployed)} accent={colors.accent} />
+              <KpiCard label="Loan Drawn"         value={'JOD ' + fmt(s.totalLoanDrawn)}      accent={colors.accent} />
+              <KpiCard label="Final Loan Balance" value={'JOD ' + fmt(s.finalLoanBalance)}    accent={s.finalLoanBalance > 0 ? colors.warning : colors.success} />
+              <KpiCard label="LTV"                value={fmtPct(s.ltv)}                       accent={colors.textMuted} />
               <KpiCard
                 label="Loan Capacity"
                 value={loanOk ? 'OK' : 'BREACHED'}
-                accent={loanOk ? '#3fb950' : '#f85149'}
+                accent={loanOk ? colors.success : colors.danger}
                 sub={s.equityShortfall > 0 ? 'Shortfall: JOD ' + fmt(s.equityShortfall) : undefined}
               />
             </div>
@@ -707,10 +707,10 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
             <div>
               <p style={S.section}>Exit — Cap Rate Detail</p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-                <KpiCard label="Gross Rental Income" value={'JOD ' + fmt(s.exitDetail.grossRentalIncome)} accent="#8b949e" />
-                <KpiCard label="NOI"                 value={'JOD ' + fmt(s.exitDetail.noi)}               accent="#3fb950" />
-                <KpiCard label="Exit Cap Rate"       value={fmtPct(s.exitDetail.exitCapRate)}              accent="#8b949e" />
-                <KpiCard label="Gross Exit Value"    value={'JOD ' + fmt(s.grossExitValue)}               accent="#58a6ff" />
+                <KpiCard label="Gross Rental Income" value={'JOD ' + fmt(s.exitDetail.grossRentalIncome)} accent={colors.textMuted} />
+                <KpiCard label="NOI"                 value={'JOD ' + fmt(s.exitDetail.noi)}               accent={colors.success} />
+                <KpiCard label="Exit Cap Rate"       value={fmtPct(s.exitDetail.exitCapRate)}              accent={colors.textMuted} />
+                <KpiCard label="Gross Exit Value"    value={'JOD ' + fmt(s.grossExitValue)}               accent={colors.accent} />
               </div>
             </div>
           )}
@@ -731,10 +731,10 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                     ]}
                   />
                   <Legend />
-                  <Line type="monotone" dataKey="cumulative" stroke="#58a6ff" name="Funding Gap" strokeWidth={2} />
-                  <Line type="monotone" dataKey="net_cf" stroke="#d29922" name="Net Cash Flow" />
-                  <Line type="monotone" dataKey="salesInflow" stroke="#3fb950" name="Sales" />
-                  <Line type="monotone" dataKey="totalCostDraw" stroke="#f85149" name="Cost" />
+                  <Line type="monotone" dataKey="cumulative" stroke={colors.accent} name="Funding Gap" strokeWidth={2} />
+                  <Line type="monotone" dataKey="net_cf" stroke={colors.warning} name="Net Cash Flow" />
+                  <Line type="monotone" dataKey="salesInflow" stroke={colors.success} name="Sales" />
+                  <Line type="monotone" dataKey="totalCostDraw" stroke={colors.danger} name="Cost" />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -771,8 +771,8 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                         key={index}
                         fill={
                           entry.isLast
-                            ? (entry.raw >= 0 ? '#58a6ff' : '#f85149')   // final: blue positive, red negative
-                            : (entry.raw >= 0 ? '#3fb950' : '#f85149')   // interim: green positive, red negative
+                            ? (entry.raw >= 0 ? colors.accent : colors.danger)   // final: accent positive, danger negative
+                            : (entry.raw >= 0 ? colors.success : colors.danger)  // interim: success positive, danger negative
                         }
                       />
                     ))}
@@ -782,9 +782,9 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
               {/* Legend */}
               <div style={{ display: 'flex', gap: '1.25rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
                 {[
-                  { color: '#3fb950', label: 'Inflow'       },
-                  { color: '#f85149', label: 'Outflow'      },
-                  { color: '#58a6ff', label: 'Equity Return' },
+                  { color: colors.success, label: 'Inflow'       },
+                  { color: colors.danger,  label: 'Outflow'      },
+                  { color: colors.accent,  label: 'Equity Return' },
                 ].map(l => (
                   <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                     <div style={{ width: 10, height: 10, borderRadius: 2, background: l.color }} />
