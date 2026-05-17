@@ -91,10 +91,10 @@ function fmtPct(n) {
   return Number(n).toFixed(1) + '%'
 }
 function dscrColor(v) {
-  if (v === null) return '#484f58'
-  if (v >= 1.25) return '#3fb950'
-  if (v >= 1.0) return '#d29922'
-  return '#f85149'
+  if (v === null) return colors.textMuted
+  if (v >= 1.25) return colors.success
+  if (v >= 1.0) return colors.warning
+  return colors.danger
 }
 
 export default function FeasibilityProject() {
@@ -1380,27 +1380,27 @@ export default function FeasibilityProject() {
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'2rem'}}>
         <div>
           <h1 style={{fontSize:'1.75rem',fontWeight:'600',marginBottom:'0.25rem'}}>{project.name}</h1>
-          <p style={{color:'#8b949e',fontSize:'0.85rem'}}>
+          <p style={{color:colors.textSecondary,fontSize:'0.85rem'}}>
             {project.sector ? `${project.sector} · ${project.revenue_model}` : project.project_type}
             {' · '}{project.country} · {project.currency} · {project.delivery_model}
           </p>
         </div>
         <div style={{textAlign:'right'}}>
           <span style={{fontSize:'0.75rem',padding:'3px 10px',borderRadius:'20px',
-            background:isApproved?'#3fb95022':'#1f6feb22',color:isApproved?'#3fb950':'#58a6ff',
-            border:isApproved?'1px solid #3fb950':'1px solid #1f6feb'}}>
+            background:isApproved?colors.successSoft:colors.accentBgSubtle,color:isApproved?colors.success:colors.accent,
+            border:isApproved?`1px solid ${colors.success}`:`1px solid ${colors.accent}`}}>
             {version ? version.status : 'draft'}
           </span>
-          <p style={{fontSize:'0.75rem',color:'#484f58',marginTop:'0.4rem'}}>{version ? version.label : ''}</p>
+          <p style={{fontSize:'0.75rem',color:colors.textMuted,marginTop:'0.4rem'}}>{version ? version.label : ''}</p>
           {isApproved && version.approved_at && (
-            <p style={{fontSize:'0.7rem',color:'#484f58',marginTop:'0.2rem'}}>
+            <p style={{fontSize:'0.7rem',color:colors.textMuted,marginTop:'0.2rem'}}>
               Approved {new Date(version.approved_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}
             </p>
           )}
           {!isArchived && (
             <button onClick={handleArchive} disabled={archiving}
               style={{marginTop:'0.6rem',padding:'0.3rem 0.8rem',background:'none',
-                border:'1px solid #21262d',borderRadius:'5px',color:'#484f58',
+                border:`1px solid ${colors.border}`,borderRadius:'5px',color:colors.textMuted,
                 cursor:'pointer',fontSize:'0.72rem',opacity:archiving?0.5:1}}>
               {archiving ? '...' : 'Archive Project'}
             </button>
@@ -1408,7 +1408,7 @@ export default function FeasibilityProject() {
         </div>
       </div>
 
-      <div style={{display:'flex',gap:'0',borderBottom:'1px solid #21262d',marginBottom:'2rem'}}>
+      <div style={{display:'flex',gap:'0',borderBottom:`1px solid ${colors.border}`,marginBottom:'2rem'}}>
         {TABS.map(t => (
           <button key={t} onClick={() => setTab(t)}
             style={{padding:'0.6rem 1.25rem',background:'none',border:'none',
@@ -1423,15 +1423,15 @@ export default function FeasibilityProject() {
       {tab === 'Assumptions' && (
         <div>
           {isApproved && assumptionsModified && (
-            <div style={{background:'#d2992211',border:'1px solid #d29922',borderRadius:'8px',
+            <div style={{background:colors.warningSoft,border:`1px solid ${colors.warning}`,borderRadius:'8px',
               padding:'1rem 1.5rem',marginBottom:'1.5rem',display:'flex',
               justifyContent:'space-between',alignItems:'center',gap:'1rem',flexWrap:'wrap'}}>
               <div>
-                <p style={{fontSize:'0.875rem',color:'#d29922',fontWeight:'500',marginBottom:'0.2rem'}}>Inputs updated</p>
-                <p style={{fontSize:'0.8rem',color:'#8b949e'}}>Create a new draft version to re-run the model with these inputs.</p>
+                <p style={{fontSize:'0.875rem',color:colors.warning,fontWeight:'500',marginBottom:'0.2rem'}}>Inputs updated</p>
+                <p style={{fontSize:'0.8rem',color:colors.textSecondary}}>Create a new draft version to re-run the model with these inputs.</p>
               </div>
               <button onClick={handleCreateDraft} disabled={creatingDraft}
-                style={{padding:'0.45rem 1.1rem',background:'#d29922',color:'#0f1520',border:'none',
+                style={{padding:'0.45rem 1.1rem',background:colors.warning,color:colors.surfaceMuted,border:'none',
                   borderRadius:'6px',cursor:creatingDraft?'not-allowed':'pointer',
                   fontSize:'0.8rem',fontWeight:'600',whiteSpace:'nowrap',opacity:creatingDraft?0.6:1}}>
                 {creatingDraft ? 'Creating...' : 'Create New Draft'}
@@ -1439,14 +1439,14 @@ export default function FeasibilityProject() {
             </div>
           )}
           {isApproved && !assumptionsModified && (
-            <div style={{background:'#1a2235',border:'1px solid #30363d',borderRadius:'8px',
+            <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',
               padding:'0.75rem 1.25rem',marginBottom:'1.5rem',
               display:'flex',justifyContent:'space-between',alignItems:'center',gap:'1rem'}}>
-              <p style={{fontSize:'0.8rem',color:'#484f58'}}>
+              <p style={{fontSize:'0.8rem',color:colors.textMuted}}>
                 This version is approved. Edit any value below, then create a new draft to re-run the model.
               </p>
               <button onClick={handleCreateDraft} disabled={creatingDraft}
-                style={{padding:'0.4rem 1rem',background:'none',border:'1px solid #30363d',color:'#8b949e',
+                style={{padding:'0.4rem 1rem',background:'none',border:`1px solid ${colors.border}`,color:colors.textSecondary,
                   borderRadius:'6px',cursor:creatingDraft?'not-allowed':'pointer',fontSize:'0.78rem',whiteSpace:'nowrap'}}>
                 {creatingDraft ? 'Creating...' : '+ New Draft Version'}
               </button>
@@ -1459,13 +1459,13 @@ export default function FeasibilityProject() {
             if (!groupAssumptions.length) return null
             return (
               <div key={group.key} style={{marginBottom:'2rem'}}>
-                <h3 style={{fontSize:'0.8rem',color:'#8b949e',marginBottom:'0.75rem',
+                <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'0.75rem',
                   textTransform:'uppercase',letterSpacing:'0.05em'}}>{group.label}</h3>
-                <div style={{background:'#1a2235',border:'1px solid #30363d',borderRadius:'8px',overflow:'hidden'}}>
+                <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',overflow:'hidden'}}>
                   <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.875rem'}}>
-                    <thead><tr style={{borderBottom:'1px solid #21262d'}}>
+                    <thead><tr style={{borderBottom:`1px solid ${colors.border}`}}>
                       {['Assumption','Value','Unit','Confidence',''].map((h,i) => (
-                        <th key={i} style={{padding:'0.65rem 1rem',textAlign:'left',color:'#8b949e',fontWeight:'500',fontSize:'0.72rem'}}>{h}</th>
+                        <th key={i} style={{padding:'0.65rem 1rem',textAlign:'left',color:colors.textSecondary,fontWeight:'500',fontSize:'0.72rem'}}>{h}</th>
                       ))}
                     </tr></thead>
                     <tbody>
@@ -1474,33 +1474,33 @@ export default function FeasibilityProject() {
                         const editable = isEditable(a)
                         const isEditing = editingId === a.assumption_id
                         return (
-                          <tr key={a.assumption_id} style={{borderBottom:'1px solid #21262d',background:isEditing?'#1c2128':'transparent'}}>
-                            <td style={{padding:'0.7rem 1rem',color:'#e6edf3'}}>
+                          <tr key={a.assumption_id} style={{borderBottom:`1px solid ${colors.border}`,background:isEditing?colors.surfaceMuted:'transparent'}}>
+                            <td style={{padding:'0.7rem 1rem',color:colors.textPrimary}}>
                               {pppAP ? (PPP_DISPLAY_LABELS[a.name] || a.name) : a.name}
                             </td>
-                            <td style={{padding:'0.7rem 1rem',color:'#e6edf3'}}>
+                            <td style={{padding:'0.7rem 1rem',color:colors.textPrimary}}>
                               {isEditing ? (
                                 type === 'dropdown' ? (
                                   <select value={editingValue} onChange={e => setEditingValue(e.target.value)} autoFocus
-                                    style={{background:'#0f1520',border:'1px solid #58a6ff',borderRadius:'4px',color:'#e6edf3',padding:'0.2rem 0.5rem',fontSize:'0.875rem'}}>
+                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.2rem 0.5rem',fontSize:'0.875rem'}}>
                                     {DROPDOWN_OPTIONS[a.name].map(opt => <option key={opt} value={opt}>{opt}</option>)}
                                   </select>
                                 ) : type === 'date' ? (
                                   <input type="date" value={editingValue} onChange={e => setEditingValue(e.target.value)} autoFocus
-                                    style={{background:'#0f1520',border:'1px solid #58a6ff',borderRadius:'4px',color:'#e6edf3',padding:'0.2rem 0.5rem',fontSize:'0.875rem'}} />
+                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.2rem 0.5rem',fontSize:'0.875rem'}} />
                                 ) : (
                                   <input type="number" value={editingValue} onChange={e => setEditingValue(e.target.value)} autoFocus
                                     onKeyDown={e => { if(e.key==='Enter') handleSaveAssumption(a.assumption_id,a.name); if(e.key==='Escape'){setEditingId(null);setEditingValue('')} }}
-                                    style={{background:'#0f1520',border:'1px solid #58a6ff',borderRadius:'4px',color:'#e6edf3',padding:'0.2rem 0.5rem',fontSize:'0.875rem',width:'110px'}} />
+                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.2rem 0.5rem',fontSize:'0.875rem',width:'110px'}} />
                                 )
                               ) : pppAP ? fmtPPPAssumptionValue(a) : displayVal(a)}
                             </td>
-                            <td style={{padding:'0.7rem 1rem',color:'#8b949e'}}>{type==='number'?(a.value!==null?a.unit:'---'):'---'}</td>
+                            <td style={{padding:'0.7rem 1rem',color:colors.textSecondary}}>{type==='number'?(a.value!==null?a.unit:'---'):'---'}</td>
                             <td style={{padding:'0.7rem 1rem'}}>
                               <span style={{fontSize:'0.7rem',padding:'2px 8px',borderRadius:'20px',
-                                background:a.confidence==='validated'?'#3fb95022':'#d2992222',
-                                color:a.confidence==='validated'?'#3fb950':'#d29922',
-                                border:a.confidence==='validated'?'1px solid #3fb950':'1px solid #d29922'}}>
+                                background:a.confidence==='validated'?colors.successSoft:colors.warningSoft,
+                                color:a.confidence==='validated'?colors.success:colors.warning,
+                                border:a.confidence==='validated'?`1px solid ${colors.success}`:`1px solid ${colors.warning}`}}>
                                 {a.confidence}
                               </span>
                             </td>
@@ -1508,17 +1508,17 @@ export default function FeasibilityProject() {
                               {isEditing ? (
                                 <div style={{display:'flex',gap:'0.4rem',justifyContent:'flex-end'}}>
                                   <button onClick={() => handleSaveAssumption(a.assumption_id,a.name)} disabled={savingAssumption}
-                                    style={{padding:'0.25rem 0.7rem',background:'#238636',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'0.75rem'}}>
+                                    style={{padding:'0.25rem 0.7rem',background:colors.success,color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'0.75rem'}}>
                                     {savingAssumption ? '...' : 'Save'}
                                   </button>
                                   <button onClick={() => {setEditingId(null);setEditingValue('')}}
-                                    style={{padding:'0.25rem 0.7rem',background:'none',color:'#8b949e',border:'1px solid #30363d',borderRadius:'4px',cursor:'pointer',fontSize:'0.75rem'}}>
+                                    style={{padding:'0.25rem 0.7rem',background:'none',color:colors.textSecondary,border:`1px solid ${colors.border}`,borderRadius:'4px',cursor:'pointer',fontSize:'0.75rem'}}>
                                     Cancel
                                   </button>
                                 </div>
                               ) : editable ? (
                                 <button onClick={() => {setEditingId(a.assumption_id);setEditingValue(editVal(a))}}
-                                  style={{padding:'0.25rem 0.75rem',background:'#21262d',color:'#8b949e',border:'1px solid #30363d',borderRadius:'4px',cursor:'pointer',fontSize:'0.75rem'}}>
+                                  style={{padding:'0.25rem 0.75rem',background:colors.surfaceElevated,color:colors.textSecondary,border:`1px solid ${colors.border}`,borderRadius:'4px',cursor:'pointer',fontSize:'0.75rem'}}>
                                   Edit
                                 </button>
                               ) : null}
@@ -1990,16 +1990,16 @@ export default function FeasibilityProject() {
       {tab === 'Results' && (
         <div>
           {!isApproved ? (
-            <div style={{background:'#1a2235',border:'1px solid #30363d',borderRadius:'8px',padding:'2rem',
+            <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',padding:'2rem',
               display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'1rem',maxWidth:'480px'}}>
               <div>
-                <p style={{fontSize:'0.95rem',color:'#e6edf3',fontWeight:'500',marginBottom:'0.4rem'}}>Approve Year 0 Baseline</p>
-                <p style={{fontSize:'0.82rem',color:'#8b949e',lineHeight:'1.5'}}>
+                <p style={{fontSize:'0.95rem',color:colors.textPrimary,fontWeight:'500',marginBottom:'0.4rem'}}>Approve Year 0 Baseline</p>
+                <p style={{fontSize:'0.82rem',color:colors.textSecondary,lineHeight:'1.5'}}>
                   Approving this version locks it as the baseline for FP&A variance tracking and generates the basic feasibility results.
                 </p>
               </div>
               <button onClick={handleApprove} disabled={approving}
-                style={{padding:'0.55rem 1.4rem',background:'#238636',color:'white',border:'1px solid #2ea043',
+                style={{padding:'0.55rem 1.4rem',background:colors.success,color:'white',border:`1px solid ${colors.success}`,
                   borderRadius:'6px',cursor:approving?'not-allowed':'pointer',fontSize:'0.875rem',fontWeight:'500',opacity:approving?0.6:1}}>
                 {approving ? 'Approving & running model...' : 'Approve Version'}
               </button>
