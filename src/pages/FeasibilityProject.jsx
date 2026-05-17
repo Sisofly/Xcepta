@@ -1575,16 +1575,16 @@ export default function FeasibilityProject() {
           {!pppAP && (
           <div style={{marginBottom:'2rem'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'0.5rem'}}>
-              <h3 style={{fontSize:'0.8rem',color:'#8b949e',textTransform:'uppercase',letterSpacing:'0.05em'}}>
+              <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,textTransform:'uppercase',letterSpacing:'0.05em'}}>
                 Jordan RE Benchmarks
               </h3>
               {Object.keys(overrides).length > 0 && (
-                <span style={{fontSize:'0.72rem',color:'#d29922'}}>
+                <span style={{fontSize:'0.72rem',color:colors.warning}}>
                   {Object.keys(overrides).length} override{Object.keys(overrides).length > 1 ? 's' : ''} active
                 </span>
               )}
             </div>
-            <p style={{fontSize:'0.72rem',color:'#484f58',marginBottom:'0.9rem',lineHeight:'1.5'}}>
+            <p style={{fontSize:'0.72rem',color:colors.textMuted,marginBottom:'0.9rem',lineHeight:'1.5'}}>
               System defaults are used unless an override is applied. Expand a group to review or adjust assumptions for this project.
             </p>
 
@@ -1843,21 +1843,21 @@ export default function FeasibilityProject() {
                   const isOpen = !!openGroups[groupName]
 
                   return (
-                    <div key={groupName} style={{marginBottom:'0.5rem',border:'1px solid #21262d',borderRadius:'8px',overflow:'hidden'}}>
+                    <div key={groupName} style={{marginBottom:'0.5rem',border:`1px solid ${colors.border}`,borderRadius:'8px',overflow:'hidden'}}>
 
                       {/* Group header */}
                       <button
                         onClick={() => toggleGroup(groupName)}
                         style={{width:'100%',display:'flex',justifyContent:'space-between',alignItems:'center',
-                          padding:'0.65rem 1rem',background:'#1a2235',border:'none',cursor:'pointer',textAlign:'left'}}>
+                          padding:'0.65rem 1rem',background:colors.surfaceElevated,border:'none',cursor:'pointer',textAlign:'left'}}>
                         <div style={{display:'flex',alignItems:'center',gap:'0.6rem'}}>
-                          <span style={{color:'#8b949e',fontSize:'0.7rem',transition:'transform 0.15s',
+                          <span style={{color:colors.textSecondary,fontSize:'0.7rem',transition:'transform 0.15s',
                             display:'inline-block',transform:isOpen?'rotate(90deg)':'rotate(0deg)'}}>▶</span>
-                          <span style={{fontSize:'0.8rem',color:'#c9d1d9',fontWeight:'500'}}>{groupName}</span>
-                          <span style={{fontSize:'0.7rem',color:'#484f58'}}>
+                          <span style={{fontSize:'0.8rem',color:colors.textPrimary,fontWeight:'500'}}>{groupName}</span>
+                          <span style={{fontSize:'0.7rem',color:colors.textMuted}}>
                             {rows.length} item{rows.length !== 1 ? 's' : ''}
                             {overrideCount > 0 && (
-                              <span style={{marginLeft:'0.4rem',color:'#d29922'}}>· {overrideCount} override{overrideCount > 1 ? 's' : ''}</span>
+                              <span style={{marginLeft:'0.4rem',color:colors.warning}}>· {overrideCount} override{overrideCount > 1 ? 's' : ''}</span>
                             )}
                           </span>
                         </div>
@@ -1865,13 +1865,13 @@ export default function FeasibilityProject() {
 
                       {/* Expanded rows */}
                       {isOpen && (
-                        <div style={{background:'#0f1520'}}>
+                        <div style={{background:colors.surfaceMuted}}>
                           <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.82rem'}}>
                             <thead>
-                              <tr style={{borderBottom:'1px solid #21262d'}}>
+                              <tr style={{borderBottom:`1px solid ${colors.border}`}}>
                                 {['Assumption','System Default','Active Value',''].map((h,i) => (
                                   <th key={i} style={{padding:'0.5rem 1rem',textAlign:i===3?'right':'left',
-                                    color:'#484f58',fontWeight:'500',fontSize:'0.7rem',whiteSpace:'nowrap'}}>{h}</th>
+                                    color:colors.textMuted,fontWeight:'500',fontSize:'0.7rem',whiteSpace:'nowrap'}}>{h}</th>
                                 ))}
                               </tr>
                             </thead>
@@ -1881,23 +1881,23 @@ export default function FeasibilityProject() {
                                 const isEditingThis = editingOverrideKey === d.key
                                 return (
                                   <tr key={d.default_id || d.key}
-                                    style={{borderBottom:'1px solid #1a2235',
-                                      background: isEditingThis ? '#1c2128'
-                                        : isOverridden ? 'rgba(210,153,34,0.06)'
+                                    style={{borderBottom:`1px solid ${colors.surfaceElevated}`,
+                                      background: isEditingThis ? colors.surfaceMuted
+                                        : isOverridden ? colors.warningSoft
                                         : 'transparent'}}>
 
                                     {/* Label */}
-                                    <td style={{padding:'0.65rem 1rem',color:'#c9d1d9',fontWeight:'400',minWidth:'180px'}}>
+                                    <td style={{padding:'0.65rem 1rem',color:colors.textPrimary,fontWeight:'400',minWidth:'180px'}}>
                                       <div>{cleanLabel(d.key)}</div>
                                       {HINT_MAP[d.key] && (
-                                        <p style={{fontSize:'0.7rem',color:'#8b949e',marginTop:'0.2rem',lineHeight:1.4}}>
+                                        <p style={{fontSize:'0.7rem',color:colors.textSecondary,marginTop:'0.2rem',lineHeight:1.4}}>
                                           {HINT_MAP[d.key]}
                                         </p>
                                       )}
                                     </td>
 
                                     {/* System Default */}
-                                    <td style={{padding:'0.65rem 1rem',color:'#8b949e',fontSize:'0.8rem',whiteSpace:'nowrap'}}>
+                                    <td style={{padding:'0.65rem 1rem',color:colors.textSecondary,fontSize:'0.8rem',whiteSpace:'nowrap'}}>
                                       {fmtDefault(d)}
                                     </td>
 
@@ -1910,27 +1910,27 @@ export default function FeasibilityProject() {
                                             if(e.key==='Enter') handleSaveOverride(d.key)
                                             if(e.key==='Escape'){setEditingOverrideKey(null);setEditingOverrideValue('')}
                                           }}
-                                          style={{background:'#0f1520',border:'1px solid #d29922',borderRadius:'4px',
-                                            color:'#e6edf3',padding:'0.2rem 0.5rem',fontSize:'0.82rem',width:'110px'}} />
+                                          style={{background:colors.surfaceMuted,border:`1px solid ${colors.warning}`,borderRadius:'4px',
+                                            color:colors.textPrimary,padding:'0.2rem 0.5rem',fontSize:'0.82rem',width:'110px'}} />
                                       ) : isOverridden ? (
                                         <span style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
-                                          <span style={{color:'#e6edf3',fontWeight:'500'}}>
+                                          <span style={{color:colors.textPrimary,fontWeight:'500'}}>
                                             {fmtOverride(overrides[d.key], d)}
                                           </span>
                                           <span style={{fontSize:'0.63rem',padding:'1px 6px',borderRadius:'20px',
-                                            background:'rgba(210,153,34,0.15)',color:'#d29922',
-                                            border:'1px solid rgba(210,153,34,0.5)',whiteSpace:'nowrap'}}>
+                                            background:colors.warningSoft,color:colors.warning,
+                                            border:`1px solid ${colors.warning}`,whiteSpace:'nowrap'}}>
                                             Overridden
                                           </span>
                                         </span>
                                       ) : (
                                         <span style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
-                                          <span style={{color:'#8b949e',fontSize:'0.8rem'}}>
+                                          <span style={{color:colors.textSecondary,fontSize:'0.8rem'}}>
                                             {fmtDefault(d)}
                                           </span>
                                           <span style={{fontSize:'0.63rem',padding:'1px 6px',borderRadius:'20px',
-                                            background:'rgba(56,139,253,0.1)',color:'#58a6ff',
-                                            border:'1px solid rgba(56,139,253,0.3)',whiteSpace:'nowrap'}}>
+                                            background:colors.accentBgSubtle,color:colors.accent,
+                                            border:`1px solid ${colors.accent}`,whiteSpace:'nowrap'}}>
                                             Default
                                           </span>
                                         </span>
@@ -1942,13 +1942,13 @@ export default function FeasibilityProject() {
                                       {isEditingThis ? (
                                         <div style={{display:'flex',gap:'0.4rem',justifyContent:'flex-end'}}>
                                           <button onClick={() => handleSaveOverride(d.key)} disabled={savingOverride}
-                                            style={{padding:'0.25rem 0.7rem',background:'#d29922',color:'#0f1520',
+                                            style={{padding:'0.25rem 0.7rem',background:colors.warning,color:colors.surfaceMuted,
                                               border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem',fontWeight:'600'}}>
                                             {savingOverride ? '...' : 'Save'}
                                           </button>
                                           <button onClick={() => {setEditingOverrideKey(null);setEditingOverrideValue('')}}
-                                            style={{padding:'0.25rem 0.7rem',background:'none',color:'#8b949e',
-                                              border:'1px solid #30363d',borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
+                                            style={{padding:'0.25rem 0.7rem',background:'none',color:colors.textSecondary,
+                                              border:`1px solid ${colors.border}`,borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
                                             Cancel
                                           </button>
                                         </div>
@@ -1956,14 +1956,14 @@ export default function FeasibilityProject() {
                                         <div style={{display:'flex',gap:'0.4rem',justifyContent:'flex-end'}}>
                                           <button
                                             onClick={() => {setEditingOverrideKey(d.key);setEditingOverrideValue(isOverridden?String(overrides[d.key]):String(d.value))}}
-                                            style={{padding:'0.25rem 0.75rem',background:'#21262d',color:'#8b949e',
-                                              border:'1px solid #30363d',borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
+                                            style={{padding:'0.25rem 0.75rem',background:colors.surfaceElevated,color:colors.textSecondary,
+                                              border:`1px solid ${colors.border}`,borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
                                             Override
                                           </button>
                                           {isOverridden && (
                                             <button onClick={() => handleRemoveOverride(d.key)}
-                                              style={{padding:'0.25rem 0.6rem',background:'none',color:'#484f58',
-                                                border:'1px solid #21262d',borderRadius:'4px',cursor:'pointer',fontSize:'0.7rem'}}>
+                                              style={{padding:'0.25rem 0.6rem',background:'none',color:colors.textMuted,
+                                                border:`1px solid ${colors.border}`,borderRadius:'4px',cursor:'pointer',fontSize:'0.7rem'}}>
                                               Reset
                                             </button>
                                           )}
