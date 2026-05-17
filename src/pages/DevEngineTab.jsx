@@ -642,7 +642,7 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
           Safe render: if (!output) show prompt only, never crash
       ══════════════════════════════════════════════════════ */}
       {innerTab === 'kpis' && !output && (
-        <p style={{ fontSize: '0.85rem', color: '#8b949e' }}>Run the engine first to see KPIs.</p>
+        <p style={{ fontSize: '0.85rem', color: colors.textSecondary }}>Run the engine first to see KPIs.</p>
       )}
 
       {innerTab === 'kpis' && output && output.summary && (
@@ -746,13 +746,13 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
               <p style={{ ...S.section, marginBottom: '0.75rem' }}>Investment Waterfall</p>
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={waterfallData} barCategoryGap="30%">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#30363d" vertical={false} />
-                  <XAxis dataKey="name" stroke="#8b949e" tick={{ fill: '#8b949e', fontSize: 10 }} />
-                  <YAxis stroke="#8b949e" tick={{ fill: '#8b949e', fontSize: 10 }} width={54}
+                  <CartesianGrid strokeDasharray="3 3" stroke={colors.border} vertical={false} />
+                  <XAxis dataKey="name" stroke={colors.textSecondary} tick={{ fill: colors.textSecondary, fontSize: 10 }} />
+                  <YAxis stroke={colors.textSecondary} tick={{ fill: colors.textSecondary, fontSize: 10 }} width={54}
                     tickFormatter={v => Math.abs(v) >= 1000 ? (v / 1000).toFixed(0) + 'K' : String(v)} />
                   <ReTooltip
-                    contentStyle={{ background: '#1c2128', border: '1px solid #30363d', borderRadius: '6px', fontSize: '0.75rem' }}
-                    labelStyle={{ color: '#8b949e' }}
+                    contentStyle={{ background: colors.surfaceElevated, border: `1px solid ${colors.border}`, borderRadius: '6px', fontSize: '0.75rem' }}
+                    labelStyle={{ color: colors.textSecondary }}
                     formatter={(v, name, props) => {
                       if (name === 'base') return null
                       const raw = props?.payload?.raw
@@ -788,7 +788,7 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                 ].map(l => (
                   <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                     <div style={{ width: 10, height: 10, borderRadius: 2, background: l.color }} />
-                    <span style={{ fontSize: '0.72rem', color: '#8b949e' }}>{l.label}</span>
+                    <span style={{ fontSize: '0.72rem', color: colors.textSecondary }}>{l.label}</span>
                   </div>
                 ))}
               </div>
@@ -803,16 +803,16 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
           Safe render: if (!output) show prompt only, never crash
       ══════════════════════════════════════════════════════ */}
       {innerTab === 'schedule' && !output && (
-        <p style={{ fontSize: '0.85rem', color: '#8b949e' }}>Run the engine first to see the monthly schedule.</p>
+        <p style={{ fontSize: '0.85rem', color: colors.textSecondary }}>Run the engine first to see the monthly schedule.</p>
       )}
 
       {innerTab === 'schedule' && output && (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ borderCollapse: 'collapse', fontSize: '0.76rem', width: '100%', minWidth: '900px' }}>
             <thead>
-              <tr style={{ borderBottom: '1px solid #30363d' }}>
+              <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
                 {['Month', 'Hard Cost', 'Soft Cost', 'Sales Inflow', 'Equity Draw', 'Loan Draw', 'Loan Balance', 'Cap. Interest', 'Unlev. CF', 'Lev. CF', 'Exit'].map(h => (
-                  <th key={h} style={{ padding: '0.5rem 0.6rem', textAlign: 'right', color: '#8b949e', fontWeight: '500', whiteSpace: 'nowrap' }}>
+                  <th key={h} style={{ padding: '0.5rem 0.6rem', textAlign: 'right', color: colors.textSecondary, fontWeight: '500', whiteSpace: 'nowrap' }}>
                     {h}
                   </th>
                 ))}
@@ -822,35 +822,35 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
               {output.schedule.map((row, i) => {
                 const isConst = row.month >= 1 && row.month <= cfg.T
                 const isExit  = row.exitProceeds > 0
-                const rowBg   = isExit ? '#1a2a1a' : isConst ? '#1a1f2e' : 'transparent'
-                const cfColor = (v) => v > 0 ? '#3fb950' : v < 0 ? '#f85149' : '#484f58'
+                const rowBg   = isExit ? colors.successSoft : isConst ? colors.surfaceMuted : 'transparent'
+                const cfColor = (v) => v > 0 ? colors.success : v < 0 ? colors.danger : colors.textMuted
                 return (
-                  <tr key={i} style={{ borderBottom: '1px solid #1a1f2e', background: rowBg }}>
-                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: '#8b949e', fontVariantNumeric: 'tabular-nums' }}>
+                  <tr key={i} style={{ borderBottom: `1px solid ${colors.borderMuted}`, background: rowBg }}>
+                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: colors.textSecondary, fontVariantNumeric: 'tabular-nums' }}>
                       {row.month}
-                      {row.month === 0 && <span style={{ marginLeft: '4px', fontSize: '0.65rem', color: '#484f58' }}>pre</span>}
+                      {row.month === 0 && <span style={{ marginLeft: '4px', fontSize: '0.65rem', color: colors.textMuted }}>pre</span>}
                       {isConst && <span style={{ marginLeft: '4px', fontSize: '0.65rem', color: '#30a3d4' }}>const</span>}
-                      {isExit  && <span style={{ marginLeft: '4px', fontSize: '0.65rem', color: '#3fb950' }}>exit</span>}
+                      {isExit  && <span style={{ marginLeft: '4px', fontSize: '0.65rem', color: colors.success }}>exit</span>}
                     </td>
-                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.hardCostDraw > 0 ? '#d29922' : '#484f58', fontVariantNumeric: 'tabular-nums' }}>
+                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.hardCostDraw > 0 ? colors.warning : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
                       {row.hardCostDraw > 0 ? fmt(row.hardCostDraw) : '—'}
                     </td>
-                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.softCostDraw > 0 ? '#d29922' : '#484f58', fontVariantNumeric: 'tabular-nums' }}>
+                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.softCostDraw > 0 ? colors.warning : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
                       {row.softCostDraw > 0 ? fmt(row.softCostDraw) : '—'}
                     </td>
-                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.salesInflow > 0 ? '#3fb950' : '#484f58', fontVariantNumeric: 'tabular-nums' }}>
+                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.salesInflow > 0 ? colors.success : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
                       {row.salesInflow > 0 ? fmt(row.salesInflow) : '—'}
                     </td>
-                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.equityDraw > 0 ? '#58a6ff' : '#484f58', fontVariantNumeric: 'tabular-nums' }}>
+                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.equityDraw > 0 ? colors.accent : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
                       {row.equityDraw > 0 ? fmt(row.equityDraw) : '—'}
                     </td>
-                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.loanDraw > 0 ? '#a371f7' : '#484f58', fontVariantNumeric: 'tabular-nums' }}>
+                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.loanDraw > 0 ? '#a371f7' : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
                       {row.loanDraw > 0 ? fmt(row.loanDraw) : '—'}
                     </td>
-                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.loanBalance > 0 ? '#e6edf3' : '#484f58', fontVariantNumeric: 'tabular-nums' }}>
+                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.loanBalance > 0 ? colors.textPrimary : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
                       {row.loanBalance > 0 ? fmt(row.loanBalance) : '—'}
                     </td>
-                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.capitalizedInterest > 0 ? '#f85149' : '#484f58', fontVariantNumeric: 'tabular-nums' }}>
+                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.capitalizedInterest > 0 ? colors.danger : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
                       {row.capitalizedInterest > 0 ? fmt(row.capitalizedInterest) : '—'}
                     </td>
                     <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: cfColor(row.unleveragedCF), fontVariantNumeric: 'tabular-nums', fontWeight: '500' }}>
@@ -859,7 +859,7 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                     <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: cfColor(row.leveragedCF), fontVariantNumeric: 'tabular-nums', fontWeight: '500' }}>
                       {row.leveragedCF !== 0 ? fmt(row.leveragedCF) : '—'}
                     </td>
-                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: isExit ? '#3fb950' : '#484f58', fontVariantNumeric: 'tabular-nums', fontWeight: isExit ? '600' : '400' }}>
+                    <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: isExit ? colors.success : colors.textMuted, fontVariantNumeric: 'tabular-nums', fontWeight: isExit ? '600' : '400' }}>
                       {isExit ? fmt(row.exitProceeds) : '—'}
                     </td>
                   </tr>
@@ -871,13 +871,13 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
           <div style={{ marginTop: '1rem', display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
             {[
               { color: '#30a3d4', label: 'Construction months' },
-              { color: '#3fb950', label: 'Positive cash flow' },
-              { color: '#f85149', label: 'Negative / cap. interest' },
-              { color: '#1a2a1a', label: 'Exit month' },
+              { color: colors.success, label: 'Positive cash flow' },
+              { color: colors.danger, label: 'Negative / cap. interest' },
+              { color: colors.successSoft, label: 'Exit month' },
             ].map(l => (
               <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <div style={{ width: 10, height: 10, borderRadius: 2, background: l.color }} />
-                <span style={{ fontSize: '0.72rem', color: '#8b949e' }}>{l.label}</span>
+                <span style={{ fontSize: '0.72rem', color: colors.textSecondary }}>{l.label}</span>
               </div>
             ))}
           </div>
