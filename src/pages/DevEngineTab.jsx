@@ -891,7 +891,7 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
           Export reads source.sensitivityMatrix — no recalculation on export.
       ══════════════════════════════════════════════════════ */}
       {innerTab === 'sensitivity' && !output && (
-        <p style={{ fontSize: '0.85rem', color: '#8b949e' }}>Run the engine first to generate the sensitivity analysis.</p>
+        <p style={{ fontSize: '0.85rem', color: colors.textSecondary }}>Run the engine first to generate the sensitivity analysis.</p>
       )}
 
       {innerTab === 'sensitivity' && output && (() => {
@@ -901,10 +901,10 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
         function fmtStep(s) { return (s >= 0 ? '+' : '') + (s * 100).toFixed(0) + '%' }
 
         function cellIrrColor(v) {
-          if (v === null) return { bg: '#21262d', text: '#484f58' }
-          if (v >= 15)   return { bg: '#1a2e1a', text: '#3fb950' }
-          if (v >= 10)   return { bg: '#2a2210', text: '#d29922' }
-          return               { bg: '#2e1a1a', text: '#f85149' }
+          if (v === null) return { bg: colors.surfaceElevated, text: colors.textMuted }
+          if (v >= 15)   return { bg: colors.successSoft,     text: colors.success }
+          if (v >= 10)   return { bg: colors.warningSoft,     text: colors.warning }
+          return               { bg: colors.dangerSoft,      text: colors.danger }
         }
         function irrLabel(v) {
           if (v === null || isNaN(v)) return '—'
@@ -912,9 +912,9 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
         }
 
         const LEGEND = [
-          { color: '#3fb950', bg: '#1a2e1a', label: 'Strong  (IRR ≥ 15%)' },
-          { color: '#d29922', bg: '#2a2210', label: 'Review  (10–15%)'    },
-          { color: '#f85149', bg: '#2e1a1a', label: 'Weak  (< 10%)'       },
+          { color: colors.success, bg: colors.successSoft, label: 'Strong  (IRR ≥ 15%)' },
+          { color: colors.warning, bg: colors.warningSoft, label: 'Review  (10–15%)'    },
+          { color: colors.danger,  bg: colors.dangerSoft,  label: 'Weak  (< 10%)'       },
         ]
         function IrrLegend() {
           return (
@@ -922,12 +922,12 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
               {LEGEND.map(l => (
                 <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                   <div style={{ width: 12, height: 12, borderRadius: 2, background: l.bg, border: '1px solid ' + l.color }} />
-                  <span style={{ fontSize: '0.72rem', color: '#8b949e' }}>{l.label}</span>
+                  <span style={{ fontSize: '0.72rem', color: colors.textSecondary }}>{l.label}</span>
                 </div>
               ))}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <div style={{ width: 12, height: 12, borderRadius: 2, background: '#1c2a3a', border: '2px solid #1f6feb' }} />
-                <span style={{ fontSize: '0.72rem', color: '#8b949e' }}>Base case</span>
+                <div style={{ width: 12, height: 12, borderRadius: 2, background: colors.accentBgSubtle, border: `2px solid ${colors.accent}` }} />
+                <span style={{ fontSize: '0.72rem', color: colors.textSecondary }}>Base case</span>
               </div>
             </div>
           )
@@ -936,18 +936,18 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
         // ── Shared header / axis cell styles ─────────────────────────────────
         const thStyle = {
           padding: '0.55rem 0.5rem', textAlign: 'center', fontSize: '0.72rem',
-          color: '#8b949e', fontWeight: '500', background: '#161b22',
-          border: '1px solid #30363d', whiteSpace: 'nowrap',
+          color: colors.textSecondary, fontWeight: '500', background: colors.surface,
+          border: `1px solid ${colors.border}`, whiteSpace: 'nowrap',
         }
         const cornerStyle = {
           padding: '0.55rem 0.75rem', textAlign: 'center', fontSize: '0.68rem',
-          color: '#484f58', background: '#161b22', border: '1px solid #30363d',
+          color: colors.textMuted, background: colors.surface, border: `1px solid ${colors.border}`,
           verticalAlign: 'bottom',
         }
         const axisRowStyle = (isBase) => ({
           padding: '0.55rem 0.75rem', fontSize: '0.72rem', whiteSpace: 'nowrap',
-          color: isBase ? '#58a6ff' : '#8b949e', fontWeight: isBase ? '700' : '500',
-          background: '#161b22', border: '1px solid #30363d',
+          color: isBase ? colors.accent : colors.textSecondary, fontWeight: isBase ? '700' : '500',
+          background: colors.surface, border: `1px solid ${colors.border}`,
         })
 
         // ══════════════════════════════════════════════════════════════════════
@@ -1003,10 +1003,10 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
             {/* ── SECTION 1: Market Sensitivity ────────────────────────────── */}
             <div style={{ marginBottom: '40px' }}>
               <div style={{ marginBottom: '1rem' }}>
-                <p style={{ fontSize: '1.05rem', fontWeight: '600', color: '#e6edf3', marginBottom: '0.3rem' }}>
+                <p style={{ fontSize: '1.05rem', fontWeight: '600', color: colors.textPrimary, marginBottom: '0.3rem' }}>
                   Market Sensitivity — Price vs Absorption
                 </p>
-                <p style={{ fontSize: '0.8rem', color: '#8b949e' }}>
+                <p style={{ fontSize: '0.8rem', color: colors.textSecondary }}>
                   Impact of market conditions on IRR across multiple pricing and absorption scenarios.
                   Row: Sales price adjustment · Col: Pre-construction absorption rate adjustment.
                   Base: GDV {fmt(cfg.totalGDV)} JOD · {Math.round(basePre * 100)}% pre-sale absorption.
@@ -1022,7 +1022,7 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                         <div>Absorption →</div>
                       </td>
                       {STEPS.map(cs => (
-                        <th key={cs} style={{ ...thStyle, color: cs === 0 ? '#58a6ff' : '#8b949e', fontWeight: cs === 0 ? '700' : '500' }}>
+                        <th key={cs} style={{ ...thStyle, color: cs === 0 ? colors.accent : colors.textSecondary, fontWeight: cs === 0 ? '700' : '500' }}>
                           {fmtStep(cs)}
                         </th>
                       ))}
@@ -1033,7 +1033,7 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                       <tr key={rs}>
                         <td style={axisRowStyle(rs === 0)}>
                           {fmtStep(rs)}
-                          <span style={{ fontSize: '0.65rem', color: '#484f58', marginLeft: '0.35rem' }}>
+                          <span style={{ fontSize: '0.65rem', color: colors.textMuted, marginLeft: '0.35rem' }}>
                             ({fmt(Math.round(cfg.totalGDV * (1 + rs)))})
                           </span>
                         </td>
@@ -1044,14 +1044,14 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                           return (
                             <td key={cs} style={{
                               padding: '0.5rem 0.45rem', textAlign: 'center', minWidth: '60px',
-                              background: isBase ? '#1c2a3a' : col.bg,
-                              border:     isBase ? '2px solid #1f6feb' : '1px solid #21262d',
-                              color:      isBase ? '#58a6ff' : col.text,
+                              background: isBase ? colors.accentBgSubtle : col.bg,
+                              border:     isBase ? `2px solid ${colors.accent}` : `1px solid ${colors.border}`,
+                              color:      isBase ? colors.accent : col.text,
                               fontWeight: isBase ? '700' : '500',
                               fontSize:   '0.8rem', fontVariantNumeric: 'tabular-nums',
                             }}>
                               {irrLabel(v)}
-                              {isBase && <div style={{ fontSize: '0.58rem', color: '#484f58', fontWeight: '400', marginTop: '1px' }}>Base</div>}
+                              {isBase && <div style={{ fontSize: '0.58rem', color: colors.textMuted, fontWeight: '400', marginTop: '1px' }}>Base</div>}
                             </td>
                           )
                         })}
@@ -1062,10 +1062,10 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
               </div>
               <IrrLegend />
               <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                <p style={{ fontSize: '0.71rem', color: '#484f58' }}>
+                <p style={{ fontSize: '0.71rem', color: colors.textMuted }}>
                   Row axis: Total GDV — each step is a % change from the base case value of {fmt(cfg.totalGDV)} JOD
                 </p>
-                <p style={{ fontSize: '0.71rem', color: '#484f58' }}>
+                <p style={{ fontSize: '0.71rem', color: colors.textMuted }}>
                   Col axis: Pre-construction sales weight — each step shifts the absorption profile ±% from base of {Math.round(basePre * 100)}%
                 </p>
               </div>
@@ -1074,10 +1074,10 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
             {/* ── SECTION 2: Cost vs Price Sensitivity (3×3) ───────────────── */}
             <div>
               <div style={{ marginBottom: '1rem' }}>
-                <p style={{ fontSize: '1.05rem', fontWeight: '600', color: '#e6edf3', marginBottom: '0.3rem' }}>
+                <p style={{ fontSize: '1.05rem', fontWeight: '600', color: colors.textPrimary, marginBottom: '0.3rem' }}>
                   Cost vs Price Sensitivity
                 </p>
-                <p style={{ fontSize: '0.8rem', color: '#8b949e' }}>
+                <p style={{ fontSize: '0.8rem', color: colors.textSecondary }}>
                   Impact of construction cost and pricing changes on IRR.
                   Each cell shows Leveraged IRR. Base case highlighted in blue.
                 </p>
@@ -1089,13 +1089,13 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                     <table style={{ borderCollapse: 'collapse', fontSize: '0.82rem', tableLayout: 'fixed', width: '100%' }}>
                       <thead>
                         <tr>
-                          <th style={{ padding: '1.25rem 1.75rem', textAlign: 'left', color: '#8b949e', fontWeight: '500',
-                            background: '#161b22', border: '1px solid #30363d', fontSize: '0.85rem' }}>
+                          <th style={{ padding: '1.25rem 1.75rem', textAlign: 'left', color: colors.textSecondary, fontWeight: '500',
+                            background: colors.surface, border: `1px solid ${colors.border}`, fontSize: '0.85rem' }}>
                             Cost ↓ / Price →
                           </th>
                           {PRICE_LABELS.map(l => (
-                            <th key={l} style={{ padding: '1.25rem 1.75rem', textAlign: 'center', color: '#c9d1d9',
-                              fontWeight: '600', background: '#161b22', border: '1px solid #30363d', whiteSpace: 'nowrap', fontSize: '0.85rem' }}>
+                            <th key={l} style={{ padding: '1.25rem 1.75rem', textAlign: 'center', color: colors.textPrimary,
+                              fontWeight: '600', background: colors.surface, border: `1px solid ${colors.border}`, whiteSpace: 'nowrap', fontSize: '0.85rem' }}>
                               {l}
                             </th>
                           ))}
@@ -1104,8 +1104,8 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                       <tbody>
                         {output.sensitivityMatrix.map((row, ri) => (
                           <tr key={ri}>
-                            <td style={{ padding: '1.25rem 1.75rem', color: '#c9d1d9', fontWeight: '600',
-                              background: '#161b22', border: '1px solid #30363d', whiteSpace: 'nowrap' }}>
+                            <td style={{ padding: '1.25rem 1.75rem', color: colors.textPrimary, fontWeight: '600',
+                              background: colors.surface, border: `1px solid ${colors.border}`, whiteSpace: 'nowrap' }}>
                               {COST_LABELS[ri]}
                             </td>
                             {row.map((cell, ci) => {
@@ -1115,14 +1115,14 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                               return (
                                 <td key={ci} style={{
                                   padding: '1.25rem 1.75rem', textAlign: 'center',
-                                  background: isBase ? '#1c2a3a' : col.bg,
-                                  border:     isBase ? '2px solid #1f6feb' : '1px solid #30363d',
-                                  color:      isBase ? '#58a6ff' : col.text,
+                                  background: isBase ? colors.accentBgSubtle : col.bg,
+                                  border:     isBase ? `2px solid ${colors.accent}` : `1px solid ${colors.border}`,
+                                  color:      isBase ? colors.accent : col.text,
                                   fontWeight: isBase ? '700' : '600',
                                   fontSize:   '1.1rem', fontVariantNumeric: 'tabular-nums',
                                 }}>
                                   {irrLabel(v)}
-                                  {isBase && <div style={{ fontSize: '0.6rem', color: '#484f58', fontWeight: '400', marginTop: '2px' }}>Base</div>}
+                                  {isBase && <div style={{ fontSize: '0.6rem', color: colors.textMuted, fontWeight: '400', marginTop: '2px' }}>Base</div>}
                                 </td>
                               )
                             })}
@@ -1133,7 +1133,7 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                   </div>
                 )
               })() : (
-                <p style={{ fontSize: '0.82rem', color: '#f85149' }}>
+                <p style={{ fontSize: '0.82rem', color: colors.danger }}>
                   Cost vs price matrix not available — re-run the engine to generate it.
                 </p>
               )}
