@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
+import colors from '../../theme/colors.js'
 
 // ── Section titles ──
 const RE_SECTIONS        = ['Project Identity', 'Capital Structure', 'Revenue & Market', 'Costs (Optional)']
@@ -281,7 +282,14 @@ export default function NewProjectModal({ onClose }) {
   }
 
   // ── Financing Structure badge ──
-  const financingBadgeColor = financing === 'Project Finance' ? '#58a6ff' : '#3fb950'
+  // UI Phase B-2 (2026-05-17): replaced legacy hex+alpha-suffix concatenation
+  // (e.g. `financingBadgeColor + '18'`) with semantic-token routing — see
+  // `audit deviation #3`. Three independent ternaries select foreground,
+  // background, and border tokens. PF → aqua; RE / other → muted emerald.
+  const isPF_badge       = financing === 'Project Finance'
+  const badgeColor       = isPF_badge ? colors.accent         : colors.success
+  const badgeBackground  = isPF_badge ? colors.accentBgSubtle : colors.successSoft
+  const badgeBorderColor = isPF_badge ? colors.accent         : colors.success
 
   return (
     <div style={{
@@ -289,7 +297,7 @@ export default function NewProjectModal({ onClose }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
     }}>
       <div style={{
-        background: '#1a2235', border: '1px solid #30363d', borderRadius: '10px',
+        background: colors.surfaceElevated, border: `1px solid ${colors.border}`, borderRadius: '10px',
         width: '600px', maxHeight: '88vh', overflowY: 'auto', padding: '2rem',
       }}>
 
@@ -297,12 +305,12 @@ export default function NewProjectModal({ onClose }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
           <div>
             <h2 style={{ fontSize: '1.1rem', fontWeight: '600' }}>New Feasibility Study</h2>
-            <p style={{ color: '#8b949e', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+            <p style={{ color: colors.textSecondary, fontSize: '0.8rem', marginTop: '0.25rem' }}>
               Step {step + 1} of {SECTIONS.length} — {SECTIONS[step]}
             </p>
           </div>
           <button onClick={() => onClose()}
-            style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: '1.2rem' }}>
+            style={{ background: 'none', border: 'none', color: colors.textSecondary, cursor: 'pointer', fontSize: '1.2rem' }}>
             ✕
           </button>
         </div>
@@ -312,7 +320,7 @@ export default function NewProjectModal({ onClose }) {
           {SECTIONS.map((_, i) => (
             <div key={i} style={{
               flex: 1, height: '3px', borderRadius: '2px',
-              background: i <= step ? '#1f6feb' : '#21262d',
+              background: i <= step ? colors.accent : colors.borderMuted,
             }} />
           ))}
         </div>
@@ -339,9 +347,9 @@ export default function NewProjectModal({ onClose }) {
                   <button key={opt} onClick={() => updateModelType(opt)}
                     style={{
                       flex: 1, padding: '0.55rem', borderRadius: '6px', cursor: 'pointer',
-                      background: form.model_type === opt ? '#1f6feb' : 'none',
-                      border: '1px solid ' + (form.model_type === opt ? '#1f6feb' : '#30363d'),
-                      color: form.model_type === opt ? 'white' : '#8b949e',
+                      background: form.model_type === opt ? colors.accent : 'none',
+                      border: `1px solid ${form.model_type === opt ? colors.accent : colors.border}`,
+                      color: form.model_type === opt ? 'white' : colors.textSecondary,
                       fontSize: '0.875rem',
                     }}>
                     {opt}
@@ -377,14 +385,14 @@ export default function NewProjectModal({ onClose }) {
             {/* Financing Structure — read-only badge */}
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              background: '#0f1520', border: '1px solid #21262d',
+              background: colors.surfaceMuted, border: `1px solid ${colors.borderMuted}`,
               borderRadius: '6px', padding: '0.6rem 1rem',
             }}>
-              <span style={{ fontSize: '0.75rem', color: '#8b949e' }}>Financing Structure</span>
+              <span style={{ fontSize: '0.75rem', color: colors.textSecondary }}>Financing Structure</span>
               <span style={{
-                fontSize: '0.75rem', fontWeight: '600', color: financingBadgeColor,
-                background: financingBadgeColor + '18',
-                border: '1px solid ' + financingBadgeColor + '44',
+                fontSize: '0.75rem', fontWeight: '600', color: badgeColor,
+                background: badgeBackground,
+                border: `1px solid ${badgeBorderColor}`,
                 borderRadius: '20px', padding: '2px 10px',
               }}>
                 {financing}
@@ -393,7 +401,7 @@ export default function NewProjectModal({ onClose }) {
 
             {/* PPP clarity helper */}
             {isAP && (
-              <p style={{ fontSize: '0.75rem', color: '#8b949e', marginTop: '-0.5rem' }}>
+              <p style={{ fontSize: '0.75rem', color: colors.textSecondary, marginTop: '-0.5rem' }}>
                 PPP Model (Availability Payment)
               </p>
             )}
@@ -401,12 +409,12 @@ export default function NewProjectModal({ onClose }) {
             {/* Non-AP inline notice */}
             {isPF && !isAP && (
               <div style={{
-                background: '#0f1520', border: '1px solid #21262d', borderRadius: '6px',
+                background: colors.surfaceMuted, border: `1px solid ${colors.borderMuted}`, borderRadius: '6px',
                 padding: '0.85rem 1rem',
               }}>
-                <p style={{ fontSize: '0.8rem', color: '#8b949e', lineHeight: 1.6 }}>
+                <p style={{ fontSize: '0.8rem', color: colors.textSecondary, lineHeight: 1.6 }}>
                   Financial engine for{' '}
-                  <strong style={{ color: '#e6edf3' }}>{form.top_revenue_model}</strong>{' '}
+                  <strong style={{ color: colors.textPrimary }}>{form.top_revenue_model}</strong>{' '}
                   is planned for a later phase. You can proceed to create the project now.
                 </p>
               </div>
@@ -443,9 +451,9 @@ export default function NewProjectModal({ onClose }) {
                   </Field>
                 </div>
                 {form.gfa_sqm && form.efficiency_pct && (
-                  <p style={{ fontSize: '0.75rem', color: '#484f58', marginTop: '-0.5rem' }}>
+                  <p style={{ fontSize: '0.75rem', color: colors.textMuted, marginTop: '-0.5rem' }}>
                     Saleable / leasable area:{' '}
-                    <strong style={{ color: '#8b949e' }}>
+                    <strong style={{ color: colors.textSecondary }}>
                       {Math.round(Number(form.gfa_sqm) * Number(form.efficiency_pct) / 100).toLocaleString('en-US')} sqm
                     </strong>
                   </p>
@@ -482,9 +490,9 @@ export default function NewProjectModal({ onClose }) {
         ══════════════════════════════════════════ */}
         {step === 1 && isRE && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <p style={{ fontSize: '0.8rem', color: '#8b949e' }}>
+            <p style={{ fontSize: '0.8rem', color: colors.textSecondary }}>
               Must sum to 100%. Current total:{' '}
-              <strong style={{ color: capitalTotal === 100 ? '#3fb950' : '#f85149' }}>{capitalTotal}%</strong>
+              <strong style={{ color: capitalTotal === 100 ? colors.success : colors.danger }}>{capitalTotal}%</strong>
             </p>
             {[
               { label: 'Equity %',            field: 'equity_pct' },
@@ -503,15 +511,15 @@ export default function NewProjectModal({ onClose }) {
                   <button key={type} onClick={() => update('debt_type', type)}
                     style={{
                       flex: 1, padding: '0.5rem', borderRadius: '6px', cursor: 'pointer',
-                      background: form.debt_type === type ? '#1f6feb' : 'none',
-                      border: '1px solid ' + (form.debt_type === type ? '#1f6feb' : '#30363d'),
-                      color: form.debt_type === type ? 'white' : '#8b949e', fontSize: '0.875rem',
+                      background: form.debt_type === type ? colors.accent : 'none',
+                      border: `1px solid ${form.debt_type === type ? colors.accent : colors.border}`,
+                      color: form.debt_type === type ? 'white' : colors.textSecondary, fontSize: '0.875rem',
                     }}>
                     {type}
                   </button>
                 ))}
               </div>
-              <p style={{ fontSize: '0.72rem', color: '#484f58', marginTop: '0.4rem' }}>
+              <p style={{ fontSize: '0.72rem', color: colors.textMuted, marginTop: '0.4rem' }}>
                 {form.debt_type === 'Bullet'
                   ? 'Principal repaid in full at loan maturity.'
                   : 'Principal repaid progressively over the loan tenor.'}
@@ -531,14 +539,14 @@ export default function NewProjectModal({ onClose }) {
                 placeholder="e.g. 54,500,000" style={inputStyle} />
             </Field>
             {form.ppp_tpc && Number(form.ppp_tpc) > 0 && (
-              <p style={{ fontSize: '0.75rem', color: '#484f58', marginTop: '-0.5rem' }}>
+              <p style={{ fontSize: '0.75rem', color: colors.textMuted, marginTop: '-0.5rem' }}>
                 {Number(form.ppp_tpc).toLocaleString('en-US')} JOD
               </p>
             )}
-            <div style={{ background: '#0f1520', border: '1px solid #30363d', borderRadius: '8px', padding: '1rem' }}>
-              <p style={{ fontSize: '0.78rem', color: '#8b949e', marginBottom: '0.75rem' }}>
+            <div style={{ background: colors.surfaceMuted, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '1rem' }}>
+              <p style={{ fontSize: '0.78rem', color: colors.textSecondary, marginBottom: '0.75rem' }}>
                 Capital Structure — must sum to 100%.{' '}
-                <strong style={{ color: pfCapValid ? '#3fb950' : '#f85149' }}>Current: {pfCapTotal}%</strong>
+                <strong style={{ color: pfCapValid ? colors.success : colors.danger }}>Current: {pfCapTotal}%</strong>
               </p>
               <div style={{ display: 'flex', gap: '1rem' }}>
                 <Field label="Debt %">
@@ -558,11 +566,11 @@ export default function NewProjectModal({ onClose }) {
               </div>
               {form.ppp_tpc && Number(form.ppp_tpc) > 0 && pfCapValid && (
                 <div style={{ display: 'flex', gap: '1rem', marginTop: '0.75rem' }}>
-                  <p style={{ fontSize: '0.75rem', color: '#484f58', flex: 1 }}>
-                    Debt: <strong style={{ color: '#8b949e' }}>{Math.round(Number(form.ppp_tpc) * Number(form.ppp_debt_pct) / 100).toLocaleString('en-US')} JOD</strong>
+                  <p style={{ fontSize: '0.75rem', color: colors.textMuted, flex: 1 }}>
+                    Debt: <strong style={{ color: colors.textSecondary }}>{Math.round(Number(form.ppp_tpc) * Number(form.ppp_debt_pct) / 100).toLocaleString('en-US')} JOD</strong>
                   </p>
-                  <p style={{ fontSize: '0.75rem', color: '#484f58', flex: 1 }}>
-                    Equity: <strong style={{ color: '#8b949e' }}>{Math.round(Number(form.ppp_tpc) * Number(form.ppp_equity_pct) / 100).toLocaleString('en-US')} JOD</strong>
+                  <p style={{ fontSize: '0.75rem', color: colors.textMuted, flex: 1 }}>
+                    Equity: <strong style={{ color: colors.textSecondary }}>{Math.round(Number(form.ppp_tpc) * Number(form.ppp_equity_pct) / 100).toLocaleString('en-US')} JOD</strong>
                   </p>
                 </div>
               )}
@@ -589,8 +597,8 @@ export default function NewProjectModal({ onClose }) {
               </select>
             </Field>
             {isMixed && (
-              <div style={{ background: '#0f1520', border: '1px solid #30363d', borderRadius: '8px', padding: '1rem' }}>
-                <p style={{ fontSize: '0.78rem', color: '#8b949e', marginBottom: '0.75rem' }}>GFA Split</p>
+              <div style={{ background: colors.surfaceMuted, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '1rem' }}>
+                <p style={{ fontSize: '0.78rem', color: colors.textSecondary, marginBottom: '0.75rem' }}>GFA Split</p>
                 <div style={{ display: 'flex', gap: '1rem' }}>
                   <Field label="Sale %">
                     <input type="number" min="0" max="100" value={form.sale_split_pct}
@@ -602,8 +610,8 @@ export default function NewProjectModal({ onClose }) {
                 </div>
               </div>
             )}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: '1rem' }}>
-              <p style={{ fontSize: '0.78rem', color: '#8b949e', marginBottom: '1rem' }}>
+            <div style={{ borderTop: `1px solid ${colors.borderMuted}`, paddingTop: '1rem' }}>
+              <p style={{ fontSize: '0.78rem', color: colors.textSecondary, marginBottom: '1rem' }}>
                 Optional — leave blank to use Jordan RE benchmark defaults
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -612,7 +620,7 @@ export default function NewProjectModal({ onClose }) {
                     <input type="number" value={form.sale_price_override}
                       onChange={e => update('sale_price_override', e.target.value)}
                       placeholder="Default ~2,200 JOD/sqm" style={inputStyle} />
-                    <p style={{ fontSize: '0.75rem', color: '#8b949e', marginTop: '0.35rem' }}>
+                    <p style={{ fontSize: '0.75rem', color: colors.textSecondary, marginTop: '0.35rem' }}>
                       Enter price per net saleable area, after Efficiency %. Do not enter a per-gross-sqm price.
                     </p>
                   </Field>
@@ -647,7 +655,7 @@ export default function NewProjectModal({ onClose }) {
                 placeholder="e.g. 8,980,000" style={inputStyle} />
             </Field>
             {form.ppp_annual_payment && Number(form.ppp_annual_payment) > 0 && (
-              <p style={{ fontSize: '0.75rem', color: '#484f58', marginTop: '-0.5rem' }}>
+              <p style={{ fontSize: '0.75rem', color: colors.textMuted, marginTop: '-0.5rem' }}>
                 {Number(form.ppp_annual_payment).toLocaleString('en-US')} JOD per year
               </p>
             )}
@@ -662,7 +670,7 @@ export default function NewProjectModal({ onClose }) {
               </Field>
             </div>
             {form.ppp_concession_years && form.ppp_construction_months && (
-              <p style={{ fontSize: '0.75rem', color: '#484f58', marginTop: '-0.5rem' }}>
+              <p style={{ fontSize: '0.75rem', color: colors.textMuted, marginTop: '-0.5rem' }}>
                 {(() => {
                   const c = Math.ceil(Number(form.ppp_construction_months) / 12)
                   const o = Number(form.ppp_concession_years)
@@ -675,7 +683,7 @@ export default function NewProjectModal({ onClose }) {
                 onChange={e => update('ppp_opex_pct', e.target.value)}
                 placeholder="Default 5%" style={inputStyle} />
             </Field>
-            <p style={{ fontSize: '0.72rem', color: '#484f58', marginTop: '-0.5rem', lineHeight: 1.5 }}>
+            <p style={{ fontSize: '0.72rem', color: colors.textMuted, marginTop: '-0.5rem', lineHeight: 1.5 }}>
               Annual operating costs as a % of the availability payment. Covers O&amp;M, facility management, insurance, and administration.
             </p>
           </div>
@@ -686,8 +694,8 @@ export default function NewProjectModal({ onClose }) {
         ══════════════════════════════════════════ */}
         {step === 3 && isRE && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{ background: '#0f1520', border: '1px solid #21262d', borderRadius: '6px', padding: '0.75rem 1rem' }}>
-              <p style={{ fontSize: '0.78rem', color: '#484f58' }}>
+            <div style={{ background: colors.surfaceMuted, border: `1px solid ${colors.borderMuted}`, borderRadius: '6px', padding: '0.75rem 1rem' }}>
+              <p style={{ fontSize: '0.78rem', color: colors.textMuted }}>
                 All fields optional. Leave blank to use Jordan RE defaults.
                 Overrides can also be adjusted later in the Assumptions tab.
               </p>
@@ -703,13 +711,13 @@ export default function NewProjectModal({ onClose }) {
                 placeholder="Default ~850 JOD/sqm" style={inputStyle} />
             </Field>
             {form.gfa_sqm && (form.land_cost_pct || form.construction_cost_override) && (
-              <div style={{ background: '#1a2235', border: '1px solid #30363d', borderRadius: '6px', padding: '0.75rem 1rem' }}>
-                <p style={{ fontSize: '0.72rem', color: '#8b949e', marginBottom: '0.3rem' }}>Estimated Total Development Cost</p>
+              <div style={{ background: colors.surfaceElevated, border: `1px solid ${colors.border}`, borderRadius: '6px', padding: '0.75rem 1rem' }}>
+                <p style={{ fontSize: '0.72rem', color: colors.textSecondary, marginBottom: '0.3rem' }}>Estimated Total Development Cost</p>
                 {(() => {
                   const cc  = form.construction_cost_override ? Number(form.construction_cost_override) : 850
                   const tdc = Number(form.gfa_sqm) * cc * 1.05
                   const lp  = form.land_cost_pct ? Number(form.land_cost_pct) / 100 : 0.20
-                  return <p style={{ fontSize: '1rem', color: '#e6edf3', fontWeight: '600' }}>{Math.round(tdc + tdc * lp).toLocaleString('en-US')} JOD</p>
+                  return <p style={{ fontSize: '1rem', color: colors.textPrimary, fontWeight: '600' }}>{Math.round(tdc + tdc * lp).toLocaleString('en-US')} JOD</p>
                 })()}
               </div>
             )}
@@ -745,7 +753,7 @@ export default function NewProjectModal({ onClose }) {
               <input type="number" step="0.1" value={form.ppp_wacc}
                 onChange={e => update('ppp_wacc', e.target.value)} style={inputStyle} />
             </Field>
-            <p style={{ fontSize: '0.72rem', color: '#484f58', marginTop: '-0.5rem', lineHeight: 1.5 }}>
+            <p style={{ fontSize: '0.72rem', color: colors.textMuted, marginTop: '-0.5rem', lineHeight: 1.5 }}>
               Used as the NPV discount rate. Enter the blended cost of capital for this project manually.
             </p>
 
@@ -753,13 +761,13 @@ export default function NewProjectModal({ onClose }) {
               <input type="number" step="0.01" min="1.00" value={form.target_dscr}
                 onChange={e => update('target_dscr', e.target.value)} style={inputStyle} />
             </Field>
-            <p style={{ fontSize: '0.72rem', color: '#484f58', marginTop: '-0.5rem', lineHeight: 1.5 }}>
+            <p style={{ fontSize: '0.72rem', color: colors.textMuted, marginTop: '-0.5rem', lineHeight: 1.5 }}>
               Used to compute the required availability payment. Default 1.20x (lender bankability threshold).
             </p>
             {/* Deal summary */}
             {form.ppp_tpc && Number(form.ppp_tpc) > 0 && form.ppp_annual_payment && Number(form.ppp_annual_payment) > 0 && (
-              <div style={{ background: '#0f1520', border: '1px solid #21262d', borderRadius: '8px', padding: '1rem', marginTop: '0.5rem' }}>
-                <p style={{ fontSize: '0.7rem', color: '#8b949e', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <div style={{ background: colors.surfaceMuted, border: `1px solid ${colors.borderMuted}`, borderRadius: '8px', padding: '1rem', marginTop: '0.5rem' }}>
+                <p style={{ fontSize: '0.7rem', color: colors.textSecondary, marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   Deal Summary
                 </p>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem 2rem' }}>
@@ -772,8 +780,8 @@ export default function NewProjectModal({ onClose }) {
                     ['Sector',                          form.sector],
                   ].map(([k, v]) => (
                     <div key={k}>
-                      <p style={{ fontSize: '0.68rem', color: '#484f58', marginBottom: '0.15rem' }}>{k}</p>
-                      <p style={{ fontSize: '0.85rem', color: '#e6edf3', fontWeight: '500' }}>{v}</p>
+                      <p style={{ fontSize: '0.68rem', color: colors.textMuted, marginBottom: '0.15rem' }}>{k}</p>
+                      <p style={{ fontSize: '0.85rem', color: colors.textPrimary, fontWeight: '500' }}>{v}</p>
                     </div>
                   ))}
                 </div>
@@ -790,7 +798,7 @@ export default function NewProjectModal({ onClose }) {
             onClick={() => step > 0 ? setStep(step - 1) : onClose()}
             style={{
               padding: '0.5rem 1.25rem', background: 'transparent',
-              border: '1px solid #30363d', color: '#8b949e',
+              border: `1px solid ${colors.border}`, color: colors.textSecondary,
               borderRadius: '6px', cursor: 'pointer',
             }}>
             {step === 0 ? 'Cancel' : 'Back'}
@@ -800,7 +808,7 @@ export default function NewProjectModal({ onClose }) {
               <button onClick={handleSubmit}
                 style={{
                   padding: '0.5rem 1.25rem', background: 'none',
-                  border: '1px solid #30363d', color: '#8b949e',
+                  border: `1px solid ${colors.border}`, color: colors.textSecondary,
                   borderRadius: '6px', cursor: 'pointer',
                 }}>
                 Skip &amp; Create
@@ -810,7 +818,7 @@ export default function NewProjectModal({ onClose }) {
               onClick={() => step < SECTIONS.length - 1 ? setStep(step + 1) : handleSubmit()}
               disabled={!canNext[step]}
               style={{
-                padding: '0.5rem 1.5rem', background: '#1f6feb', color: 'white',
+                padding: '0.5rem 1.5rem', background: colors.accent, color: 'white',
                 border: 'none', borderRadius: '6px', cursor: 'pointer',
                 opacity: !canNext[step] ? 0.5 : 1,
               }}>
@@ -826,21 +834,21 @@ export default function NewProjectModal({ onClose }) {
 
 function ComingSoon({ model, projectName, sector }) {
   return (
-    <div style={{ background: '#0f1520', border: '1px solid #21262d', borderRadius: '8px', padding: '2rem', textAlign: 'center' }}>
-      <p style={{ fontSize: '0.95rem', color: '#e6edf3', fontWeight: '500', marginBottom: '0.5rem' }}>Engine not yet available</p>
-      <p style={{ fontSize: '0.82rem', color: '#8b949e', lineHeight: 1.6, maxWidth: '360px', margin: '0 auto' }}>
-        Financial modelling for <strong style={{ color: '#e6edf3' }}>{model}</strong> is planned for a later phase.
+    <div style={{ background: colors.surfaceMuted, border: `1px solid ${colors.borderMuted}`, borderRadius: '8px', padding: '2rem', textAlign: 'center' }}>
+      <p style={{ fontSize: '0.95rem', color: colors.textPrimary, fontWeight: '500', marginBottom: '0.5rem' }}>Engine not yet available</p>
+      <p style={{ fontSize: '0.82rem', color: colors.textSecondary, lineHeight: 1.6, maxWidth: '360px', margin: '0 auto' }}>
+        Financial modelling for <strong style={{ color: colors.textPrimary }}>{model}</strong> is planned for a later phase.
       </p>
       {projectName && sector && (
-        <div style={{ marginTop: '1.25rem', padding: '0.75rem 1.25rem', background: '#1a2235', border: '1px solid #30363d', borderRadius: '6px', display: 'inline-block', textAlign: 'left' }}>
-          <p style={{ fontSize: '0.7rem', color: '#484f58', marginBottom: '0.3rem' }}>Project will be created as:</p>
-          <p style={{ fontSize: '0.85rem', color: '#8b949e' }}>
-            <strong style={{ color: '#c9d1d9' }}>{projectName}</strong>{' · '}{sector}{' · '}{model}
+        <div style={{ marginTop: '1.25rem', padding: '0.75rem 1.25rem', background: colors.surfaceElevated, border: `1px solid ${colors.border}`, borderRadius: '6px', display: 'inline-block', textAlign: 'left' }}>
+          <p style={{ fontSize: '0.7rem', color: colors.textMuted, marginBottom: '0.3rem' }}>Project will be created as:</p>
+          <p style={{ fontSize: '0.85rem', color: colors.textSecondary }}>
+            <strong style={{ color: colors.textPrimary }}>{projectName}</strong>{' · '}{sector}{' · '}{model}
           </p>
         </div>
       )}
-      <p style={{ fontSize: '0.75rem', color: '#484f58', marginTop: '1.25rem' }}>
-        Click <strong style={{ color: '#8b949e' }}>Create Project</strong> below to save and return later.
+      <p style={{ fontSize: '0.75rem', color: colors.textMuted, marginTop: '1.25rem' }}>
+        Click <strong style={{ color: colors.textSecondary }}>Create Project</strong> below to save and return later.
       </p>
     </div>
   )
@@ -849,8 +857,8 @@ function ComingSoon({ model, projectName, sector }) {
 function Field({ label, required, children }) {
   return (
     <div style={{ flex: 1 }}>
-      <label style={{ display: 'block', fontSize: '0.75rem', color: '#8b949e', marginBottom: '0.4rem' }}>
-        {label}{required && <span style={{ color: '#f85149' }}> *</span>}
+      <label style={{ display: 'block', fontSize: '0.75rem', color: colors.textSecondary, marginBottom: '0.4rem' }}>
+        {label}{required && <span style={{ color: colors.danger }}> *</span>}
       </label>
       {children}
     </div>
@@ -859,7 +867,7 @@ function Field({ label, required, children }) {
 
 const inputStyle = {
   width: '100%', padding: '0.5rem 0.75rem',
-  background: '#0f1520', border: '1px solid #30363d',
-  borderRadius: '6px', color: '#e6edf3', fontSize: '0.9rem',
+  background: colors.surfaceMuted, border: `1px solid ${colors.border}`,
+  borderRadius: '6px', color: colors.textPrimary, fontSize: '0.9rem',
   boxSizing: 'border-box',
 }
