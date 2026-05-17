@@ -646,7 +646,37 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
               <KpiCard label="Leverage Lift"    value={s.leverageLift}              accent="#a371f7" />
               <KpiCard label="Project NPV"      value={'JOD ' + fmtNumber(s.projectNPV)} accent={colors.accent} sub={`@${(cfg.discountRate * 100).toFixed(1)}% WACC`} />
               <KpiCard label="Equity NPV"       value={'JOD ' + fmtNumber(s.equityNPV)}  accent={colors.accent} />
-              <KpiCard label="Peak Funding Gap" value={peakGapRow ? 'JOD ' + fmtNumber(Math.abs(peakGapRow.cumulative)) : '—'} accent={hasFundingGap ? colors.danger : colors.textMuted} sub={peakGapRow && hasFundingGap ? 'Month ' + peakGapRow.month : 'No gap'} />
+              {(() => {
+                const gapAmt = hasFundingGap && peakGapRow
+                  ? Math.abs(peakGapRow.cumulative)
+                  : 0
+                const tdc = s.totalDevelopmentCost || 0
+                const gapPct = tdc > 0 ? gapAmt / tdc : 0
+                const gapAccent =
+                  !hasFundingGap || gapAmt === 0
+                    ? colors.textMuted
+                    : gapPct > 0.15
+                      ? colors.danger
+                      : colors.warning
+                const gapSub =
+                  !hasFundingGap || gapAmt === 0
+                    ? 'No funding gap'
+                    : gapPct > 0.15
+                      ? 'Large gap — review equity structure'
+                      : gapPct >= 0.05
+                        ? 'Moderate gap'
+                        : 'Small gap — monitor'
+                return (
+                  <KpiCard
+                    label="Peak Funding Gap"
+                    value={hasFundingGap && peakGapRow
+                      ? 'JOD ' + fmtNumber(gapAmt)
+                      : '—'}
+                    accent={gapAccent}
+                    sub={gapSub}
+                  />
+                )
+              })()}
             </div>
           </div>
 
