@@ -1278,8 +1278,8 @@ export default function FeasibilityProject() {
     }
   }
 
-  if (loading) return <p style={{color:'#8b949e',padding:'2rem'}}>Loading...</p>
-  if (!project) return <p style={{color:'#f85149',padding:'2rem'}}>Project not found.</p>
+  if (loading) return <p style={{color:colors.textSecondary,padding:'2rem'}}>Loading...</p>
+  if (!project) return <p style={{color:colors.danger,padding:'2rem'}}>Project not found.</p>
 
   // ── Project-type branch — drives engine selection and all conditional UI ──
   const pppAP = isPPPAvailabilityPayment(project, assumptions)
@@ -1356,21 +1356,21 @@ export default function FeasibilityProject() {
   return (
     <div>
       <button onClick={() => navigate('/feasibility')}
-        style={{background:'none',border:'none',color:'#8b949e',cursor:'pointer',marginBottom:'1.5rem',fontSize:'0.85rem'}}>
+        style={{background:'none',border:'none',color:colors.textSecondary,cursor:'pointer',marginBottom:'1.5rem',fontSize:'0.85rem'}}>
         ← Back to Projects
       </button>
 
       {/* Archived banner */}
       {isArchived && (
-        <div style={{background:'#21262d',border:'1px solid #30363d',borderRadius:'8px',
+        <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',
           padding:'0.75rem 1.25rem',marginBottom:'1.5rem',
           display:'flex',justifyContent:'space-between',alignItems:'center',gap:'1rem'}}>
-          <p style={{fontSize:'0.82rem',color:'#8b949e'}}>
+          <p style={{fontSize:'0.82rem',color:colors.textSecondary}}>
             This project is archived and hidden from the active list.
           </p>
           <button onClick={handleRestore} disabled={archiving}
-            style={{padding:'0.35rem 0.9rem',background:'none',border:'1px solid #1f6feb',
-              color:'#58a6ff',borderRadius:'5px',cursor:'pointer',fontSize:'0.78rem',
+            style={{padding:'0.35rem 0.9rem',background:'none',border:`1px solid ${colors.accent}`,
+              color:colors.accent,borderRadius:'5px',cursor:'pointer',fontSize:'0.78rem',
               whiteSpace:'nowrap',opacity:archiving?0.5:1}}>
             {archiving ? '...' : 'Restore Project'}
           </button>
@@ -2796,10 +2796,10 @@ export default function FeasibilityProject() {
         const hasResults = !!(version && version.dev_engine_results && version.dev_engine_results.summary)
         return (
           <div style={{maxWidth:'560px'}}>
-            <div style={{background:'#1a2235',border:'1px solid #30363d',borderRadius:'8px',padding:'2rem',display:'flex',flexDirection:'column',gap:'1.25rem'}}>
+            <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',padding:'2rem',display:'flex',flexDirection:'column',gap:'1.25rem'}}>
               <div>
-                <p style={{fontSize:'0.95rem',color:'#e6edf3',fontWeight:'500',marginBottom:'0.4rem'}}>Export Development Cash Flow Pack</p>
-                <p style={{fontSize:'0.82rem',color:'#8b949e',lineHeight:'1.5'}}>
+                <p style={{fontSize:'0.95rem',color:colors.textPrimary,fontWeight:'500',marginBottom:'0.4rem'}}>Export Development Cash Flow Pack</p>
+                <p style={{fontSize:'0.82rem',color:colors.textSecondary,lineHeight:'1.5'}}>
                   Generates an investment-grade PDF with cover page, executive summary, scenario comparison, sensitivity analysis, and full appendix.
                 </p>
               </div>
@@ -2807,22 +2807,22 @@ export default function FeasibilityProject() {
               {/* Results status indicator */}
               <div style={{
                 display:'flex',alignItems:'center',gap:'0.6rem',
-                background: hasResults ? '#1a2e1a' : '#2e1a1a',
-                border: '1px solid ' + (hasResults ? '#3fb950' : '#f85149'),
+                background: hasResults ? colors.successSoft : colors.dangerSoft,
+                border: `1px solid ${hasResults ? colors.success : colors.danger}`,
                 borderRadius:'6px', padding:'0.65rem 0.9rem',
               }}>
                 <div style={{
                   width:'8px',height:'8px',borderRadius:'50%',flexShrink:0,
-                  background: hasResults ? '#3fb950' : '#f85149',
+                  background: hasResults ? colors.success : colors.danger,
                 }} />
-                <span style={{fontSize:'0.82rem',color: hasResults ? '#3fb950' : '#f85149'}}>
+                <span style={{fontSize:'0.82rem',color: hasResults ? colors.success : colors.danger}}>
                   {hasResults
                     ? 'Engine results ready — export available'
                     : 'This export draws from the Development Cash Flow engine. Open the Development Cash Flow tab and click Run Engine to enable export.'}
                 </span>
               </div>
 
-              <div style={{fontSize:'0.8rem',color:'#484f58',display:'flex',flexDirection:'column',gap:'0.3rem'}}>
+              <div style={{fontSize:'0.8rem',color:colors.textMuted,display:'flex',flexDirection:'column',gap:'0.3rem'}}>
                 <p>· {assumptions.length} assumption rows</p>
                 <p>· {defaults.length} benchmark rows{Object.keys(overrides).length > 0 ? ' (' + Object.keys(overrides).length + ' overridden)' : ''}</p>
                 <p>· {variances.length} variance {variances.length === 1 ? 'row' : 'rows'}{variances.length === 0 ? ' (none yet)' : ''}</p>
@@ -2831,8 +2831,8 @@ export default function FeasibilityProject() {
               <button onClick={generatePDF} disabled={exporting || !hasResults}
                 style={{
                   padding:'0.65rem 1.6rem',
-                  background: hasResults ? '#1f6feb' : '#21262d',
-                  color: hasResults ? 'white' : '#484f58',
+                  background: hasResults ? colors.accent : colors.surfaceElevated,
+                  color: hasResults ? 'white' : colors.textMuted,
                   border:'none',borderRadius:'6px',
                   cursor: (exporting || !hasResults) ? 'not-allowed' : 'pointer',
                   fontSize:'0.875rem',fontWeight:'500',
