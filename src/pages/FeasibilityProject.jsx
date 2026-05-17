@@ -2237,22 +2237,6 @@ export default function FeasibilityProject() {
                           sub: Number(modelOutput.npv) >= 0 ? 'Value created' : 'Value destroyed',
                           pass: npvPass, verdict: npvPass ? 'POSITIVE' : 'NEGATIVE',
                         },
-                        {
-                          label: 'Debt Coverage',
-                          value: extraKPIs && extraKPIs.minDSCR !== null
-                            ? extraKPIs.minDSCR.toFixed(2) + 'x min DSCR' : '---',
-                          sub: extraKPIs && extraKPIs.dscrBreachYear
-                            ? 'Breach in Op. Year ' + extraKPIs.dscrBreachYear
-                            : 'No breach detected',
-                          pass: pppAP
-                            ? (extraKPIs && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= PPP_DSCR_FLOOR)
-                            : dscrPass,
-                          verdict: (pppAP
-                            ? (extraKPIs && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= PPP_DSCR_FLOOR)
-                            : dscrPass)
-                            ? 'SERVICEABLE'
-                            : (extraKPIs && extraKPIs.minDSCR !== null ? 'BREACH DETECTED' : '---'),
-                        },
                       ].map(item => (
                         <div key={item.label} style={{flex:1,minWidth:'160px',padding:'1rem',
                           background:colors.surfaceMuted,borderRadius:'6px',
@@ -2268,6 +2252,55 @@ export default function FeasibilityProject() {
                           </span>
                         </div>
                       ))}
+                      {(() => {
+                        const dscrPassFinal = pppAP
+                          ? (extraKPIs && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= PPP_DSCR_FLOOR)
+                          : dscrPass
+                        const dscrVerdict = dscrPassFinal
+                          ? 'SERVICEABLE'
+                          : (extraKPIs && extraKPIs.minDSCR !== null ? 'BREACH DETECTED' : '---')
+                        return (
+                          <div style={{flex:1,minWidth:'160px',padding:'1rem',
+                            background:colors.surfaceMuted,borderRadius:'6px',
+                            border:dscrPassFinal===true?`1px solid ${colors.success}`:dscrPassFinal===false?`1px solid ${colors.danger}`:`1px solid ${colors.border}`}}>
+                            <p style={{fontSize:'0.72rem',color:colors.textMuted,marginBottom:'0.4rem',textTransform:'uppercase',letterSpacing:'0.04em'}}>Debt Coverage</p>
+                            <p style={{fontSize:'1.1rem',fontWeight:'600',color:colors.textPrimary,marginBottom:'0.3rem'}}>
+                              {extraKPIs && extraKPIs.minDSCR !== null
+                                ? fmtDSCR(extraKPIs.minDSCR) + ' min DSCR' : '---'}
+                            </p>
+                            {extraKPIs && extraKPIs.minDSCR !== null && (
+                              extraKPIs.minDSCR < 1.00
+                                ? <p style={{
+                                    fontSize: '0.7rem',
+                                    color: colors.danger,
+                                    marginTop: '0.4rem',
+                                  }}>
+                                    Bankability risk: cash flow does not fully cover debt service.
+                                  </p>
+                                : extraKPIs.minDSCR < 1.20
+                                  ? <p style={{
+                                      fontSize: '0.7rem',
+                                      color: colors.warning,
+                                      marginTop: '0.4rem',
+                                    }}>
+                                      Watch: thin debt-service coverage.
+                                    </p>
+                                  : null
+                            )}
+                            <p style={{fontSize:'0.72rem',color:colors.textSecondary,marginBottom:'0.5rem'}}>
+                              {extraKPIs && extraKPIs.dscrBreachYear
+                                ? 'Breach in Op. Year ' + extraKPIs.dscrBreachYear
+                                : 'No breach detected'}
+                            </p>
+                            <span style={{fontSize:'0.68rem',padding:'2px 7px',borderRadius:'20px',fontWeight:'600',
+                              background:dscrPassFinal===true?colors.successSoft:dscrPassFinal===false?colors.dangerSoft:colors.surfaceElevated,
+                              color:dscrPassFinal===true?colors.success:dscrPassFinal===false?colors.danger:colors.textMuted,
+                              border:dscrPassFinal===true?`1px solid ${colors.success}`:dscrPassFinal===false?`1px solid ${colors.danger}`:`1px solid ${colors.border}`}}>
+                              {dscrVerdict}
+                            </span>
+                          </div>
+                        )
+                      })()}
                     </div>
                   </div>
 
