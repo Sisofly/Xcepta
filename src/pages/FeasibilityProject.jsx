@@ -8,6 +8,7 @@ import {
   PPP_DSCR_FLOOR, PPP_IRR_HURDLE,
   isPPPAvailabilityPayment, computePPPBankability, computeRequiredPayment,
 } from '../modules/feasibility/annualEngine'
+import colors from '../theme/colors.js'
 
 // ── Assumption edit-type helpers ──
 const DROPDOWN_OPTIONS = { 'Revenue Model': ['Sale', 'Rental', 'Mixed'] }
@@ -1411,8 +1412,8 @@ export default function FeasibilityProject() {
         {TABS.map(t => (
           <button key={t} onClick={() => setTab(t)}
             style={{padding:'0.6rem 1.25rem',background:'none',border:'none',
-              borderBottom:tab===t?'2px solid #58a6ff':'2px solid transparent',
-              color:tab===t?'#58a6ff':'#8b949e',cursor:'pointer',fontSize:'0.9rem'}}>
+              borderBottom:tab===t?`2px solid ${colors.accent}`:'2px solid transparent',
+              color:tab===t?colors.accent:colors.textSecondary,cursor:'pointer',fontSize:'0.9rem'}}>
             {t}
           </button>
         ))}

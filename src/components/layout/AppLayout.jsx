@@ -21,7 +21,7 @@ function XceptaIcon({ size = 24 }) {
 export default function AppLayout() {
   return (
     <div style={{ display: 'flex', height: '100vh', background: colors.bg, color: colors.textPrimary }}>
-      <aside style={{ width: '240px', background: colors.bg, borderRight: `1px solid ${colors.surfaceElevated}`, display: 'flex', flexDirection: 'column', padding: '1.5rem 0' }}>
+      <aside style={{ width: '240px', background: colors.surface, borderRight: `1px solid ${colors.surfaceElevated}`, display: 'flex', flexDirection: 'column', padding: '1.5rem 0' }}>
 
         {/* Logo — desktop: icon + wordmark | mobile: icon only */}
         <div style={{ padding: '0 1.5rem 2rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
