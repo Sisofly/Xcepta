@@ -9,6 +9,10 @@ import {
   isPPPAvailabilityPayment, computePPPBankability, computeRequiredPayment,
 } from '../modules/feasibility/annualEngine'
 import colors from '../theme/colors.js'
+import {
+  fmtCurrency, fmtPct, fmtDSCR, fmtMultiple,
+  fmtIRR, fmtNumber,
+} from '../utils/format.js'
 
 // ── Assumption edit-type helpers ──
 const DROPDOWN_OPTIONS = { 'Revenue Model': ['Sale', 'Rental', 'Mixed'] }
@@ -58,8 +62,8 @@ const PPP_DISPLAY_LABELS = {
 function fmtPPPAssumptionValue(a) {
   if (a.value === null || a.value === undefined) return a.unit || '---'
   var n = Number(a.value)
-  if (a.unit === 'percent') return n.toFixed(2) + '%'
-  if (a.unit === 'JOD')     return n.toLocaleString('en-US') + ' JOD'
+  if (a.unit === 'percent') return fmtPct(n)
+  if (a.unit === 'JOD')     return fmtCurrency(n)
   if (a.unit === 'years')   return n + ' yrs'
   if (a.unit === 'months')  return n + ' mo'
   return String(a.value)
@@ -82,14 +86,6 @@ const COA_NAMES = {
 }
 const IRR_HURDLE = 15
 
-function fmt(n, currency) {
-  if (n === null || n === undefined) return '---'
-  return Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 }) + (currency ? ' ' + currency : '')
-}
-function fmtPct(n) {
-  if (n === null || n === undefined) return '---'
-  return Number(n).toFixed(1) + '%'
-}
 function dscrColor(v) {
   if (v === null) return colors.textMuted
   if (v >= 1.25) return colors.success
@@ -2227,7 +2223,7 @@ export default function FeasibilityProject() {
                       {[
                         {
                           label: pppAP ? 'IRR vs PPP Hurdle' : 'IRR vs Hurdle',
-                          value: fmtPct(modelOutput.irr),
+                          value: fmtIRR(modelOutput.irr),
                           sub: 'Hurdle: ' + (pppAP ? PPP_IRR_HURDLE : IRR_HURDLE) + '%',
                           pass: pppAP
                             ? (modelOutput.irr !== null && Number(modelOutput.irr) >= PPP_IRR_HURDLE)
@@ -2237,7 +2233,7 @@ export default function FeasibilityProject() {
                             : irrPass) ? 'PASS' : 'BELOW HURDLE',
                         },
                         {
-                          label: 'NPV', value: fmt(modelOutput.npv, project.currency),
+                          label: 'NPV', value: fmtCurrency(modelOutput.npv),
                           sub: Number(modelOutput.npv) >= 0 ? 'Value created' : 'Value destroyed',
                           pass: npvPass, verdict: npvPass ? 'POSITIVE' : 'NEGATIVE',
                         },
@@ -2279,7 +2275,7 @@ export default function FeasibilityProject() {
                   <div style={{display:'flex',gap:'1rem',marginBottom:'1rem',flexWrap:'wrap'}}>
                     <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',padding:'1.25rem 1.5rem',minWidth:'150px',flex:1}}>
                       <p style={{fontSize:'0.75rem',color:colors.textSecondary,marginBottom:'0.5rem'}}>IRR (Equity)</p>
-                      <p style={{fontSize:'1.5rem',fontWeight:'600',color:Number(modelOutput.irr)>=(pppAP?PPP_IRR_HURDLE:15)?colors.success:Number(modelOutput.irr)>=8?colors.warning:colors.danger}}>{fmtPct(modelOutput.irr)}</p>
+                      <p style={{fontSize:'1.5rem',fontWeight:'600',color:Number(modelOutput.irr)>=(pppAP?PPP_IRR_HURDLE:15)?colors.success:Number(modelOutput.irr)>=8?colors.warning:colors.danger}}>{fmtIRR(modelOutput.irr)}</p>
                       {Number(modelOutput.irr) > 100 && (
                         <p style={{
                           fontSize: '0.7rem',
@@ -2291,7 +2287,7 @@ export default function FeasibilityProject() {
                       )}
                     </div>
                     {[
-                      {label:'NPV',value:fmt(modelOutput.npv,'JOD'),color:Number(modelOutput.npv)>=0?colors.success:colors.danger},
+                      {label:'NPV',value:fmtCurrency(modelOutput.npv),color:Number(modelOutput.npv)>=0?colors.success:colors.danger},
                       {label:'Equity Multiple',value:modelOutput.equity_multiple?modelOutput.equity_multiple+'x':'---',color:Number(modelOutput.equity_multiple)>=1.5?colors.success:colors.warning},
                     ].map(kpi => (
                       <div key={kpi.label} style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',padding:'1.25rem 1.5rem',minWidth:'150px',flex:1}}>
@@ -2306,9 +2302,9 @@ export default function FeasibilityProject() {
                     <div style={{display:'flex',gap:'1rem',marginBottom:'2rem',flexWrap:'wrap'}}>
                       {[
                         {label:'Payback Period', value:extraKPIs.paybackYear!==null?'Year '+extraKPIs.paybackYear:'Not Recovered'},
-                        {label:'Total Revenue',  value:fmt(extraKPIs.totalRevenue,'JOD')},
-                        {label:'Total Cost',     value:fmt(extraKPIs.totalCost,'JOD')},
-                        {label:'Equity Invested',value:extraKPIs.equityInvested?fmt(extraKPIs.equityInvested,'JOD'):'---'},
+                        {label:'Total Revenue',  value:fmtCurrency(extraKPIs.totalRevenue)},
+                        {label:'Total Cost',     value:fmtCurrency(extraKPIs.totalCost)},
+                        {label:'Equity Invested',value:extraKPIs.equityInvested?fmtCurrency(extraKPIs.equityInvested):'---'},
                       ].map(kpi => (
                         <div key={kpi.label} style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',padding:'1rem 1.25rem',minWidth:'140px',flex:1}}>
                           <p style={{fontSize:'0.72rem',color:colors.textSecondary,marginBottom:'0.4rem'}}>{kpi.label}</p>
@@ -2386,15 +2382,15 @@ export default function FeasibilityProject() {
                             <tr key={row.year} style={{borderBottom:`1px solid ${colors.border}`,background:index%2===0?colors.accentBgSubtle:'transparent'}}>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{row.year}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textMuted,textAlign:'right',fontSize:'0.7rem'}}>{row.phase}</td>
-                              <td style={{padding:'0.6rem 0.75rem',color:colors.textPrimary,textAlign:'right'}}>{fmt(row.revenue)}</td>
-                              <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmt(row.opex)}</td>
-                              <td style={{padding:'0.6rem 0.75rem',color:Number(row.ebitda)>=0?colors.textPrimary:colors.danger,textAlign:'right'}}>{fmt(row.ebitda)}</td>
-                              <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmt(row.interest)}</td>
-                              <td style={{padding:'0.6rem 0.75rem',color:Number(row.pbt)>=0?colors.textPrimary:colors.danger,textAlign:'right'}}>{fmt(row.pbt)}</td>
-                              <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmt(row.tax)}</td>
-                              <td style={{padding:'0.6rem 0.75rem',color:Number(row.net_income)>=0?colors.textPrimary:colors.danger,textAlign:'right'}}>{fmt(row.net_income)}</td>
-                              <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmt(row.principal)}</td>
-                              <td style={{padding:'0.6rem 0.75rem',color:Number(row.equity_cf)>=0?colors.success:colors.danger,fontWeight:'500',textAlign:'right'}}>{fmt(row.equity_cf)}</td>
+                              <td style={{padding:'0.6rem 0.75rem',color:colors.textPrimary,textAlign:'right'}}>{fmtNumber(row.revenue)}</td>
+                              <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.opex)}</td>
+                              <td style={{padding:'0.6rem 0.75rem',color:Number(row.ebitda)>=0?colors.textPrimary:colors.danger,textAlign:'right'}}>{fmtNumber(row.ebitda)}</td>
+                              <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.interest)}</td>
+                              <td style={{padding:'0.6rem 0.75rem',color:Number(row.pbt)>=0?colors.textPrimary:colors.danger,textAlign:'right'}}>{fmtNumber(row.pbt)}</td>
+                              <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.tax)}</td>
+                              <td style={{padding:'0.6rem 0.75rem',color:Number(row.net_income)>=0?colors.textPrimary:colors.danger,textAlign:'right'}}>{fmtNumber(row.net_income)}</td>
+                              <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.principal)}</td>
+                              <td style={{padding:'0.6rem 0.75rem',color:Number(row.equity_cf)>=0?colors.success:colors.danger,fontWeight:'500',textAlign:'right'}}>{fmtNumber(row.equity_cf)}</td>
                             </tr>
                           ))}
                         </tbody>
