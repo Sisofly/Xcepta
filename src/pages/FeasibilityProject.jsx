@@ -2331,12 +2331,12 @@ export default function FeasibilityProject() {
                             ))}
                           </tr></thead>
                           <tbody>
-                            {modelOutput.dscr_series.map(d => {
+                            {modelOutput.dscr_series.map((d, index) => {
                               const st = d.dscr===null?'---':d.dscr>=1.25?'OK':d.dscr>=1.0?'Watch':'Breach'
                               const isMin = extraKPIs && extraKPIs.minDSCR !== null && d.dscr === extraKPIs.minDSCR
                               return (
                                 <tr key={d.year} style={{borderBottom:`1px solid ${colors.border}`,
-                                  background:st==='Breach'?colors.dangerSoft:isMin?colors.warningSoft:'transparent'}}>
+                                  background:st==='Breach'?colors.dangerSoft:isMin?colors.warningSoft:index%2===0?colors.accentBgSubtle:'transparent'}}>
                                   <td style={{padding:'0.75rem 1rem',color:colors.textPrimary}}>
                                     Year {d.year}
                                     {isMin && <span style={{marginLeft:'0.5rem',fontSize:'0.65rem',color:colors.warning}}>min</span>}
@@ -2370,8 +2370,8 @@ export default function FeasibilityProject() {
                           ))}
                         </tr></thead>
                         <tbody>
-                          {cfRows.map(row => (
-                            <tr key={row.year} style={{borderBottom:`1px solid ${colors.border}`}}>
+                          {cfRows.map((row, index) => (
+                            <tr key={row.year} style={{borderBottom:`1px solid ${colors.border}`,background:index%2===0?colors.accentBgSubtle:'transparent'}}>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{row.year}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textMuted,textAlign:'right',fontSize:'0.7rem'}}>{row.phase}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textPrimary,textAlign:'right'}}>{fmt(row.revenue)}</td>
