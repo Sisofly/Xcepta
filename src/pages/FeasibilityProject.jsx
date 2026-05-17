@@ -2408,7 +2408,7 @@ export default function FeasibilityProject() {
       {tab === 'Scenarios' && (
         <div>
           {scenariosLoading ? (
-            <p style={{color:'#8b949e',fontSize:'0.875rem'}}>Loading scenarios...</p>
+            <p style={{color:colors.textSecondary,fontSize:'0.875rem'}}>Loading scenarios...</p>
           ) : (
             <div>
               {/* ── Comparison Table (2+ approved scenarios) ── */}
@@ -2427,16 +2427,16 @@ export default function FeasibilityProject() {
                 }
                 return (
                   <div style={{marginBottom:'2.5rem'}}>
-                    <h3 style={{fontSize:'0.8rem',color:'#8b949e',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'1rem'}}>
+                    <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'1rem'}}>
                       Scenario Comparison
                     </h3>
-                    <div style={{background:'#1a2235',border:'1px solid #30363d',borderRadius:'8px',overflow:'auto'}}>
+                    <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',overflow:'auto'}}>
                       <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.875rem'}}>
                         <thead>
-                          <tr style={{borderBottom:'1px solid #21262d'}}>
-                            <th style={{padding:'0.75rem 1rem',textAlign:'left',color:'#8b949e',fontWeight:'500',fontSize:'0.75rem',minWidth:'140px'}}>Metric</th>
+                          <tr style={{borderBottom:`1px solid ${colors.border}`}}>
+                            <th style={{padding:'0.75rem 1rem',textAlign:'left',color:colors.textSecondary,fontWeight:'500',fontSize:'0.75rem',minWidth:'140px'}}>Metric</th>
                             {approved.map(s => (
-                              <th key={s.scenario_id} style={{padding:'0.75rem 1rem',textAlign:'right',color:'#8b949e',fontWeight:'500',fontSize:'0.75rem',minWidth:'120px'}}>
+                              <th key={s.scenario_id} style={{padding:'0.75rem 1rem',textAlign:'right',color:colors.textSecondary,fontWeight:'500',fontSize:'0.75rem',minWidth:'120px'}}>
                                 {s.label || 'Base'}
                               </th>
                             ))}
@@ -2444,22 +2444,22 @@ export default function FeasibilityProject() {
                         </thead>
                         <tbody>
                           {metrics.map(m => (
-                            <tr key={m.key} style={{borderBottom:'1px solid #21262d'}}>
-                              <td style={{padding:'0.75rem 1rem',color:'#8b949e',fontSize:'0.8rem'}}>{m.label}</td>
+                            <tr key={m.key} style={{borderBottom:`1px solid ${colors.border}`}}>
+                              <td style={{padding:'0.75rem 1rem',color:colors.textSecondary,fontSize:'0.8rem'}}>{m.label}</td>
                               {approved.map(s => (
-                                <td key={s.scenario_id} style={{padding:'0.75rem 1rem',textAlign:'right',color:'#e6edf3',fontWeight:'500'}}>
+                                <td key={s.scenario_id} style={{padding:'0.75rem 1rem',textAlign:'right',color:colors.textPrimary,fontWeight:'500'}}>
                                   {m.fmt(s.modelOutput ? s.modelOutput[m.key] : null)}
                                 </td>
                               ))}
                             </tr>
                           ))}
-                          <tr style={{borderBottom:'1px solid #21262d'}}>
-                            <td style={{padding:'0.75rem 1rem',color:'#8b949e',fontSize:'0.8rem'}}>Min DSCR</td>
+                          <tr style={{borderBottom:`1px solid ${colors.border}`}}>
+                            <td style={{padding:'0.75rem 1rem',color:colors.textSecondary,fontSize:'0.8rem'}}>Min DSCR</td>
                             {approved.map(s => {
                               const md = getMinDSCR(s.modelOutput)
                               return (
                                 <td key={s.scenario_id} style={{padding:'0.75rem 1rem',textAlign:'right',fontWeight:'500',
-                                  color:md===null?'#484f58':md>=1.25?'#3fb950':md>=1.0?'#d29922':'#f85149'}}>
+                                  color:md===null?colors.textMuted:md>=1.25?colors.success:md>=1.0?colors.warning:colors.danger}}>
                                   {md !== null ? md.toFixed(2) + 'x' : '—'}
                                 </td>
                               )
@@ -2478,54 +2478,54 @@ export default function FeasibilityProject() {
                   const isExpanded = expandedScenario === sc.scenario_id
                   const isApprovedSc = sc.latestVersion && sc.latestVersion.status === 'approved'
                   const isDraft = sc.latestVersion && sc.latestVersion.status === 'draft'
-                  const typeColor = sc.scenario_type === 'bull' ? '#3fb950' : sc.scenario_type === 'bear' ? '#f85149' : '#58a6ff'
-                  const typeBg = sc.scenario_type === 'bull' ? '#3fb95022' : sc.scenario_type === 'bear' ? '#f8514922' : '#1f6feb22'
+                  const typeColor = sc.scenario_type === 'bull' ? colors.success : sc.scenario_type === 'bear' ? colors.danger : colors.accent
+                  const typeBg = sc.scenario_type === 'bull' ? colors.successSoft : sc.scenario_type === 'bear' ? colors.dangerSoft : colors.accentBgSubtle
                   return (
-                    <div key={sc.scenario_id} style={{background:'#1a2235',border:'1px solid #30363d',borderRadius:'8px',overflow:'hidden'}}>
+                    <div key={sc.scenario_id} style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',overflow:'hidden'}}>
                       {/* Card header */}
                       <div style={{padding:'1rem 1.25rem',display:'flex',justifyContent:'space-between',alignItems:'center',gap:'1rem',flexWrap:'wrap'}}>
                         <div style={{display:'flex',alignItems:'center',gap:'0.75rem'}}>
                           <span style={{fontSize:'0.7rem',padding:'2px 8px',borderRadius:'20px',
-                            background:typeBg,color:typeColor,border:'1px solid '+typeColor,fontWeight:'600'}}>
+                            background:typeBg,color:typeColor,border:`1px solid ${typeColor}`,fontWeight:'600'}}>
                             {(sc.scenario_type || 'base').toUpperCase()}
                           </span>
-                          <span style={{fontWeight:'600',fontSize:'0.95rem',color:'#e6edf3'}}>{sc.label || 'Base'}</span>
+                          <span style={{fontWeight:'600',fontSize:'0.95rem',color:colors.textPrimary}}>{sc.label || 'Base'}</span>
                           {sc.latestVersion && (
-                            <span style={{fontSize:'0.72rem',color:'#484f58'}}>{sc.latestVersion.label}</span>
+                            <span style={{fontSize:'0.72rem',color:colors.textMuted}}>{sc.latestVersion.label}</span>
                           )}
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:'0.6rem'}}>
                           {sc.modelOutput && (
-                            <span style={{fontSize:'0.75rem',color:'#3fb950'}}>
+                            <span style={{fontSize:'0.75rem',color:colors.success}}>
                               IRR {sc.modelOutput.irr !== null ? sc.modelOutput.irr.toFixed(1) + '%' : '—'}
                               &nbsp;·&nbsp;
                               NPV {sc.modelOutput.npv !== null ? Number(sc.modelOutput.npv).toLocaleString('en-US') : '—'}
                             </span>
                           )}
                           <span style={{fontSize:'0.7rem',padding:'2px 8px',borderRadius:'20px',
-                            background:isApprovedSc?'#3fb95022':isDraft?'#1f6feb22':'#21262d',
-                            color:isApprovedSc?'#3fb950':isDraft?'#58a6ff':'#484f58',
-                            border:isApprovedSc?'1px solid #3fb950':isDraft?'1px solid #1f6feb':'1px solid #30363d'}}>
+                            background:isApprovedSc?colors.successSoft:isDraft?colors.accentBgSubtle:colors.surfaceElevated,
+                            color:isApprovedSc?colors.success:isDraft?colors.accent:colors.textMuted,
+                            border:isApprovedSc?`1px solid ${colors.success}`:isDraft?`1px solid ${colors.accent}`:`1px solid ${colors.border}`}}>
                             {isApprovedSc ? 'approved' : isDraft ? 'draft' : 'no version'}
                           </span>
                           {isDraft && (
                             <button onClick={() => handleApproveScenario(sc)}
                               disabled={scApproving === sc.scenario_id}
-                              style={{padding:'0.3rem 0.8rem',background:'#238636',color:'white',border:'none',
+                              style={{padding:'0.3rem 0.8rem',background:colors.success,color:'white',border:'none',
                                 borderRadius:'5px',cursor:'pointer',fontSize:'0.75rem',
                                 opacity:scApproving===sc.scenario_id?0.6:1}}>
                               {scApproving===sc.scenario_id ? 'Running...' : 'Approve & Run'}
                             </button>
                           )}
                           <button onClick={() => setExpandedScenario(isExpanded ? null : sc.scenario_id)}
-                            style={{padding:'0.3rem 0.8rem',background:'none',border:'1px solid #30363d',
-                              color:'#8b949e',borderRadius:'5px',cursor:'pointer',fontSize:'0.75rem'}}>
+                            style={{padding:'0.3rem 0.8rem',background:'none',border:`1px solid ${colors.border}`,
+                              color:colors.textSecondary,borderRadius:'5px',cursor:'pointer',fontSize:'0.75rem'}}>
                             {isExpanded ? 'Close' : 'Edit Assumptions'}
                           </button>
                           <button onClick={() => handleDeleteScenario(sc)}
                             disabled={scDeletingId === sc.scenario_id}
-                            style={{padding:'0.3rem 0.8rem',background:'none',border:'1px solid #f8514944',
-                              color:'#f85149',borderRadius:'5px',cursor:'pointer',fontSize:'0.75rem',
+                            style={{padding:'0.3rem 0.8rem',background:'none',border:`1px solid ${colors.danger}`,
+                              color:colors.danger,borderRadius:'5px',cursor:'pointer',fontSize:'0.75rem',
                               opacity:scDeletingId===sc.scenario_id?0.5:1}}>
                             {scDeletingId===sc.scenario_id ? '...' : 'Delete'}
                           </button>
@@ -2534,8 +2534,8 @@ export default function FeasibilityProject() {
 
                       {/* Expanded assumptions editor */}
                       {isExpanded && (
-                        <div style={{borderTop:'1px solid #21262d',padding:'1rem 1.25rem'}}>
-                          <p style={{fontSize:'0.75rem',color:'#484f58',marginBottom:'1.25rem'}}>
+                        <div style={{borderTop:`1px solid ${colors.border}`,padding:'1rem 1.25rem'}}>
+                          <p style={{fontSize:'0.75rem',color:colors.textMuted,marginBottom:'1.25rem'}}>
                             Edit assumptions for this scenario, then click Approve &amp; Run to compute results.
                           </p>
 
@@ -2550,18 +2550,18 @@ export default function FeasibilityProject() {
                             ]
                             return (
                               <div style={{marginBottom:'1.75rem'}}>
-                                <p style={{fontSize:'0.72rem',color:'#58a6ff',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'0.75rem',fontWeight:'600'}}>
+                                <p style={{fontSize:'0.72rem',color:colors.accent,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'0.75rem',fontWeight:'600'}}>
                                   Key Market Drivers
                                 </p>
-                                <p style={{fontSize:'0.72rem',color:'#484f58',marginBottom:'0.75rem'}}>
+                                <p style={{fontSize:'0.72rem',color:colors.textMuted,marginBottom:'0.75rem'}}>
                                   These are the inputs that most impact scenario outcomes. Override them to flex the model. Leave blank to use project defaults.
                                 </p>
-                                <div style={{background:'#0f1520',border:'1px solid #21262d',borderRadius:'6px',overflow:'hidden'}}>
+                                <div style={{background:colors.surfaceMuted,border:`1px solid ${colors.border}`,borderRadius:'6px',overflow:'hidden'}}>
                                   <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.82rem'}}>
                                     <thead>
-                                      <tr style={{borderBottom:'1px solid #21262d'}}>
+                                      <tr style={{borderBottom:`1px solid ${colors.border}`}}>
                                         {['Driver','Default','This Scenario',''].map((h,i) => (
-                                          <th key={i} style={{padding:'0.5rem 0.75rem',textAlign:'left',color:'#484f58',fontWeight:'500',fontSize:'0.7rem'}}>{h}</th>
+                                          <th key={i} style={{padding:'0.5rem 0.75rem',textAlign:'left',color:colors.textMuted,fontWeight:'500',fontSize:'0.7rem'}}>{h}</th>
                                         ))}
                                       </tr>
                                     </thead>
@@ -2579,23 +2579,23 @@ export default function FeasibilityProject() {
                                         const editKey = sc.scenario_id + ':' + driver.key
                                         const isEditingThis = scDriverEditKey === editKey
                                         return (
-                                          <tr key={driver.key} style={{borderBottom:'1px solid #21262d',background:override?'#1c2128':isEditingThis?'#1a2235':'transparent'}}>
-                                            <td style={{padding:'0.6rem 0.75rem',color:'#e6edf3'}}>
+                                          <tr key={driver.key} style={{borderBottom:`1px solid ${colors.border}`,background:override?colors.surfaceMuted:isEditingThis?colors.surfaceElevated:'transparent'}}>
+                                            <td style={{padding:'0.6rem 0.75rem',color:colors.textPrimary}}>
                                               {driver.label}
-                                              <span style={{fontSize:'0.65rem',color:'#484f58',marginLeft:'0.4rem'}}>{driver.hint}</span>
+                                              <span style={{fontSize:'0.65rem',color:colors.textMuted,marginLeft:'0.4rem'}}>{driver.hint}</span>
                                             </td>
-                                            <td style={{padding:'0.6rem 0.75rem',color:'#484f58',fontSize:'0.78rem'}}>{defDisplay}</td>
+                                            <td style={{padding:'0.6rem 0.75rem',color:colors.textMuted,fontSize:'0.78rem'}}>{defDisplay}</td>
                                             <td style={{padding:'0.6rem 0.75rem'}}>
                                               {isEditingThis ? (
                                                 <input type="number" value={scDriverEditValue}
                                                   onChange={e => setScDriverEditValue(e.target.value)} autoFocus
                                                   onKeyDown={e => { if(e.key==='Enter') handleSaveScenarioDriver(sc,driver.key,scDriverEditValue); if(e.key==='Escape'){setScDriverEditKey(null);setScDriverEditValue('')} }}
                                                   placeholder={driver.isPct ? 'e.g. 0.35 for 35%' : 'e.g. 2500'}
-                                                  style={{background:'#0f1520',border:'1px solid #58a6ff',borderRadius:'4px',color:'#e6edf3',padding:'0.2rem 0.5rem',fontSize:'0.82rem',width:'130px'}} />
+                                                  style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.2rem 0.5rem',fontSize:'0.82rem',width:'130px'}} />
                                               ) : (
-                                                <span style={{color:override?'#e6edf3':'#484f58',fontWeight:override?'500':'400'}}>
+                                                <span style={{color:override?colors.textPrimary:colors.textMuted,fontWeight:override?'500':'400'}}>
                                                   {overrideDisplay}
-                                                  {override && <span style={{marginLeft:'0.4rem',fontSize:'0.65rem',padding:'1px 5px',borderRadius:'10px',background:'#1f6feb22',color:'#58a6ff',border:'1px solid #1f6feb'}}>override</span>}
+                                                  {override && <span style={{marginLeft:'0.4rem',fontSize:'0.65rem',padding:'1px 5px',borderRadius:'10px',background:colors.accentBgSubtle,color:colors.accent,border:`1px solid ${colors.accent}`}}>override</span>}
                                                 </span>
                                               )}
                                             </td>
@@ -2603,11 +2603,11 @@ export default function FeasibilityProject() {
                                               {isEditingThis ? (
                                                 <div style={{display:'flex',gap:'0.3rem',justifyContent:'flex-end'}}>
                                                   <button onClick={() => handleSaveScenarioDriver(sc,driver.key,scDriverEditValue)} disabled={scDriverSaving}
-                                                    style={{padding:'0.2rem 0.5rem',background:'#238636',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
+                                                    style={{padding:'0.2rem 0.5rem',background:colors.success,color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
                                                     {scDriverSaving?'...':'Save'}
                                                   </button>
                                                   <button onClick={() => {setScDriverEditKey(null);setScDriverEditValue('')}}
-                                                    style={{padding:'0.2rem 0.5rem',background:'none',color:'#484f58',border:'1px solid #21262d',borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
+                                                    style={{padding:'0.2rem 0.5rem',background:'none',color:colors.textMuted,border:`1px solid ${colors.border}`,borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
                                                     Cancel
                                                   </button>
                                                 </div>
@@ -2616,12 +2616,12 @@ export default function FeasibilityProject() {
                                                   <button onClick={() => {
                                                     setScDriverEditKey(editKey)
                                                     setScDriverEditValue(override ? String(override.value) : (defVal !== null ? String(defVal) : ''))
-                                                  }} style={{padding:'0.2rem 0.5rem',background:'#21262d',color:'#8b949e',border:'1px solid #21262d',borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
+                                                  }} style={{padding:'0.2rem 0.5rem',background:colors.surfaceElevated,color:colors.textSecondary,border:`1px solid ${colors.border}`,borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
                                                     Override
                                                   </button>
                                                   {override && (
                                                     <button onClick={() => handleResetScenarioDriver(sc,driver.key)}
-                                                      style={{padding:'0.2rem 0.5rem',background:'none',color:'#484f58',border:'1px solid #21262d',borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
+                                                      style={{padding:'0.2rem 0.5rem',background:'none',color:colors.textMuted,border:`1px solid ${colors.border}`,borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
                                                       Reset
                                                     </button>
                                                   )}
@@ -2640,15 +2640,15 @@ export default function FeasibilityProject() {
 
                           {/* ── PPP: no benchmark drivers, just edit assumptions directly ── */}
                           {pppAP && (
-                            <div style={{marginBottom:'1.75rem',background:'#0f1520',border:'1px solid #21262d',borderRadius:'6px',padding:'0.85rem 1rem'}}>
-                              <p style={{fontSize:'0.78rem',color:'#8b949e',lineHeight:1.6}}>
+                            <div style={{marginBottom:'1.75rem',background:colors.surfaceMuted,border:`1px solid ${colors.border}`,borderRadius:'6px',padding:'0.85rem 1rem'}}>
+                              <p style={{fontSize:'0.78rem',color:colors.textSecondary,lineHeight:1.6}}>
                                 Edit the assumptions below to flex this scenario. Key PPP drivers — Annual Payment, OPEX %, Interest Rate, WACC — are all editable in the All Assumptions table.
                               </p>
                             </div>
                           )}
 
                           {/* ── Standard assumptions ── */}
-                          <p style={{fontSize:'0.72rem',color:'#8b949e',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'0.75rem',fontWeight:'600'}}>
+                          <p style={{fontSize:'0.72rem',color:colors.textSecondary,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'0.75rem',fontWeight:'600'}}>
                             All Assumptions
                           </p>
                           {(pppAP
@@ -2659,33 +2659,33 @@ export default function FeasibilityProject() {
                             if (!groupRows.length) return null
                             return (
                               <div key={group} style={{marginBottom:'1.5rem'}}>
-                                <p style={{fontSize:'0.72rem',color:'#8b949e',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'0.5rem'}}>
+                                <p style={{fontSize:'0.72rem',color:colors.textSecondary,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'0.5rem'}}>
                                   {group.replace(/_/g,' ')}
                                 </p>
-                                <div style={{background:'#0f1520',border:'1px solid #21262d',borderRadius:'6px',overflow:'hidden'}}>
+                                <div style={{background:colors.surfaceMuted,border:`1px solid ${colors.border}`,borderRadius:'6px',overflow:'hidden'}}>
                                   <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.82rem'}}>
                                     <tbody>
                                       {groupRows.map(a => {
                                         const type = editType(a.name)
                                         const isEditingThis = scEditingId === a.assumption_id
                                         return (
-                                          <tr key={a.assumption_id} style={{borderBottom:'1px solid #21262d',
-                                            background:isEditingThis?'#1a2235':'transparent'}}>
-                                            <td style={{padding:'0.6rem 0.75rem',color:'#e6edf3',width:'55%'}}>{a.name}</td>
-                                            <td style={{padding:'0.6rem 0.75rem',color:'#e6edf3',textAlign:'right'}}>
+                                          <tr key={a.assumption_id} style={{borderBottom:`1px solid ${colors.border}`,
+                                            background:isEditingThis?colors.surfaceElevated:'transparent'}}>
+                                            <td style={{padding:'0.6rem 0.75rem',color:colors.textPrimary,width:'55%'}}>{a.name}</td>
+                                            <td style={{padding:'0.6rem 0.75rem',color:colors.textPrimary,textAlign:'right'}}>
                                               {isEditingThis ? (
                                                 type === 'dropdown' ? (
                                                   <select value={scEditingValue} onChange={e => setScEditingValue(e.target.value)} autoFocus
-                                                    style={{background:'#0f1520',border:'1px solid #58a6ff',borderRadius:'4px',color:'#e6edf3',padding:'0.15rem 0.4rem',fontSize:'0.82rem'}}>
+                                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.15rem 0.4rem',fontSize:'0.82rem'}}>
                                                     {DROPDOWN_OPTIONS[a.name].map(opt => <option key={opt} value={opt}>{opt}</option>)}
                                                   </select>
                                                 ) : type === 'date' ? (
                                                   <input type="date" value={scEditingValue} onChange={e => setScEditingValue(e.target.value)} autoFocus
-                                                    style={{background:'#0f1520',border:'1px solid #58a6ff',borderRadius:'4px',color:'#e6edf3',padding:'0.15rem 0.4rem',fontSize:'0.82rem'}} />
+                                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.15rem 0.4rem',fontSize:'0.82rem'}} />
                                                 ) : (
                                                   <input type="number" value={scEditingValue} onChange={e => setScEditingValue(e.target.value)} autoFocus
                                                     onKeyDown={e => { if(e.key==='Enter') handleSaveScenarioAssumption(a.assumption_id, a.name); if(e.key==='Escape'){setScEditingId(null);setScEditingValue('')} }}
-                                                    style={{background:'#0f1520',border:'1px solid #58a6ff',borderRadius:'4px',color:'#e6edf3',padding:'0.15rem 0.4rem',fontSize:'0.82rem',width:'90px',textAlign:'right'}} />
+                                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.15rem 0.4rem',fontSize:'0.82rem',width:'90px',textAlign:'right'}} />
                                                 )
                                               ) : (
                                                 <span>{a.value !== null ? a.value : (a.unit || '—')}</span>
@@ -2695,17 +2695,17 @@ export default function FeasibilityProject() {
                                               {isEditingThis ? (
                                                 <div style={{display:'flex',gap:'0.3rem',justifyContent:'flex-end'}}>
                                                   <button onClick={() => handleSaveScenarioAssumption(a.assumption_id, a.name)} disabled={scSaving}
-                                                    style={{padding:'0.2rem 0.5rem',background:'#238636',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
+                                                    style={{padding:'0.2rem 0.5rem',background:colors.success,color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
                                                     {scSaving ? '...' : 'Save'}
                                                   </button>
                                                   <button onClick={() => {setScEditingId(null);setScEditingValue('')}}
-                                                    style={{padding:'0.2rem 0.5rem',background:'none',color:'#484f58',border:'1px solid #21262d',borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
+                                                    style={{padding:'0.2rem 0.5rem',background:'none',color:colors.textMuted,border:`1px solid ${colors.border}`,borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
                                                     ✕
                                                   </button>
                                                 </div>
                                               ) : (a.value !== null || DROPDOWN_OPTIONS[a.name] || DATE_FIELDS.includes(a.name)) && (
                                                 <button onClick={() => { setScEditingId(a.assumption_id); setScEditingValue(editType(a.name)==='number'?String(a.value??''):(a.unit||'')) }}
-                                                  style={{padding:'0.2rem 0.5rem',background:'#21262d',color:'#484f58',border:'1px solid #21262d',borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
+                                                  style={{padding:'0.2rem 0.5rem',background:colors.surfaceElevated,color:colors.textMuted,border:`1px solid ${colors.border}`,borderRadius:'4px',cursor:'pointer',fontSize:'0.72rem'}}>
                                                   Edit
                                                 </button>
                                               )}
@@ -2729,16 +2729,16 @@ export default function FeasibilityProject() {
               {/* ── Create Scenario ── */}
               {!showCreateScenario ? (
                 <button onClick={() => setShowCreateScenario(true)}
-                  style={{padding:'0.5rem 1.25rem',background:'none',border:'1px dashed #30363d',
-                    color:'#8b949e',borderRadius:'6px',cursor:'pointer',fontSize:'0.875rem'}}>
+                  style={{padding:'0.5rem 1.25rem',background:'none',border:`1px dashed ${colors.border}`,
+                    color:colors.textSecondary,borderRadius:'6px',cursor:'pointer',fontSize:'0.875rem'}}>
                   + Create Scenario
                 </button>
               ) : (
-                <div style={{background:'#1a2235',border:'1px solid #30363d',borderRadius:'8px',padding:'1.25rem 1.5rem',maxWidth:'480px'}}>
-                  <p style={{fontWeight:'600',fontSize:'0.9rem',marginBottom:'1.25rem',color:'#e6edf3'}}>New Scenario</p>
+                <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',padding:'1.25rem 1.5rem',maxWidth:'480px'}}>
+                  <p style={{fontWeight:'600',fontSize:'0.9rem',marginBottom:'1.25rem',color:colors.textPrimary}}>New Scenario</p>
                   <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
                     <div>
-                      <label style={{display:'block',fontSize:'0.75rem',color:'#8b949e',marginBottom:'0.4rem'}}>Scenario Type</label>
+                      <label style={{display:'block',fontSize:'0.75rem',color:colors.textSecondary,marginBottom:'0.4rem'}}>Scenario Type</label>
                       <div style={{display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
                         {[
                           {type:'bull',label:'Bull / Best Case'},
@@ -2746,9 +2746,9 @@ export default function FeasibilityProject() {
                           {type:'base',label:'Base (Alternate)'},
                         ].map(opt => (
                           <button key={opt.type} onClick={() => { setNewScenarioType(opt.type); setNewScenarioLabel(opt.label) }}
-                            style={{padding:'0.4rem 0.9rem',background:newScenarioType===opt.type?'#1f6feb':'none',
-                              border:'1px solid '+(newScenarioType===opt.type?'#1f6feb':'#30363d'),
-                              color:newScenarioType===opt.type?'white':'#8b949e',
+                            style={{padding:'0.4rem 0.9rem',background:newScenarioType===opt.type?colors.accent:'none',
+                              border:`1px solid ${newScenarioType===opt.type?colors.accent:colors.border}`,
+                              color:newScenarioType===opt.type?'white':colors.textSecondary,
                               borderRadius:'6px',cursor:'pointer',fontSize:'0.8rem'}}>
                             {opt.label}
                           </button>
@@ -2756,24 +2756,24 @@ export default function FeasibilityProject() {
                       </div>
                     </div>
                     <div>
-                      <label style={{display:'block',fontSize:'0.75rem',color:'#8b949e',marginBottom:'0.4rem'}}>Label</label>
+                      <label style={{display:'block',fontSize:'0.75rem',color:colors.textSecondary,marginBottom:'0.4rem'}}>Label</label>
                       <input type="text" value={newScenarioLabel} onChange={e => setNewScenarioLabel(e.target.value)}
-                        style={{width:'100%',padding:'0.45rem 0.75rem',background:'#0f1520',border:'1px solid #30363d',
-                          borderRadius:'6px',color:'#e6edf3',fontSize:'0.875rem'}} />
+                        style={{width:'100%',padding:'0.45rem 0.75rem',background:colors.surfaceMuted,border:`1px solid ${colors.border}`,
+                          borderRadius:'6px',color:colors.textPrimary,fontSize:'0.875rem'}} />
                     </div>
-                    <p style={{fontSize:'0.78rem',color:'#484f58'}}>
+                    <p style={{fontSize:'0.78rem',color:colors.textMuted}}>
                       Assumptions will be cloned from the Base scenario. You can edit them before running.
                     </p>
                     <div style={{display:'flex',gap:'0.75rem'}}>
                       <button onClick={handleCreateScenario} disabled={creatingScenario}
-                        style={{padding:'0.5rem 1.25rem',background:'#1f6feb',color:'white',border:'none',
+                        style={{padding:'0.5rem 1.25rem',background:colors.accent,color:'white',border:'none',
                           borderRadius:'6px',cursor:creatingScenario?'not-allowed':'pointer',
                           fontSize:'0.875rem',opacity:creatingScenario?0.6:1}}>
                         {creatingScenario ? 'Creating...' : 'Create Scenario'}
                       </button>
                       <button onClick={() => setShowCreateScenario(false)}
-                        style={{padding:'0.5rem 1rem',background:'none',color:'#8b949e',
-                          border:'1px solid #30363d',borderRadius:'6px',cursor:'pointer',fontSize:'0.875rem'}}>
+                        style={{padding:'0.5rem 1rem',background:'none',color:colors.textSecondary,
+                          border:`1px solid ${colors.border}`,borderRadius:'6px',cursor:'pointer',fontSize:'0.875rem'}}>
                         Cancel
                       </button>
                     </div>
