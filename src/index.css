@@ -13,27 +13,76 @@ body,
   min-height: 100%;
   margin: 0;
   padding: 0;
-  background: #0f1117;
+  background: var(--bg);
   overflow-x: hidden;
 }
 
-:root {
-  --bg-primary: #0f1117;
-  --bg-secondary: #1a1d27;
-  --bg-card: #1e2130;
-  --border: #2a2d3e;
-  --accent: #4f6ef7;
-  --accent-hover: #3d5be0;
-  --text-primary: #f0f2f8;
-  --text-secondary: #8b90a7;
-  --text-muted: #555a72;
-  --success: #22c55e;
-  --warning: #f59e0b;
-  --danger: #ef4444;
-  --sidebar-width: 240px;
+/* ───────────────────────────────────────────────────────────────────────
+   XCEPTA institutional palette — UI refresh Phase A (2026-05-17).
+   Mirrors src/theme/colors.js. Single source of truth.
 
-  /* Investment-grade content width */
+   The new token names (--bg, --surface, --text-primary, --accent, etc.)
+   are the canonical set going forward. The legacy aliases at the bottom
+   of this block (--bg-primary, --bg-secondary, --bg-card) keep the few
+   existing .css files rendering without edits — they now point at the
+   new palette automatically.
+   ─────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Backgrounds (deepest → lightest) */
+  --bg:                #061A24;  /* deep harbor navy — page background */
+  --bg-subtle:         #0A2433;  /* slight lift above bg */
+  --surface:           #0B3A53;  /* sidebar, primary surfaces */
+  --surface-elevated:  #103D58;  /* cards / panels above surface */
+  --surface-muted:     #082C40;  /* sunken surfaces (table headers, wells) */
+
+  /* Borders / dividers */
+  --border:            #19475F;  /* standard divider */
+  --border-muted:      #0F3245;  /* soft separator */
+  --border-strong:     #23607D;  /* hover / focused borders */
+
+  /* Text */
+  --text-primary:      #F3FAFF;  /* off-white headings/body */
+  --text-secondary:    #A5C7DA;  /* slate-cyan secondary text */
+  --text-muted:        #5C7F92;  /* captions, disabled labels */
+  --text-inverse:      #061A24;  /* dark text on light surfaces */
+
+  /* Accent (institutional aqua) */
+  --accent:            #0FA3B1;  /* primary accent — CTA, active nav, links */
+  --accent-hover:      #10B8C8;
+  --accent-soft:       #B5E2FA;  /* pale highlight surface */
+  --accent-bg-subtle:  rgba(15, 163, 177, 0.10);
+
+  /* Semantic (muted institutional) */
+  --success:           #2EA77A;
+  --success-soft:      rgba(46, 167, 122, 0.12);
+  --warning:           #C19132;
+  --warning-soft:      rgba(193, 145, 50, 0.12);
+  --danger:            #D9534F;
+  --danger-soft:       rgba(217, 83, 79, 0.12);
+
+  /* Charts (sequential-categorical) */
+  --chart-revenue:     #0FA3B1;
+  --chart-cost:        #7AA0B3;
+  --chart-equity:      #2EA77A;
+  --chart-debt:        #9D7BCC;
+  --chart-neutral:     #5C7F92;
+  --chart-grid:        #19475F;
+  --chart-axis:        #A5C7DA;
+
+  /* Print / PDF (intentionally light theme) */
+  --print-bg:          #FFFFFF;
+  --print-panel:       #F3FAFF;
+  --print-border:      #D7E3EC;
+  --print-text:        #0B2A3A;
+
+  /* Layout */
+  --sidebar-width:     240px;
   --content-max-width: 1040px;
+
+  /* ── Legacy aliases (back-compat for existing .css files) ─────────── */
+  --bg-primary:        var(--bg);
+  --bg-secondary:      var(--surface);
+  --bg-card:           var(--surface-elevated);
 }
 
 body {
