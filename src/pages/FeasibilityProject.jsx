@@ -2277,8 +2277,20 @@ export default function FeasibilityProject() {
 
                   {/* Primary KPIs */}
                   <div style={{display:'flex',gap:'1rem',marginBottom:'1rem',flexWrap:'wrap'}}>
+                    <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',padding:'1.25rem 1.5rem',minWidth:'150px',flex:1}}>
+                      <p style={{fontSize:'0.75rem',color:colors.textSecondary,marginBottom:'0.5rem'}}>IRR (Equity)</p>
+                      <p style={{fontSize:'1.5rem',fontWeight:'600',color:Number(modelOutput.irr)>=(pppAP?PPP_IRR_HURDLE:15)?colors.success:Number(modelOutput.irr)>=8?colors.warning:colors.danger}}>{fmtPct(modelOutput.irr)}</p>
+                      {Number(modelOutput.irr) > 100 && (
+                        <p style={{
+                          fontSize: '0.7rem',
+                          color: colors.warning,
+                          marginTop: '0.4rem',
+                        }}>
+                          Outlier: validate equity timing and cash flow phasing
+                        </p>
+                      )}
+                    </div>
                     {[
-                      {label:'IRR (Equity)',value:fmtPct(modelOutput.irr),color:Number(modelOutput.irr)>=(pppAP?PPP_IRR_HURDLE:15)?colors.success:Number(modelOutput.irr)>=8?colors.warning:colors.danger},
                       {label:'NPV',value:fmt(modelOutput.npv,'JOD'),color:Number(modelOutput.npv)>=0?colors.success:colors.danger},
                       {label:'Equity Multiple',value:modelOutput.equity_multiple?modelOutput.equity_multiple+'x':'---',color:Number(modelOutput.equity_multiple)>=1.5?colors.success:colors.warning},
                     ].map(kpi => (
