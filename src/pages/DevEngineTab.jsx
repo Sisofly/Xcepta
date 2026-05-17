@@ -16,6 +16,7 @@ import {
   BarChart, Bar, Cell,
 } from 'recharts'
 import colors from '../theme/colors.js'
+import { fmtNumber, fmtPct } from '../utils/format.js'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -31,18 +32,6 @@ function getDef(defaults, key, fallback) {
   const d = defaults.find(d => d.key === key)
   return d ? Number(d.value) : fallback
 }
-function fmt(n, decimals = 0) {
-  if (n == null || isNaN(n)) return '—'
-  return Number(n).toLocaleString('en-US', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  })
-}
-function fmtPct(n) {
-  if (n == null || isNaN(n)) return '—'
-  return (Number(n) * 100).toFixed(2) + '%'
-}
-
 // ─── derive initial config from assumptions + defaults ────────────────────────
 
 function deriveConfig(assumptions, defaults) {
@@ -655,9 +644,9 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
               <KpiCard label="Unleveraged IRR"  value={s.unleveragedIRR}            accent={irrColor(s.unleveragedIRR)} sub="Project-level" />
               <KpiCard label="Leveraged IRR"    value={s.leveragedIRR}              accent={irrColor(s.leveragedIRR)}   sub="Equity-level" />
               <KpiCard label="Leverage Lift"    value={s.leverageLift}              accent="#a371f7" />
-              <KpiCard label="Project NPV"      value={'JOD ' + fmt(s.projectNPV)} accent={colors.accent} sub={`@${(cfg.discountRate * 100).toFixed(1)}% WACC`} />
-              <KpiCard label="Equity NPV"       value={'JOD ' + fmt(s.equityNPV)}  accent={colors.accent} />
-              <KpiCard label="Peak Funding Gap" value={peakGapRow ? 'JOD ' + fmt(Math.abs(peakGapRow.cumulative)) : '—'} accent={hasFundingGap ? colors.danger : colors.textMuted} sub={peakGapRow && hasFundingGap ? 'Month ' + peakGapRow.month : 'No gap'} />
+              <KpiCard label="Project NPV"      value={'JOD ' + fmtNumber(s.projectNPV)} accent={colors.accent} sub={`@${(cfg.discountRate * 100).toFixed(1)}% WACC`} />
+              <KpiCard label="Equity NPV"       value={'JOD ' + fmtNumber(s.equityNPV)}  accent={colors.accent} />
+              <KpiCard label="Peak Funding Gap" value={peakGapRow ? 'JOD ' + fmtNumber(Math.abs(peakGapRow.cumulative)) : '—'} accent={hasFundingGap ? colors.danger : colors.textMuted} sub={peakGapRow && hasFundingGap ? 'Month ' + peakGapRow.month : 'No gap'} />
             </div>
           </div>
 
@@ -665,11 +654,11 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
           <div>
             <p style={S.section}>Profitability</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-              <KpiCard label="Development Profit" value={'JOD ' + fmt(s.developmentProfit)} accent={colors.success} />
+              <KpiCard label="Development Profit" value={'JOD ' + fmtNumber(s.developmentProfit)} accent={colors.success} />
               <KpiCard label="Profit on Cost"      value={s.profitOnCostPct}                 accent={colors.success} />
               <KpiCard label="Profit on GDV"       value={s.profitOnGDVpct}                  accent={colors.success} />
-              <KpiCard label="Total GDV"           value={'JOD ' + fmt(s.totalGDV)}          accent={colors.textMuted} />
-              <KpiCard label="Net Exit Proceeds"   value={'JOD ' + fmt(s.netExitProceeds)}   accent={colors.textMuted} />
+              <KpiCard label="Total GDV"           value={'JOD ' + fmtNumber(s.totalGDV)}          accent={colors.textMuted} />
+              <KpiCard label="Net Exit Proceeds"   value={'JOD ' + fmtNumber(s.netExitProceeds)}   accent={colors.textMuted} />
             </div>
           </div>
 
@@ -677,11 +666,11 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
           <div>
             <p style={S.section}>Cost Breakdown</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-              <KpiCard label="Total Dev Cost"  value={'JOD ' + fmt(s.totalDevelopmentCost)} accent={colors.warning} />
-              <KpiCard label="Land Cost"       value={'JOD ' + fmt(s.landCost)}             accent={colors.textMuted} />
-              <KpiCard label="Hard Cost"       value={'JOD ' + fmt(s.totalHardCost)}        accent={colors.textMuted} />
-              <KpiCard label="Soft Cost"       value={'JOD ' + fmt(s.totalSoftCost)}        accent={colors.textMuted} />
-              <KpiCard label="Financing Cost"  value={'JOD ' + fmt(s.totalFinancingCost)}   accent={colors.textMuted} sub="Cap. interest" />
+              <KpiCard label="Total Dev Cost"  value={'JOD ' + fmtNumber(s.totalDevelopmentCost)} accent={colors.warning} />
+              <KpiCard label="Land Cost"       value={'JOD ' + fmtNumber(s.landCost)}             accent={colors.textMuted} />
+              <KpiCard label="Hard Cost"       value={'JOD ' + fmtNumber(s.totalHardCost)}        accent={colors.textMuted} />
+              <KpiCard label="Soft Cost"       value={'JOD ' + fmtNumber(s.totalSoftCost)}        accent={colors.textMuted} />
+              <KpiCard label="Financing Cost"  value={'JOD ' + fmtNumber(s.totalFinancingCost)}   accent={colors.textMuted} sub="Cap. interest" />
             </div>
           </div>
 
@@ -689,15 +678,15 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
           <div>
             <p style={S.section}>Financing</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-              <KpiCard label="Equity Deployed"    value={'JOD ' + fmt(s.totalEquityDeployed)} accent={colors.accent} />
-              <KpiCard label="Loan Drawn"         value={'JOD ' + fmt(s.totalLoanDrawn)}      accent={colors.accent} />
-              <KpiCard label="Final Loan Balance" value={'JOD ' + fmt(s.finalLoanBalance)}    accent={s.finalLoanBalance > 0 ? colors.warning : colors.success} />
-              <KpiCard label="LTV"                value={fmtPct(s.ltv)}                       accent={colors.textMuted} />
+              <KpiCard label="Equity Deployed"    value={'JOD ' + fmtNumber(s.totalEquityDeployed)} accent={colors.accent} />
+              <KpiCard label="Loan Drawn"         value={'JOD ' + fmtNumber(s.totalLoanDrawn)}      accent={colors.accent} />
+              <KpiCard label="Final Loan Balance" value={'JOD ' + fmtNumber(s.finalLoanBalance)}    accent={s.finalLoanBalance > 0 ? colors.warning : colors.success} />
+              <KpiCard label="LTV"                value={fmtPct(Number(s.ltv) * 100)}         accent={colors.textMuted} />
               <KpiCard
                 label="Loan Capacity"
                 value={loanOk ? 'OK' : 'BREACHED'}
                 accent={loanOk ? colors.success : colors.danger}
-                sub={s.equityShortfall > 0 ? 'Shortfall: JOD ' + fmt(s.equityShortfall) : undefined}
+                sub={s.equityShortfall > 0 ? 'Shortfall: JOD ' + fmtNumber(s.equityShortfall) : undefined}
               />
             </div>
           </div>
@@ -707,10 +696,10 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
             <div>
               <p style={S.section}>Exit — Cap Rate Detail</p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-                <KpiCard label="Gross Rental Income" value={'JOD ' + fmt(s.exitDetail.grossRentalIncome)} accent={colors.textMuted} />
-                <KpiCard label="NOI"                 value={'JOD ' + fmt(s.exitDetail.noi)}               accent={colors.success} />
-                <KpiCard label="Exit Cap Rate"       value={fmtPct(s.exitDetail.exitCapRate)}              accent={colors.textMuted} />
-                <KpiCard label="Gross Exit Value"    value={'JOD ' + fmt(s.grossExitValue)}               accent={colors.accent} />
+                <KpiCard label="Gross Rental Income" value={'JOD ' + fmtNumber(s.exitDetail.grossRentalIncome)} accent={colors.textMuted} />
+                <KpiCard label="NOI"                 value={'JOD ' + fmtNumber(s.exitDetail.noi)}               accent={colors.success} />
+                <KpiCard label="Exit Cap Rate"       value={fmtPct(Number(s.exitDetail.exitCapRate) * 100)} accent={colors.textMuted} />
+                <KpiCard label="Gross Exit Value"    value={'JOD ' + fmtNumber(s.grossExitValue)}               accent={colors.accent} />
               </div>
             </div>
           )}
@@ -833,34 +822,34 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                       {isExit  && <span style={{ marginLeft: '4px', fontSize: '0.65rem', color: colors.success }}>exit</span>}
                     </td>
                     <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.hardCostDraw > 0 ? colors.warning : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
-                      {row.hardCostDraw > 0 ? fmt(row.hardCostDraw) : '—'}
+                      {row.hardCostDraw > 0 ? fmtNumber(row.hardCostDraw) : '—'}
                     </td>
                     <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.softCostDraw > 0 ? colors.warning : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
-                      {row.softCostDraw > 0 ? fmt(row.softCostDraw) : '—'}
+                      {row.softCostDraw > 0 ? fmtNumber(row.softCostDraw) : '—'}
                     </td>
                     <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.salesInflow > 0 ? colors.success : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
-                      {row.salesInflow > 0 ? fmt(row.salesInflow) : '—'}
+                      {row.salesInflow > 0 ? fmtNumber(row.salesInflow) : '—'}
                     </td>
                     <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.equityDraw > 0 ? colors.accent : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
-                      {row.equityDraw > 0 ? fmt(row.equityDraw) : '—'}
+                      {row.equityDraw > 0 ? fmtNumber(row.equityDraw) : '—'}
                     </td>
                     <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.loanDraw > 0 ? '#a371f7' : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
-                      {row.loanDraw > 0 ? fmt(row.loanDraw) : '—'}
+                      {row.loanDraw > 0 ? fmtNumber(row.loanDraw) : '—'}
                     </td>
                     <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.loanBalance > 0 ? colors.textPrimary : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
-                      {row.loanBalance > 0 ? fmt(row.loanBalance) : '—'}
+                      {row.loanBalance > 0 ? fmtNumber(row.loanBalance) : '—'}
                     </td>
                     <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: row.capitalizedInterest > 0 ? colors.danger : colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
-                      {row.capitalizedInterest > 0 ? fmt(row.capitalizedInterest) : '—'}
+                      {row.capitalizedInterest > 0 ? fmtNumber(row.capitalizedInterest) : '—'}
                     </td>
                     <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: cfColor(row.unleveragedCF), fontVariantNumeric: 'tabular-nums', fontWeight: '500' }}>
-                      {row.unleveragedCF !== 0 ? fmt(row.unleveragedCF) : '—'}
+                      {row.unleveragedCF !== 0 ? fmtNumber(row.unleveragedCF) : '—'}
                     </td>
                     <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: cfColor(row.leveragedCF), fontVariantNumeric: 'tabular-nums', fontWeight: '500' }}>
-                      {row.leveragedCF !== 0 ? fmt(row.leveragedCF) : '—'}
+                      {row.leveragedCF !== 0 ? fmtNumber(row.leveragedCF) : '—'}
                     </td>
                     <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: isExit ? colors.success : colors.textMuted, fontVariantNumeric: 'tabular-nums', fontWeight: isExit ? '600' : '400' }}>
-                      {isExit ? fmt(row.exitProceeds) : '—'}
+                      {isExit ? fmtNumber(row.exitProceeds) : '—'}
                     </td>
                   </tr>
                 )
@@ -1009,7 +998,7 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                 <p style={{ fontSize: '0.8rem', color: colors.textSecondary }}>
                   Impact of market conditions on IRR across multiple pricing and absorption scenarios.
                   Row: Sales price adjustment · Col: Pre-construction absorption rate adjustment.
-                  Base: GDV {fmt(cfg.totalGDV)} JOD · {Math.round(basePre * 100)}% pre-sale absorption.
+                  Base: GDV {fmtNumber(cfg.totalGDV)} JOD · {Math.round(basePre * 100)}% pre-sale absorption.
                 </p>
               </div>
 
@@ -1034,7 +1023,7 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
                         <td style={axisRowStyle(rs === 0)}>
                           {fmtStep(rs)}
                           <span style={{ fontSize: '0.65rem', color: colors.textMuted, marginLeft: '0.35rem' }}>
-                            ({fmt(Math.round(cfg.totalGDV * (1 + rs)))})
+                            ({fmtNumber(Math.round(cfg.totalGDV * (1 + rs)))})
                           </span>
                         </td>
                         {STEPS.map((cs, ci) => {
@@ -1063,7 +1052,7 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
               <IrrLegend />
               <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                 <p style={{ fontSize: '0.71rem', color: colors.textMuted }}>
-                  Row axis: Total GDV — each step is a % change from the base case value of {fmt(cfg.totalGDV)} JOD
+                  Row axis: Total GDV — each step is a % change from the base case value of {fmtNumber(cfg.totalGDV)} JOD
                 </p>
                 <p style={{ fontSize: '0.71rem', color: colors.textMuted }}>
                   Col axis: Pre-construction sales weight — each step shifts the absorption profile ±% from base of {Math.round(basePre * 100)}%
