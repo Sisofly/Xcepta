@@ -15,6 +15,7 @@ import {
   Tooltip as ReTooltip, Legend, ResponsiveContainer,
   BarChart, Bar, Cell,
 } from 'recharts'
+import colors from '../theme/colors.js'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -110,12 +111,12 @@ function Tooltip({ text }) {
       onMouseEnter={() => setVis(true)}
       onMouseLeave={() => setVis(false)}
     >
-      <span style={{ color: '#484f58', fontSize: '0.7rem', lineHeight: 1 }}>ⓘ</span>
+      <span style={{ color: colors.textMuted, fontSize: '0.7rem', lineHeight: 1 }}>ⓘ</span>
       {vis && (
         <div style={{
           position: 'absolute', bottom: '130%', left: '50%', transform: 'translateX(-50%)',
-          background: '#2d333b', border: '1px solid #444c56', borderRadius: '6px',
-          padding: '0.45rem 0.65rem', fontSize: '0.71rem', color: '#c9d1d9',
+          background: colors.surfaceElevated, border: `1px solid ${colors.border}`, borderRadius: '6px',
+          padding: '0.45rem 0.65rem', fontSize: '0.71rem', color: colors.textPrimary,
           whiteSpace: 'normal', width: '210px', zIndex: 200, marginBottom: '4px',
           lineHeight: '1.45', boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
         }}>
@@ -124,7 +125,7 @@ function Tooltip({ text }) {
             position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
             width: 0, height: 0,
             borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
-            borderTop: '5px solid #444c56',
+            borderTop: `5px solid ${colors.border}`,
           }} />
         </div>
       )}
@@ -139,7 +140,7 @@ function SuffixInput({ suffix, style: extraStyle, ...rest }) {
     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
       <input style={{ ...extraStyle, paddingRight: '2.8rem', flex: 1 }} {...rest} />
       <span style={{
-        position: 'absolute', right: '0.6rem', fontSize: '0.72rem', color: '#484f58',
+        position: 'absolute', right: '0.6rem', fontSize: '0.72rem', color: colors.textMuted,
         pointerEvents: 'none', userSelect: 'none',
       }}>
         {suffix}
@@ -152,46 +153,46 @@ function SuffixInput({ suffix, style: extraStyle, ...rest }) {
 
 const S = {
   card: {
-    background: '#1a2235',
-    border: '1px solid #30363d',
+    background: colors.surface,
+    border: `1px solid ${colors.border}`,
     borderRadius: '8px',
     padding: '1.25rem',
   },
   label: {
     fontSize: '0.72rem',
-    color: '#8b949e',
+    color: colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: '0.05em',
     marginBottom: '0.3rem',
     display: 'block',
   },
   input: {
-    background: '#0d1117',
-    border: '1px solid #30363d',
+    background: colors.bg,
+    border: `1px solid ${colors.border}`,
     borderRadius: '6px',
-    color: '#e6edf3',
+    color: colors.textPrimary,
     fontSize: '0.82rem',
     padding: '0.4rem 0.6rem',
     width: '100%',
     boxSizing: 'border-box',
   },
   select: {
-    background: '#0d1117',
-    border: '1px solid #30363d',
+    background: colors.bg,
+    border: `1px solid ${colors.border}`,
     borderRadius: '6px',
-    color: '#e6edf3',
+    color: colors.textPrimary,
     fontSize: '0.82rem',
     padding: '0.4rem 0.6rem',
     width: '100%',
   },
   section: {
     fontSize: '0.72rem',
-    color: '#8b949e',
+    color: colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: '0.07em',
     marginBottom: '0.75rem',
     paddingBottom: '0.4rem',
-    borderBottom: '1px solid #21262d',
+    borderBottom: `1px solid ${colors.borderMuted}`,
   },
   kpiCard: (accent) => ({
     background: '#161b22',
@@ -210,7 +211,7 @@ const S = {
   }),
   kpiLabel: {
     fontSize: '0.72rem',
-    color: '#8b949e',
+    color: colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: '0.05em',
   },
@@ -303,10 +304,10 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
 
   function irrColor(pctStr) {
     const v = parseFloat(pctStr)
-    if (isNaN(v)) return '#8b949e'
-    if (v >= 15)  return '#3fb950'
-    if (v >= 10)  return '#d29922'
-    return '#f85149'
+    if (isNaN(v)) return colors.textMuted
+    if (v >= 15)  return colors.success
+    if (v >= 10)  return colors.warning
+    return colors.danger
   }
 
   // ── Chart data ──
@@ -370,17 +371,17 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
       {/* ── Header ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <p style={{ fontSize: '0.95rem', color: '#e6edf3', fontWeight: '600', margin: 0 }}>
+          <p style={{ fontSize: '0.95rem', color: colors.textPrimary, fontWeight: '600', margin: 0 }}>
             Real Estate Development Cash Flow Engine
           </p>
-          <p style={{ fontSize: '0.8rem', color: '#8b949e', margin: '0.2rem 0 0' }}>
+          <p style={{ fontSize: '0.8rem', color: colors.textSecondary, margin: '0.2rem 0 0' }}>
             Monthly construction drawdown · S-curve · Equity-first funding · Leveraged &amp; unleveraged IRR
           </p>
         </div>
         <button
           onClick={runModel}
           style={{
-            background: '#1f6feb', color: '#fff', border: 'none', borderRadius: '6px',
+            background: colors.accent, color: '#fff', border: 'none', borderRadius: '6px',
             padding: '0.5rem 1.4rem', fontSize: '0.875rem', fontWeight: '600', cursor: 'pointer',
           }}
         >
@@ -391,21 +392,21 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
       {/* ── Error block — always visible when set ── */}
       {error && (
         <div style={{
-          background: '#3a1a1a', border: '1px solid #f85149', borderRadius: '6px',
-          padding: '0.75rem 1rem', fontSize: '0.82rem', color: '#f85149',
+          background: colors.dangerSoft, border: `1px solid ${colors.danger}`, borderRadius: '6px',
+          padding: '0.75rem 1rem', fontSize: '0.82rem', color: colors.danger,
         }}>
           {error}
         </div>
       )}
 
       {/* ── Inner tab bar ── */}
-      <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid #21262d' }}>
+      <div style={{ display: 'flex', gap: '0.25rem', borderBottom: `1px solid ${colors.borderMuted}` }}>
         {['inputs', 'kpis', 'schedule', 'sensitivity'].map(t => (
           <button key={t} onClick={() => setInnerTab(t)}
             style={{
               background: 'none', border: 'none',
-              borderBottom: innerTab === t ? '2px solid #1f6feb' : '2px solid transparent',
-              color: innerTab === t ? '#e6edf3' : '#8b949e',
+              borderBottom: innerTab === t ? `2px solid ${colors.accent}` : '2px solid transparent',
+              color: innerTab === t ? colors.textPrimary : colors.textSecondary,
               fontSize: '0.82rem', fontWeight: innerTab === t ? '600' : '400',
               padding: '0.4rem 0.9rem', cursor: 'pointer', textTransform: 'capitalize',
             }}>
@@ -656,7 +657,7 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
               <KpiCard label="Leverage Lift"    value={s.leverageLift}              accent="#a371f7" />
               <KpiCard label="Project NPV"      value={'JOD ' + fmt(s.projectNPV)} accent="#58a6ff" sub={`@${(cfg.discountRate * 100).toFixed(1)}% WACC`} />
               <KpiCard label="Equity NPV"       value={'JOD ' + fmt(s.equityNPV)}  accent="#58a6ff" />
-              <KpiCard label="Peak Funding Gap" value={peakGapRow ? 'JOD ' + fmt(Math.abs(peakGapRow.cumulative)) : '—'} accent="#f85149" sub={peakGapRow && hasFundingGap ? 'Month ' + peakGapRow.month : 'No gap'} />
+              <KpiCard label="Peak Funding Gap" value={peakGapRow ? 'JOD ' + fmt(Math.abs(peakGapRow.cumulative)) : '—'} accent={hasFundingGap ? colors.danger : colors.textMuted} sub={peakGapRow && hasFundingGap ? 'Month ' + peakGapRow.month : 'No gap'} />
             </div>
           </div>
 
@@ -718,10 +719,17 @@ export default function DevEngineTab({ assumptions, defaults, onEngineResult }) 
             <div style={{ height: 300, marginTop: '1.25rem' }}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartSchedule}>
-                  <CartesianGrid stroke="#30363d" strokeDasharray="3 3" />
-                  <XAxis dataKey="month" stroke="#8b949e" />
-                  <YAxis stroke="#8b949e" tick={{ fill: '#8b949e', fontSize: 10 }} width={54} tickFormatter={v => Math.abs(v) >= 1000 ? (v / 1000).toFixed(0) + 'K' : String(v)} />
-                  <ReTooltip />
+                  <CartesianGrid stroke={colors.border} strokeDasharray="3 3" />
+                  <XAxis dataKey="month" stroke={colors.textSecondary} />
+                  <YAxis stroke={colors.textSecondary} tick={{ fill: colors.textSecondary, fontSize: 10 }} width={54} tickFormatter={v => Math.abs(v) >= 1000 ? (v / 1000).toFixed(0) + 'K' : String(v)} />
+                  <ReTooltip
+                    contentStyle={{ background: colors.surfaceElevated, border: `1px solid ${colors.border}`, borderRadius: '6px', fontSize: '0.75rem' }}
+                    labelStyle={{ color: colors.textSecondary }}
+                    formatter={(v, name) => [
+                      new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(v) + ' JOD',
+                      name,
+                    ]}
+                  />
                   <Legend />
                   <Line type="monotone" dataKey="cumulative" stroke="#58a6ff" name="Funding Gap" strokeWidth={2} />
                   <Line type="monotone" dataKey="net_cf" stroke="#d29922" name="Net Cash Flow" />
