@@ -1,24 +1,25 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import colors from '../theme/colors.js'
 
 // ── XCEPTA full logo — dark version (white text on dark bg) ──
 function XceptaLogoDark({ width = 200 }) {
   const height = Math.round(width * 90 / 430)
   return (
     <svg width={width} height={height} viewBox="0 0 430 90" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="108" cy="45" r="28" fill="none" stroke="#e8eff6" strokeWidth="1.5"/>
-      <line x1="96" y1="33" x2="120" y2="57" stroke="#e8eff6" strokeWidth="5" strokeLinecap="round"/>
-      <line x1="96" y1="57" x2="108" y2="45" stroke="#e8eff6" strokeWidth="5" strokeLinecap="round"/>
-      <line x1="108" y1="45" x2="120" y2="33" stroke="#3db896" strokeWidth="5" strokeLinecap="round"/>
+      <circle cx="108" cy="45" r="28" fill="none" stroke={colors.textPrimary} strokeWidth="1.5"/>
+      <line x1="96" y1="33" x2="120" y2="57" stroke={colors.textPrimary} strokeWidth="5" strokeLinecap="round"/>
+      <line x1="96" y1="57" x2="108" y2="45" stroke={colors.textPrimary} strokeWidth="5" strokeLinecap="round"/>
+      <line x1="108" y1="45" x2="120" y2="33" stroke={colors.success} strokeWidth="5" strokeLinecap="round"/>
       <text x="152" y="62"
         fontFamily="'Helvetica Neue',Helvetica,Arial,sans-serif"
-        fontSize="44" fontWeight="700" fill="#e8eff6" letterSpacing="1">
+        fontSize="44" fontWeight="700" fill={colors.textPrimary} letterSpacing="1">
         XCEPTA
       </text>
       <text x="154" y="80"
         fontFamily="'Helvetica Neue',Helvetica,Arial,sans-serif"
-        fontSize="10.5" fontWeight="400" fill="#7a8b9a" letterSpacing="2.2">
+        fontSize="10.5" fontWeight="400" fill={colors.textSecondary} letterSpacing="2.2">
         VALUATIONS · FP&amp;A · BOARDS
       </text>
     </svg>
@@ -48,10 +49,10 @@ export default function Login() {
   const inputStyle = {
     width: '100%',
     padding: '0.875rem 0.9rem',   /* ~52px height */
-    background: '#0d1117',
-    border: '1px solid #30363d',
+    background: colors.bg,
+    border: `1px solid ${colors.border}`,
     borderRadius: '8px',
-    color: '#e6edf3',
+    color: colors.textPrimary,
     fontSize: '0.95rem',
     boxSizing: 'border-box',
     outline: 'none',
@@ -60,7 +61,7 @@ export default function Login() {
   return (
     <div style={{
       minHeight: '100vh',
-      background: '#0d1117',
+      background: colors.bg,
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
@@ -76,18 +77,18 @@ export default function Login() {
       <div style={{
         width: '100%',
         maxWidth: '480px',
-        background: '#161b22',
-        border: '1px solid #30363d',
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
         borderRadius: '12px',
         padding: '2.5rem',
       }}>
-        <h2 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#e6edf3', marginBottom: '2rem' }}>
+        <h2 style={{ fontSize: '1.1rem', fontWeight: '600', color: colors.textPrimary, marginBottom: '2rem' }}>
           Sign in to your account
         </h2>
 
         <form onSubmit={handleLogin}>
           <div style={{ marginBottom: '1.25rem' }}>
-            <label style={{ display: 'block', fontSize: '0.78rem', color: '#8b949e', marginBottom: '0.5rem', letterSpacing: '0.03em' }}>
+            <label style={{ display: 'block', fontSize: '0.78rem', color: colors.textSecondary, marginBottom: '0.5rem', letterSpacing: '0.03em' }}>
               Email address
             </label>
             <input
@@ -100,7 +101,7 @@ export default function Login() {
           </div>
 
           <div style={{ marginBottom: '1.75rem' }}>
-            <label style={{ display: 'block', fontSize: '0.78rem', color: '#8b949e', marginBottom: '0.5rem', letterSpacing: '0.03em' }}>
+            <label style={{ display: 'block', fontSize: '0.78rem', color: colors.textSecondary, marginBottom: '0.5rem', letterSpacing: '0.03em' }}>
               Password
             </label>
             <input
@@ -114,9 +115,9 @@ export default function Login() {
 
           {error && (
             <div style={{
-              background: '#3a1a1a', border: '1px solid #f85149', borderRadius: '6px',
+              background: colors.dangerSoft, border: `1px solid ${colors.danger}`, borderRadius: '6px',
               padding: '0.65rem 0.9rem', marginBottom: '1.25rem',
-              fontSize: '0.82rem', color: '#f85149',
+              fontSize: '0.82rem', color: colors.danger,
             }}>
               {error}
             </div>
@@ -128,7 +129,7 @@ export default function Login() {
             style={{
               width: '100%',
               padding: '0.875rem',
-              background: '#1f6feb',
+              background: colors.accent,
               color: 'white',
               border: 'none',
               borderRadius: '8px',
@@ -143,7 +144,7 @@ export default function Login() {
         </form>
       </div>
 
-      <p style={{ marginTop: '2rem', fontSize: '0.75rem', color: '#484f58' }}>
+      <p style={{ marginTop: '2rem', fontSize: '0.75rem', color: colors.textMuted }}>
         XCEPTA · Confidential
       </p>
     </div>

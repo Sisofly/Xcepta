@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom'
+import colors from '../theme/colors.js'
 
 const modules = [
   { label: 'Feasibility',    sub: 'Real Estate · Jordan',    tag: 'MVP', status: 'In Build',  path: '/feasibility', active: true  },
@@ -15,19 +16,19 @@ export default function Dashboard() {
 
       {/* Page header */}
       <div style={{ marginBottom: '0.5rem' }}>
-        <h1 style={{ fontSize: '1.75rem', fontWeight: '600', color: '#e6edf3', marginBottom: '0.25rem' }}>
+        <h1 style={{ fontSize: '1.75rem', fontWeight: '600', color: colors.textPrimary, marginBottom: '0.25rem' }}>
           Dashboard
         </h1>
-        <p style={{ color: '#8b949e', fontSize: '0.9rem' }}>Welcome back — Jordan · JOD</p>
+        <p style={{ color: colors.textSecondary, fontSize: '0.9rem' }}>Welcome back — Jordan · JOD</p>
       </div>
 
       {/* Modules section */}
       <div style={{ marginTop: '2.5rem' }}>
         <div style={{ marginBottom: '1.25rem' }}>
-          <h2 style={{ fontSize: '0.75rem', color: '#8b949e', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: '600', marginBottom: '0.3rem' }}>
+          <h2 style={{ fontSize: '0.75rem', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: '600', marginBottom: '0.3rem' }}>
             Modules
           </h2>
-          <p style={{ fontSize: '0.85rem', color: '#484f58' }}>
+          <p style={{ fontSize: '0.85rem', color: colors.textMuted }}>
             Select a module to begin analysis
           </p>
         </div>
@@ -43,8 +44,8 @@ export default function Dashboard() {
               onClick={() => m.path && navigate(m.path)}
               style={{
                 padding: '1.75rem',
-                background: m.active ? '#161b22' : '#0d1117',
-                border: m.active ? '1px solid #30363d' : '1px solid #21262d',
+                background: m.active ? colors.surface : colors.bg,
+                border: m.active ? `1px solid ${colors.border}` : `1px solid ${colors.surfaceElevated}`,
                 borderRadius: '10px',
                 cursor: m.path ? 'pointer' : 'default',
                 opacity: m.active ? 1 : 0.5,
@@ -52,21 +53,21 @@ export default function Dashboard() {
               }}
             >
               {m.tag && (
-                <div style={{ fontSize: '0.65rem', color: '#58a6ff', letterSpacing: '0.08em', marginBottom: '0.6rem' }}>
+                <div style={{ fontSize: '0.65rem', color: colors.accent, letterSpacing: '0.08em', marginBottom: '0.6rem' }}>
                   {m.tag}
                 </div>
               )}
-              <div style={{ fontWeight: '600', fontSize: '1.05rem', color: '#e6edf3', marginBottom: '0.3rem' }}>
+              <div style={{ fontWeight: '600', fontSize: '1.05rem', color: colors.textPrimary, marginBottom: '0.3rem' }}>
                 {m.label}
               </div>
-              <div style={{ fontSize: '0.82rem', color: '#8b949e', marginBottom: '1.25rem' }}>
+              <div style={{ fontSize: '0.82rem', color: colors.textSecondary, marginBottom: '1.25rem' }}>
                 {m.sub}
               </div>
               <span style={{
                 fontSize: '0.75rem', padding: '3px 10px', borderRadius: '20px',
-                background: m.active ? '#1f6feb22' : 'transparent',
-                color:      m.active ? '#58a6ff'   : '#484f58',
-                border:     m.active ? '1px solid #1f6feb' : '1px solid #30363d',
+                background: m.active ? colors.accentBgSubtle : 'transparent',
+                color:      m.active ? colors.accent         : colors.textMuted,
+                border:     m.active ? `1px solid ${colors.accent}` : `1px solid ${colors.border}`,
               }}>
                 {m.status}
               </span>

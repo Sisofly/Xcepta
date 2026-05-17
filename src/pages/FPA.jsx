@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import colors from '../theme/colors.js'
 
 export default function FPA() {
   const navigate = useNavigate()
@@ -53,21 +54,21 @@ export default function FPA() {
     load()
   }, [])
 
-  if (loading) return <p style={{ color: '#8b949e', padding: '2rem' }}>Loading...</p>
+  if (loading) return <p style={{ color: colors.textSecondary, padding: '2rem' }}>Loading...</p>
 
   return (
     <div>
       <div style={{ marginBottom: '2rem' }}>
         <h1 style={{ fontSize: '1.5rem', fontWeight: '600', marginBottom: '0.25rem' }}>FP&A</h1>
-        <p style={{ color: '#8b949e', fontSize: '0.85rem' }}>
+        <p style={{ color: colors.textSecondary, fontSize: '0.85rem' }}>
           Variance tracking against approved feasibility baselines
         </p>
       </div>
 
       {projects.length === 0 ? (
         <div style={{
-          background: '#161b22', border: '1px solid #30363d', borderRadius: '8px',
-          padding: '2rem', color: '#8b949e', fontSize: '0.875rem'
+          background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: '8px',
+          padding: '2rem', color: colors.textSecondary, fontSize: '0.875rem'
         }}>
           No approved projects yet. Approve a feasibility version first to enable FP&A tracking.
         </div>
@@ -78,28 +79,28 @@ export default function FPA() {
               key={p.project_id}
               onClick={() => navigate('/fpa/' + p.project_id)}
               style={{
-                background: '#161b22', border: '1px solid #30363d', borderRadius: '8px',
+                background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: '8px',
                 padding: '1.25rem 1.5rem', cursor: 'pointer',
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center'
               }}
             >
               <div>
-                <p style={{ fontWeight: '500', marginBottom: '0.25rem', color: '#e6edf3' }}>
+                <p style={{ fontWeight: '500', marginBottom: '0.25rem', color: colors.textPrimary }}>
                   {p.name}
                 </p>
-                <p style={{ color: '#8b949e', fontSize: '0.8rem' }}>
+                <p style={{ color: colors.textSecondary, fontSize: '0.8rem' }}>
                   {p.project_type} · {p.country} · {p.currency}
                 </p>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <span style={{
                   fontSize: '0.75rem', padding: '3px 10px', borderRadius: '20px',
-                  background: '#3fb95022', color: '#3fb950', border: '1px solid #3fb950'
+                  background: colors.successSoft, color: colors.success, border: `1px solid ${colors.success}`
                 }}>
                   approved
                 </span>
                 {p.approved_version && p.approved_version.approved_at && (
-                  <p style={{ fontSize: '0.75rem', color: '#484f58', marginTop: '0.3rem' }}>
+                  <p style={{ fontSize: '0.75rem', color: colors.textMuted, marginTop: '0.3rem' }}>
                     {p.approved_version.label} · {new Date(p.approved_version.approved_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
                   </p>
                 )}
