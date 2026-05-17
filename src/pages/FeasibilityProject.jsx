@@ -1543,25 +1543,25 @@ export default function FeasibilityProject() {
             if (!constrYrs && !opsYrs) return null
             return (
               <div style={{
-                background: '#0f1520', border: '1px solid #21262d',
+                background: colors.surfaceMuted, border: `1px solid ${colors.border}`,
                 borderRadius: '8px', padding: '1rem 1.25rem', marginBottom: '2rem',
               }}>
-                <p style={{fontSize:'0.72rem',color:'#8b949e',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'0.75rem'}}>
+                <p style={{fontSize:'0.72rem',color:colors.textSecondary,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'0.75rem'}}>
                   Timeline Structure
                 </p>
                 <div style={{display:'flex',gap:'2rem',flexWrap:'wrap'}}>
                   {[
-                    { label: 'Construction Phase',          value: constrYrs !== null ? constrYrs + ' years' : '—', color: '#484f58' },
-                    { label: 'Operations / Revenue Period', value: opsYrs    !== null ? opsYrs    + ' years' : '—', color: '#8b949e' },
-                    { label: 'Total Project Life',          value: totalYrs  !== null ? totalYrs  + ' years' : '—', color: '#e6edf3' },
+                    { label: 'Construction Phase',          value: constrYrs !== null ? constrYrs + ' years' : '—', color: colors.textMuted },
+                    { label: 'Operations / Revenue Period', value: opsYrs    !== null ? opsYrs    + ' years' : '—', color: colors.textSecondary },
+                    { label: 'Total Project Life',          value: totalYrs  !== null ? totalYrs  + ' years' : '—', color: colors.textPrimary },
                   ].map(item => (
                     <div key={item.label}>
-                      <p style={{fontSize:'0.68rem',color:'#484f58',marginBottom:'0.2rem'}}>{item.label}</p>
+                      <p style={{fontSize:'0.68rem',color:colors.textMuted,marginBottom:'0.2rem'}}>{item.label}</p>
                       <p style={{fontSize:'0.95rem',fontWeight:'600',color:item.color}}>{item.value}</p>
                     </div>
                   ))}
                 </div>
-                <p style={{fontSize:'0.72rem',color:'#484f58',marginTop:'0.75rem',lineHeight:1.5}}>
+                <p style={{fontSize:'0.72rem',color:colors.textMuted,marginTop:'0.75rem',lineHeight:1.5}}>
                   {constrYrs !== null && opsYrs !== null && totalYrs !== null
                     ? `Total timeline: ${totalYrs} years = ${constrYrs} year${constrYrs !== 1 ? 's' : ''} construction + ${opsYrs} year${opsYrs !== 1 ? 's' : ''} operations / revenue`
                     : 'Enter Construction Period and Operations / Revenue Period above to see the full timeline.'
@@ -2397,7 +2397,7 @@ export default function FeasibilityProject() {
                   </div>
                 </div>
               ) : (
-                <p style={{color:'#484f58',fontSize:'0.85rem'}}>Model output not found.</p>
+                <p style={{color:colors.textMuted,fontSize:'0.85rem'}}>Model output not found.</p>
               )}
             </div>
           )}
