@@ -241,6 +241,7 @@ export default function FeasibilityProject() {
         project_id: projectId, name: key, category: 'benchmark_override',
         value: val, unit: null, confidence: 'indicative',
         tenant_id: project.tenant_id,
+        module_origin: 'feasibility',
       }))
     }
     if (!error) {
