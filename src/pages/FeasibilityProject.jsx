@@ -700,34 +700,34 @@ export default function FeasibilityProject() {
 
       function pageHeader(p) {
         doc.setPage(p)
-        doc.setFillColor(15, 23, 42); doc.rect(0, 0, pw, 10, 'F')
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(255, 255, 255)
+        doc.setFillColor(11, 58, 83); doc.rect(0, 0, pw, 10, 'F')
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(243, 250, 255)
         doc.text('XCEPTA', ML, 7)
-        doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 116, 139)
+        doc.setFont('helvetica', 'normal'); doc.setTextColor(92, 127, 146)
         doc.text(safe(project.name) + '  |  ' + versionLabel, MR, 7, { align: 'right' })
       }
       function pageFooter(p, total) {
         doc.setPage(p)
         doc.setFillColor(255, 255, 255); doc.rect(0, ph - 14, pw, 14, 'F')
-        doc.setDrawColor(210, 215, 225); doc.setLineWidth(0.2); doc.line(ML, ph - 12, MR, ph - 12)
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(150, 160, 175)
+        doc.setDrawColor(25, 71, 95); doc.setLineWidth(0.2); doc.line(ML, ph - 12, MR, ph - 12)
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(92, 127, 146)
         doc.text('XCEPTA  |  Confidential', ML, ph - 7)
         doc.text(versionLabel + '   |   ' + reportDate, pw / 2, ph - 7, { align: 'center' })
         doc.text('Page ' + p + ' of ' + total, MR, ph - 7, { align: 'right' })
       }
       function secHead(title) {
         guard(22); gap(10)
-        doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(31, 111, 235)
+        doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 163, 177)
         doc.text(safe(title), ML, y); y += 3
-        doc.setDrawColor(31, 111, 235); doc.setLineWidth(0.6); doc.line(ML, y, ML + 22, y)
-        doc.setDrawColor(220, 225, 235); doc.setLineWidth(0.2); doc.line(ML + 22, y, MR, y)
+        doc.setDrawColor(15, 163, 177); doc.setLineWidth(0.6); doc.line(ML, y, ML + 22, y)
+        doc.setDrawColor(25, 71, 95); doc.setLineWidth(0.2); doc.line(ML + 22, y, MR, y)
         y += 6
       }
       function tHead(cols) {
         guard(HH + RH + 4)
         doc.setFillColor(244, 246, 250); doc.rect(ML, y, TW, HH, 'F')
-        doc.setDrawColor(205, 210, 220); doc.setLineWidth(0.2); doc.line(ML, y + HH, MR, y + HH)
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(90, 95, 110)
+        doc.setDrawColor(25, 71, 95); doc.setLineWidth(0.2); doc.line(ML, y + HH, MR, y + HH)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(92, 127, 146)
         var x = ML
         cols.forEach(function(c) {
           doc.text(safe(c.label), c.align === 'right' ? x + c.w - 2 : x + 3, y + BL - 0.5, { align: c.align || 'left' })
@@ -762,38 +762,38 @@ export default function FeasibilityProject() {
       // ══════════════════════════════════════════════════════════════════
       //  PAGE 1 — COVER
       // ══════════════════════════════════════════════════════════════════
-      doc.setFillColor(15, 23, 42); doc.rect(0, 0, pw, ph, 'F')
-      doc.setFillColor(31, 111, 235); doc.rect(0, 0, pw, 3, 'F')
+      doc.setFillColor(6, 26, 36); doc.rect(0, 0, pw, ph, 'F')
+      doc.setFillColor(15, 163, 177); doc.rect(0, 0, pw, 3, 'F')
 
       // XCEPTA logo mark
       var lx = ML, ly = 14
       var ic = { cx: lx + 14, cy: ly + 8, r: 11 }
-      doc.setDrawColor(232, 239, 246); doc.setLineWidth(0.6)
+      doc.setDrawColor(243, 250, 255); doc.setLineWidth(0.6)
       doc.circle(ic.cx, ic.cy, ic.r, 'S')
-      doc.setLineWidth(2); doc.setDrawColor(232, 239, 246)
+      doc.setLineWidth(2); doc.setDrawColor(243, 250, 255)
       doc.line(ic.cx - 5, ic.cy - 5, ic.cx + 5, ic.cy + 5)
       doc.line(ic.cx - 5, ic.cy + 5, ic.cx, ic.cy)
       doc.setDrawColor(61, 184, 150)
       doc.line(ic.cx, ic.cy, ic.cx + 5, ic.cy - 5)
       doc.setLineWidth(0.2)
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(232, 239, 246)
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(243, 250, 255)
       doc.text('XCEPTA', lx + 30, ly + 10)
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(5.5); doc.setTextColor(122, 139, 154)
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(5.5); doc.setTextColor(92, 127, 146)
       doc.text('VALUATIONS  FP&A  BOARDS', lx + 30, ly + 15.5)
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(71, 85, 105)
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(92, 127, 146)
       doc.text('CONFIDENTIAL', MR, 22, { align: 'right' })
 
       // Report type badge
-      doc.setFillColor(31, 111, 235); doc.rect(ML, 35, 75, 7, 'F')
+      doc.setFillColor(15, 163, 177); doc.rect(ML, 35, 75, 7, 'F')
       doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(255, 255, 255)
       doc.text('INVESTMENT FEASIBILITY REPORT', ML + 4, 40.5)
 
       // Project name
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(26); doc.setTextColor(248, 250, 252)
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(26); doc.setTextColor(243, 250, 255)
       doc.text(safe(project.name), ML, 62)
 
       // Project meta line
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(148, 163, 184)
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(165, 199, 218)
       var coverMeta = [
         project.sector || safe(project.project_type),
         safe(project.country),
@@ -801,8 +801,8 @@ export default function FeasibilityProject() {
         safe(project.delivery_model),
       ].filter(Boolean).join('  |  ')
       doc.text(coverMeta, ML, 71)
-      doc.setDrawColor(31, 111, 235); doc.setLineWidth(0.5); doc.line(ML, 77, ML + 60, 77)
-      doc.setDrawColor(51, 65, 85); doc.setLineWidth(0.2); doc.line(ML + 60, 77, MR, 77)
+      doc.setDrawColor(15, 163, 177); doc.setLineWidth(0.5); doc.line(ML, 77, ML + 60, 77)
+      doc.setDrawColor(25, 71, 95); doc.setLineWidth(0.2); doc.line(ML + 60, 77, MR, 77)
 
       // KPI strip from source.summary
       var coverKPIs = [
@@ -814,9 +814,9 @@ export default function FeasibilityProject() {
       var statW = TW / 4
       coverKPIs.forEach(function(s, i) {
         var sx = ML + i * statW
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(71, 85, 105)
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(92, 127, 146)
         doc.text(s.label, sx, 88)
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(248, 250, 252)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(243, 250, 255)
         doc.text(safe(s.value), sx, 98)
       })
 
@@ -864,12 +864,12 @@ export default function FeasibilityProject() {
       doc.text(safe(coverSub), MR - 4, 126, { align: 'right' })
 
       // Cover footer
-      doc.setFillColor(10, 15, 28); doc.rect(0, ph - 28, pw, 28, 'F')
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(100, 116, 139)
+      doc.setFillColor(6, 26, 36); doc.rect(0, ph - 28, pw, 28, 'F')
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(92, 127, 146)
       doc.text('Prepared by: ' + safe(preparedBy || 'XCEPTA'), ML, ph - 17)
       doc.text(versionLabel + '   |   ' + reportDate, pw / 2, ph - 17, { align: 'center' })
       doc.text(safe(project.country) + '  |  ' + safe(project.currency), MR, ph - 17, { align: 'right' })
-      doc.setFontSize(7); doc.setTextColor(51, 65, 85)
+      doc.setFontSize(7); doc.setTextColor(25, 71, 95)
       doc.text('This document is confidential and intended solely for the named recipients. Not for distribution.', pw / 2, ph - 9, { align: 'center', maxWidth: TW })
 
       // ══════════════════════════════════════════════════════════════════
