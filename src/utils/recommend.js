@@ -244,10 +244,18 @@ export function getRecommendation(inputs) {
       break
     case 'Proceed with Conditions': {
       const n = riskFlags.length
-      const plural = n === 1 ? '' : 's'
-      rationale =
-        'Project meets core investment thresholds but presents ' +
-        n + ' watch item' + plural + ' requiring mitigation before commitment.'
+      if (n === 0) {
+        rationale =
+          'Project meets core investment thresholds. ' +
+          'Monitor coverage ratios and key assumptions ' +
+          'before final commitment.'
+      } else {
+        const plural = n === 1 ? '' : 's'
+        rationale =
+          'Project meets core investment thresholds but presents ' +
+          n + ' watch item' + plural +
+          ' requiring mitigation before commitment.'
+      }
       break
     }
     case 'Review Structure':
