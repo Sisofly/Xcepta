@@ -253,19 +253,20 @@ export function getRecommendation(inputs) {
     case 'Review Structure':
       rationale =
         'Return profile is acceptable but structural metrics require ' +
-        'review. Capital stack, timing, or coverage ratios may need ' +
-        'adjustment.'
+        'review. Capital stack, coverage ratios, or timing assumptions ' +
+        'may need adjustment before IC submission.'
       break
     case 'High Risk':
       rationale =
-        'Project presents a material risk flag requiring resolution ' +
-        'before progressing. Reassess assumptions or restructure before ' +
-        'IC submission.'
+        'Project presents a material risk flag. Resolution of the ' +
+        'identified issue is required before IC submission or lender ' +
+        'engagement.'
       break
     case 'Do Not Proceed':
       rationale =
-        'Project fails multiple core investment thresholds. Fundamental ' +
-        'reassessment of economics, structure, or assumptions is required.'
+        'Project fails multiple core investment thresholds. Reassessment ' +
+        'of economics, capital structure, and operating assumptions is ' +
+        'required.'
       break
     default:
       rationale = ''

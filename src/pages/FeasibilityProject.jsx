@@ -2258,12 +2258,76 @@ export default function FeasibilityProject() {
                           ? colors.dangerSoft
                           : colors.warningSoft
 
+                    const hasFlags   = rec.riskFlags.length > 0
+                    const hasSignals = rec.signals.length > 0
+
+                    const sectionLabelStyle = {
+                      fontSize:      '0.65rem',
+                      color:         colors.textMuted,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.06em',
+                      marginBottom:  '0.5rem',
+                      display:       'block',
+                    }
+
+                    const chipBase = {
+                      fontSize:     '0.72rem',
+                      fontWeight:   '500',
+                      padding:      '3px 10px',
+                      borderRadius: '4px',
+                      display:      'inline-block',
+                      marginRight:  '0.4rem',
+                      marginBottom: '0.4rem',
+                    }
+
+                    const chipStyle = severity =>
+                      severity === 'danger'
+                        ? { ...chipBase,
+                            background: colors.dangerSoft,
+                            border: '1px solid ' + colors.danger,
+                            color: colors.danger }
+                        : severity === 'warning'
+                          ? { ...chipBase,
+                              background: colors.warningSoft,
+                              border: '1px solid ' + colors.warning,
+                              color: colors.warning }
+                          : { ...chipBase,
+                              background: colors.successSoft,
+                              border: '1px solid ' + colors.success,
+                              color: colors.success }
+
+                    const FlagsBlock = (
+                      <div>
+                        <span style={sectionLabelStyle}>Risk Flags</span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0' }}>
+                          {rec.riskFlags.map((flag, i) => (
+                            <span key={i} style={chipStyle(flag.severity)}>
+                              {flag.message}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )
+
+                    const SignalsBlock = (
+                      <div>
+                        <span style={sectionLabelStyle}>Strengths</span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0' }}>
+                          {rec.signals.map((signal, i) => (
+                            <span key={i} style={chipStyle('success')}>
+                              {signal.message}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )
+
                     return (
                       <div style={{
                         background: verdictBg,
                         border: `1px solid ${verdictColor}`,
                         borderRadius: '8px',
-                        padding: '1.25rem 1.5rem',
+                        padding: '1rem 1.25rem',
                         marginBottom: '2rem',
                       }}>
 
@@ -2278,7 +2342,7 @@ export default function FeasibilityProject() {
                           Investment Recommendation
                         </p>
                         <p style={{
-                          fontSize: '1rem',
+                          fontSize: '1.1rem',
                           fontWeight: '700',
                           color: verdictColor,
                           marginBottom: '0.5rem',
@@ -2288,103 +2352,30 @@ export default function FeasibilityProject() {
                         <p style={{
                           fontSize: '0.8rem',
                           color: colors.textSecondary,
-                          marginBottom: rec.riskFlags.length > 0 ||
-                            rec.signals.length > 0 ? '1rem' : '0',
+                          marginBottom: '0',
                           lineHeight: '1.5',
                         }}>
                           {rec.rationale}
                         </p>
 
-                        {/* Risk flags */}
-                        {rec.riskFlags.length > 0 && (
-                          <div style={{ marginBottom: rec.signals.length > 0
-                            ? '1rem' : '0' }}>
-                            <p style={{
-                              fontSize: '0.7rem',
-                              color: colors.textMuted,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.05em',
-                              marginBottom: '0.5rem',
-                            }}>
-                              Risk Flags
-                            </p>
-                            <div style={{
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '0.35rem',
-                            }}>
-                              {rec.riskFlags.map((flag, i) => (
-                                <div key={i} style={{
-                                  display: 'flex',
-                                  alignItems: 'flex-start',
-                                  gap: '0.5rem',
-                                }}>
-                                  <div style={{
-                                    width: '6px',
-                                    height: '6px',
-                                    borderRadius: '50%',
-                                    marginTop: '0.35rem',
-                                    flexShrink: 0,
-                                    background: flag.severity === 'danger'
-                                      ? colors.danger
-                                      : colors.warning,
-                                  }} />
-                                  <p style={{
-                                    fontSize: '0.8rem',
-                                    color: colors.textSecondary,
-                                    lineHeight: '1.4',
-                                  }}>
-                                    {flag.message}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
+                        {/* Divider — only when there is something to show below */}
+                        {(hasFlags || hasSignals) && (
+                          <div style={{
+                            borderTop: `1px solid ${verdictColor}33`,
+                            marginTop: '0.75rem',
+                            marginBottom: '0.75rem',
+                          }} />
                         )}
 
-                        {/* Positive signals */}
-                        {rec.signals.length > 0 && (
-                          <div>
-                            <p style={{
-                              fontSize: '0.7rem',
-                              color: colors.textMuted,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.05em',
-                              marginBottom: '0.5rem',
-                            }}>
-                              Strengths
-                            </p>
-                            <div style={{
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '0.35rem',
-                            }}>
-                              {rec.signals.map((signal, i) => (
-                                <div key={i} style={{
-                                  display: 'flex',
-                                  alignItems: 'flex-start',
-                                  gap: '0.5rem',
-                                }}>
-                                  <div style={{
-                                    width: '6px',
-                                    height: '6px',
-                                    borderRadius: '50%',
-                                    marginTop: '0.35rem',
-                                    flexShrink: 0,
-                                    background: colors.success,
-                                  }} />
-                                  <p style={{
-                                    fontSize: '0.8rem',
-                                    color: colors.textSecondary,
-                                    lineHeight: '1.4',
-                                  }}>
-                                    {signal.message}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
+                        {/* Adaptive flags/signals layout */}
+                        {hasFlags && hasSignals && (
+                          <div style={{ display: 'flex', gap: '1.5rem' }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>{FlagsBlock}</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>{SignalsBlock}</div>
                           </div>
                         )}
+                        {hasFlags && !hasSignals && FlagsBlock}
+                        {!hasFlags && hasSignals && SignalsBlock}
 
                       </div>
                     )
