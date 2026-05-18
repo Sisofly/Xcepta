@@ -919,6 +919,20 @@ export default function FeasibilityProject() {
         doc.text(safe(rec.rationale), ML, y, { maxWidth: TW })
         y += 12
 
+        // ── Context (deterministic outlier interpretation) ──
+        if (rec.context) {
+          ensureSpace(12)
+          doc.setFont('helvetica', 'italic')
+          doc.setFontSize(7)
+          doc.setTextColor(100, 110, 125)
+          doc.text(
+            safe(rec.context),
+            ML, y,
+            { maxWidth: TW }
+          )
+          y += 10
+        }
+
         // ── Risk flags (if any) ──
         if (rec.riskFlags.length > 0) {
           guard(8 + rec.riskFlags.length * 7)
@@ -2509,6 +2523,19 @@ export default function FeasibilityProject() {
                         }}>
                           {rec.rationale}
                         </p>
+
+                        {/* Context — deterministic outlier interpretation */}
+                        {rec.context && (
+                          <p style={{
+                            fontSize: '0.75rem',
+                            color: colors.textMuted,
+                            fontStyle: 'italic',
+                            marginTop: '0.5rem',
+                            lineHeight: '1.5',
+                          }}>
+                            {rec.context}
+                          </p>
+                        )}
 
                         {/* Divider — only when there is something to show below */}
                         {(hasFlags || hasSignals) && (

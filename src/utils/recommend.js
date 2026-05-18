@@ -272,7 +272,18 @@ export function getRecommendation(inputs) {
       rationale = ''
   }
 
-  return { verdict, rationale, riskFlags, signals }
+  // ── Context (deterministic outlier interpretation) ──────────────────────
+  var context = null
+  if (irr !== null && equityMultiple !== null &&
+      irr > 100 && equityMultiple > 5) {
+    context =
+      'Return metrics are materially elevated by minimal capital ' +
+      'deployment and accelerated presales timing. Assessment should ' +
+      'prioritize profit on cost, equity multiple, and sensitivity ' +
+      'outcomes over IRR.'
+  }
+
+  return { verdict, rationale, context, riskFlags, signals }
 }
 
 // Convenience default export.
