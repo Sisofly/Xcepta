@@ -1041,14 +1041,46 @@ export default function FeasibilityProject() {
         return [185, 28, 28]
       }
 
+      var feasIRRVal = modelOutput
+        ? (modelOutput.irr !== null
+            ? Number(modelOutput.irr).toFixed(1) + '%'
+            : '---')
+        : '---'
+      var feasIRRColor = modelOutput && modelOutput.irr !== null
+        ? irrPassColor(Number(modelOutput.irr))
+        : [130, 135, 145]
+
+      var feasNPVVal = modelOutput
+        ? fmtJOD(modelOutput.npv)
+        : '---'
+      var feasNPVColor = modelOutput && modelOutput.npv !== null
+        ? (Number(modelOutput.npv) >= 0 ? [21, 128, 61] : [185, 28, 28])
+        : [130, 135, 145]
+
+      var feasEMVal = modelOutput
+        ? (modelOutput.equity_multiple !== null
+            ? Number(modelOutput.equity_multiple).toFixed(2) + 'x'
+            : '---')
+        : '---'
+      var feasEMColor = modelOutput && modelOutput.equity_multiple !== null
+        ? (Number(modelOutput.equity_multiple) >= 1.5 ? [21, 128, 61] : [185, 28, 28])
+        : [130, 135, 145]
+
+      var feasPBVal = modelOutput && extraKPIs && extraKPIs.paybackYear !== null
+        ? 'Year ' + extraKPIs.paybackYear
+        : '---'
+      var feasPBColor = modelOutput && extraKPIs && extraKPIs.paybackYear !== null
+        ? (extraKPIs.paybackYear <= 7 ? [21, 128, 61] : [146, 90, 0])
+        : [130, 135, 145]
+
       var kmRows = [
-        { label: 'Leveraged IRR (Equity)',   value: levIRR   !== null ? levIRR.toFixed(2)   + '%' : 'N/A', color: irrPassColor(levIRR) },
-        { label: 'Unleveraged IRR (Project)', value: unlevIRR !== null ? unlevIRR.toFixed(2) + '%' : 'N/A', color: irrPassColor(unlevIRR) },
-        { label: 'Project NPV',               value: fmtJOD(npvVal),   color: npvVal !== null && npvVal >= 0 ? [21, 128, 61] : [185, 28, 28] },
-        { label: 'Development Profit',        value: fmtJOD(devProfit), color: devProfit !== null && devProfit >= 0 ? [21, 128, 61] : [185, 28, 28] },
-        { label: 'Total Development Cost (incl. Land & Financing)', value: fmtJOD(totalDevCost), color: [30, 33, 43] },
-        { label: 'Gross Development Value',   value: fmtJOD(totalGDV),     color: [30, 33, 43] },
-        { label: 'Peak Equity Requirement',
+        { label: 'Equity IRR',                            value: feasIRRVal, color: feasIRRColor },
+        { label: 'Equity Multiple',                       value: feasEMVal,  color: feasEMColor  },
+        { label: 'NPV (Feasibility Baseline)',            value: feasNPVVal, color: feasNPVColor },
+        { label: 'Payback Period',                        value: feasPBVal,  color: feasPBColor  },
+        { label: 'Total Development Cost (Dev Engine)',   value: fmtJOD(totalDevCost), color: [92, 127, 146] },
+        { label: 'Gross Development Value (Dev Engine)',  value: fmtJOD(totalGDV),     color: [92, 127, 146] },
+        { label: 'Peak Equity Requirement (Dev Engine)',
           value: hasFundingGap ? fmtJOD(peakFundingGap) + ' at Month ' + peakGapMonth : 'None',
           color: hasFundingGap ? [185, 28, 28] : [21, 128, 61] },
       ]
@@ -1065,8 +1097,10 @@ export default function FeasibilityProject() {
       gap(6)
 
       // ── IRR interpretation notes ──
-      var noDebt  = (loanDrawn || 0) <= 0
-      var highIRR = (levIRR !== null && levIRR > 75) || (unlevIRR !== null && unlevIRR > 75)
+      var noDebt = (loanDrawn || 0) <= 0
+      var feasIRRNum = modelOutput && modelOutput.irr !== null
+        ? Number(modelOutput.irr) : null
+      var highIRR = feasIRRNum !== null && feasIRRNum > 100
       if (noDebt) {
         ensureSpace(8)
         doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
