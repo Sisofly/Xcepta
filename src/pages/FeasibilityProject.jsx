@@ -804,12 +804,31 @@ export default function FeasibilityProject() {
       doc.setDrawColor(15, 163, 177); doc.setLineWidth(0.5); doc.line(ML, 77, ML + 60, 77)
       doc.setDrawColor(25, 71, 95); doc.setLineWidth(0.2); doc.line(ML + 60, 77, MR, 77)
 
-      // KPI strip from source.summary
+      // KPI strip — Approved Feasibility Baseline
+      var feasIRR  = modelOutput
+        ? (modelOutput.irr !== null
+            ? Number(modelOutput.irr).toFixed(1) + '%'
+            : '---')
+        : '---'
+      var feasEM   = modelOutput
+        ? (modelOutput.equity_multiple !== null
+            ? Number(modelOutput.equity_multiple).toFixed(2) + 'x'
+            : '---')
+        : '---'
+      var feasNPV  = modelOutput
+        ? (modelOutput.npv !== null
+            ? fmtN(modelOutput.npv) + ' JOD'
+            : '---')
+        : '---'
+      var feasPB   = (modelOutput && extraKPIs && extraKPIs.paybackYear !== null)
+        ? 'Year ' + extraKPIs.paybackYear
+        : '---'
+
       var coverKPIs = [
-        { label: 'Leveraged IRR',     value: levIRR   !== null ? levIRR.toFixed(1) + '%' : '--' },
-        { label: 'Unleveraged IRR',   value: unlevIRR !== null ? unlevIRR.toFixed(1) + '%' : '--' },
-        { label: 'NPV (JOD)',         value: npvVal   !== null ? fmtN(npvVal) : '--' },
-        { label: 'Dev Profit (JOD)',  value: devProfit !== null ? fmtN(devProfit) : '--' },
+        { label: 'Equity IRR',      value: feasIRR },
+        { label: 'Equity Multiple', value: feasEM  },
+        { label: 'NPV (JOD)',       value: feasNPV },
+        { label: 'Payback Period',  value: feasPB  },
       ]
       var statW = TW / 4
       coverKPIs.forEach(function(s, i) {
@@ -819,6 +838,12 @@ export default function FeasibilityProject() {
         doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(243, 250, 255)
         doc.text(safe(s.value), sx, 98)
       })
+
+      // Provenance label below KPI strip
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(6.5)
+      doc.setTextColor(92, 127, 146)
+      doc.text('Approved Feasibility Baseline', ML, 106)
 
       // ── Cover verdict — use rec when available ──
       var coverLabel, coverSub, coverColor, coverBg
@@ -1069,6 +1094,11 @@ export default function FeasibilityProject() {
       // ── Section C: Cash Flow Summary ──
       ensureSpace(60)
       secHead('Cash Flow Summary')
+      doc.setFont('helvetica', 'italic')
+      doc.setFontSize(7)
+      doc.setTextColor(92, 127, 146)
+      doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
+      y += 5
       var cfCols = [{ label: 'Item', w: 100, align: 'left' }, { label: 'Amount (JOD)', w: TW - 100, align: 'right' }]
       tHead(cfCols)
       var cfSummaryRows = [
@@ -1093,6 +1123,11 @@ export default function FeasibilityProject() {
       // ── Section D: Funding Analysis ──
       ensureSpace(85)
       secHead('Funding Analysis')
+      doc.setFont('helvetica', 'italic')
+      doc.setFontSize(7)
+      doc.setTextColor(92, 127, 146)
+      doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
+      y += 5
       var faCols = [{ label: 'Item', w: 100, align: 'left' }, { label: 'Value', w: TW - 100, align: 'right' }]
       tHead(faCols)
       var totalFunding = (equityDeployed || 0) + (loanDrawn || 0)
@@ -1124,6 +1159,11 @@ export default function FeasibilityProject() {
       if (schedule.length > 0) {
         doc.addPage(); pageNum++; y = 22
         secHead('Monthly Cash Flow Schedule')
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(7)
+        doc.setTextColor(92, 127, 146)
+        doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
+        y += 5
 
         var schCols = [
           { label: 'Mo',          w: 14, align: 'left'  },
@@ -1224,6 +1264,11 @@ export default function FeasibilityProject() {
 
       // ══ A. FINANCIAL SUMMARY ══════════════════════════════════════════
       secHead('Financial Summary')
+      doc.setFont('helvetica', 'italic')
+      doc.setFontSize(7)
+      doc.setTextColor(92, 127, 146)
+      doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
+      y += 5
 
       finRow('Total Cost Draw (Hard + Soft Costs)', fmtJOD(totalCosts),  { shade: false })
       finRow('Total Sales Inflow',       fmtJOD(totalSales),  { shade: true,  color: [21, 128, 61] })
@@ -1243,6 +1288,11 @@ export default function FeasibilityProject() {
       // ══ B. SOURCES & USES ════════════════════════════════════════════
       ensureSpace(95)
       secHead('Sources & Uses')
+      doc.setFont('helvetica', 'italic')
+      doc.setFontSize(7)
+      doc.setTextColor(92, 127, 146)
+      doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
+      y += 5
 
       // Sources
       doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(90, 96, 112)
@@ -1275,6 +1325,11 @@ export default function FeasibilityProject() {
       // ══ C. INVESTMENT WATERFALL ══════════════════════════════════════
       ensureSpace(80)
       secHead('Investment Waterfall')
+      doc.setFont('helvetica', 'italic')
+      doc.setFontSize(7)
+      doc.setTextColor(92, 127, 146)
+      doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
+      y += 5
 
       // Debt Repayment = loan principal retired during the project (drawn minus residual).
       // Guarded to >= 0 defensively; the engine should never produce finalDebt > totalDebt.
@@ -1315,6 +1370,11 @@ export default function FeasibilityProject() {
       if (sensMatrix && Array.isArray(sensMatrix) && sensMatrix.length === 3) {
         doc.addPage(); pageNum++; y = 22
         secHead('IRR Sensitivity Analysis')
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(7)
+        doc.setTextColor(92, 127, 146)
+        doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
+        y += 5
 
         // Description
         doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
