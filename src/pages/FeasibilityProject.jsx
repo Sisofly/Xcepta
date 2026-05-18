@@ -1129,7 +1129,7 @@ export default function FeasibilityProject() {
       }
 
       // IRR outlier note (threshold > 100%)
-      if (levIRR !== null && levIRR > 100) {
+      if (feasIRRNum !== null && feasIRRNum > 100) {
         ensureSpace(10)
         doc.setFont('helvetica', 'italic')
         doc.setFontSize(7.5)
