@@ -106,17 +106,25 @@ function runEngine(assumptions, defaults) {
   // handles 2dp form-input rounding). Wider than the UI guard's 1e-6;
   // UI fires first as a friendly precheck, engine is defense in depth.
   // Refactored to use safeNum in Batch 2A (byte-equivalent for getVal sources).
-  var eqNum = safeNum(getVal(assumptions, 'Equity %'), 0)
-  var sdNum = safeNum(getVal(assumptions, 'Senior Debt %'), 0)
-  if (Math.abs(eqNum + sdNum - 100) > 0.01) {
+  var eqNum  = safeNum(getVal(assumptions, 'Equity %'), 0)
+  var sdNum  = safeNum(getVal(assumptions, 'Senior Debt %'), 0)
+  var subNum = safeNum(getVal(assumptions, 'Subordinated Debt %'), 0)
+  var slNum  = safeNum(getVal(assumptions, 'Shareholder Loan %'), 0)
+  var capTotal = eqNum + sdNum + subNum + slNum
+  if (Math.abs(capTotal - 100) > 0.01) {
     var capErr = new Error(
-      'CAPITAL_STRUCTURE_INVALID: Equity % (' + eqNum + ') + Senior Debt % (' +
-      sdNum + ') must sum to 100%; currently sums to ' + (eqNum + sdNum) + '%.'
+      'CAPITAL_STRUCTURE_INVALID: Equity % (' + eqNum +
+      ') + Senior Debt % (' + sdNum +
+      ') + Sub Debt % (' + subNum +
+      ') + SHL % (' + slNum +
+      ') must sum to 100%; currently sums to ' + capTotal + '%.'
     )
-    capErr.code           = 'CAPITAL_STRUCTURE_INVALID'
-    capErr.equity_pct     = eqNum
+    capErr.code            = 'CAPITAL_STRUCTURE_INVALID'
+    capErr.equity_pct      = eqNum
     capErr.senior_debt_pct = sdNum
-    capErr.sum            = eqNum + sdNum
+    capErr.sub_debt_pct    = subNum
+    capErr.shl_pct         = slNum
+    capErr.sum             = capTotal
     throw capErr
   }
   var equityPct     = eqNum / 100
