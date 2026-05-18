@@ -600,6 +600,21 @@ export default function FeasibilityProject() {
         return
       }
 
+      // ── Recommendation engine ──
+      var rec = (modelOutput && extraKPIs)
+        ? getRecommendation({
+            irr:            Number(modelOutput.irr),
+            npv:            Number(modelOutput.npv),
+            minDSCR:        extraKPIs.minDSCR,
+            equityMultiple: Number(modelOutput.equity_multiple),
+            paybackYear:    extraKPIs.paybackYear,
+            dscrBreachYear: extraKPIs.dscrBreachYear,
+            isPPP:          pppAP,
+            irrHurdle:      pppAP ? PPP_IRR_HURDLE : IRR_HURDLE,
+            pppDscrFloor:   PPP_DSCR_FLOOR,
+          })
+        : null
+
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
       const pw  = doc.internal.pageSize.getWidth()
       const ph  = doc.internal.pageSize.getHeight()
@@ -833,21 +848,115 @@ export default function FeasibilityProject() {
       // ══════════════════════════════════════════════════════════════════
       doc.addPage(); pageNum++; y = 22
 
-      // ── Section A: Investment Verdict ──
-      secHead('Investment Verdict')
-      guard(20)
-      doc.setFillColor(verdictBg[0], verdictBg[1], verdictBg[2])
-      doc.rect(ML, y, TW, 18, 'F')
-      doc.setDrawColor(verdictColor[0], verdictColor[1], verdictColor[2]); doc.setLineWidth(0.4)
-      doc.rect(ML, y, TW, 18, 'S'); doc.setLineWidth(0.2)
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(verdictColor[0], verdictColor[1], verdictColor[2])
-      doc.text(verdictLabel, ML + 5, y + 12)
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(verdictColor[0], verdictColor[1], verdictColor[2])
-      doc.text(safe(verdictSub), MR - 5, y + 8, { align: 'right' })
-      // IRR threshold key
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 110, 125)
-      doc.text('IRR >= 15% + NPV >= 0  =  Proceed   |   IRR 10-15%  =  Review   |   IRR < 10%  =  Do Not Proceed', MR - 5, y + 15, { align: 'right' })
-      y += 24
+      // ── Section A: Investment Recommendation ──
+      secHead('Investment Recommendation')
+      guard(rec ? 40 : 20)
+
+      if (rec !== null) {
+        // ── Verdict box ──
+        var recFill, recStroke
+        if (rec.verdict === 'Proceed') {
+          recFill = [220, 252, 231]; recStroke = [21, 128, 61]
+        } else if (rec.verdict === 'Proceed with Conditions' ||
+                   rec.verdict === 'Review Structure') {
+          recFill = [254, 243, 199]; recStroke = [146, 90, 0]
+        } else {
+          // 'High Risk' or 'Do Not Proceed'
+          recFill = [254, 226, 226]; recStroke = [185, 28, 28]
+        }
+        var recCategory
+        if (rec.verdict === 'Proceed' || rec.verdict === 'Proceed with Conditions') {
+          recCategory = 'Investment Grade'
+        } else if (rec.verdict === 'Review Structure') {
+          recCategory = 'Requires Review'
+        } else {
+          recCategory = 'Below Threshold'
+        }
+
+        doc.setFillColor(recFill[0], recFill[1], recFill[2])
+        doc.rect(ML, y, TW, 18, 'F')
+        doc.setDrawColor(recStroke[0], recStroke[1], recStroke[2]); doc.setLineWidth(0.4)
+        doc.rect(ML, y, TW, 18, 'S'); doc.setLineWidth(0.2)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(recStroke[0], recStroke[1], recStroke[2])
+        doc.text(safe(rec.verdict), ML + 5, y + 12)
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(recStroke[0], recStroke[1], recStroke[2])
+        doc.text(recCategory, MR - 5, y + 12, { align: 'right' })
+        y += 22
+
+        // ── Rationale ──
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(8)
+        doc.setTextColor(60, 66, 80)
+        doc.text(safe(rec.rationale), ML, y, { maxWidth: TW })
+        y += 12
+
+        // ── Risk flags (if any) ──
+        if (rec.riskFlags.length > 0) {
+          guard(8 + rec.riskFlags.length * 7)
+          doc.setFont('helvetica', 'bold')
+          doc.setFontSize(7)
+          doc.setTextColor(90, 95, 110)
+          doc.text('RISK FLAGS', ML, y)
+          y += 5
+          rec.riskFlags.forEach(function(flag) {
+            guard(7)
+            var dotColor = flag.severity === 'danger'
+              ? [185, 28, 28] : [146, 90, 0]
+            doc.setFillColor(dotColor[0], dotColor[1], dotColor[2])
+            doc.circle(ML + 1.5, y - 0.5, 1, 'F')
+            doc.setFont('helvetica', 'normal')
+            doc.setFontSize(7.5)
+            doc.setTextColor(dotColor[0], dotColor[1], dotColor[2])
+            doc.text(safe(flag.message), ML + 5, y, { maxWidth: TW - 5 })
+            y += 6
+          })
+          y += 2
+        }
+
+        // ── Positive signals (if any) ──
+        if (rec.signals.length > 0) {
+          guard(8 + rec.signals.length * 7)
+          doc.setFont('helvetica', 'bold')
+          doc.setFontSize(7)
+          doc.setTextColor(90, 95, 110)
+          doc.text('STRENGTHS', ML, y)
+          y += 5
+          rec.signals.forEach(function(signal) {
+            guard(7)
+            doc.setFillColor(21, 128, 61)
+            doc.circle(ML + 1.5, y - 0.5, 1, 'F')
+            doc.setFont('helvetica', 'normal')
+            doc.setFontSize(7.5)
+            doc.setTextColor(21, 128, 61)
+            doc.text(safe(signal.message), ML + 5, y, { maxWidth: TW - 5 })
+            y += 6
+          })
+          y += 2
+        }
+      } else {
+        // ── Fallback: existing verdict box unchanged ──
+        doc.setFillColor(verdictBg[0], verdictBg[1], verdictBg[2])
+        doc.rect(ML, y, TW, 18, 'F')
+        doc.setDrawColor(verdictColor[0], verdictColor[1], verdictColor[2]); doc.setLineWidth(0.4)
+        doc.rect(ML, y, TW, 18, 'S'); doc.setLineWidth(0.2)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(verdictColor[0], verdictColor[1], verdictColor[2])
+        doc.text(verdictLabel, ML + 5, y + 12)
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(verdictColor[0], verdictColor[1], verdictColor[2])
+        doc.text(safe(verdictSub), MR - 5, y + 8, { align: 'right' })
+        // IRR threshold key
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 110, 125)
+        doc.text('IRR >= 15% + NPV >= 0  =  Proceed   |   IRR 10-15%  =  Review   |   IRR < 10%  =  Do Not Proceed', MR - 5, y + 15, { align: 'right' })
+        y += 24
+        // Italic footer indicating fallback path
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(7)
+        doc.setTextColor(130, 135, 145)
+        doc.text(
+          'Full recommendation unavailable - approve feasibility version to generate.',
+          ML, y, { maxWidth: TW }
+        )
+        y += 8
+      }
 
       // ── Section B: Key Metrics ──
       secHead('Key Metrics')
