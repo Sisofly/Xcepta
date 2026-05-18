@@ -820,19 +820,48 @@ export default function FeasibilityProject() {
         doc.text(safe(s.value), sx, 98)
       })
 
+      // ── Cover verdict — use rec when available ──
+      var coverLabel, coverSub, coverColor, coverBg
+      if (rec !== null) {
+        var recColorMap = {
+          'Proceed':                  { color: [21, 128, 61],  bg: [220, 252, 231] },
+          'Proceed with Conditions':  { color: [146, 90, 0],   bg: [254, 243, 199] },
+          'Review Structure':         { color: [146, 90, 0],   bg: [254, 243, 199] },
+          'High Risk':                { color: [185, 28, 28],  bg: [254, 226, 226] },
+          'Do Not Proceed':           { color: [185, 28, 28],  bg: [254, 226, 226] },
+        }
+        var recSubMap = {
+          'Proceed':                  'Investment Grade',
+          'Proceed with Conditions':  'Requires Review',
+          'Review Structure':         'Requires Review',
+          'High Risk':                'Below Threshold',
+          'Do Not Proceed':           'Below Threshold',
+        }
+        var recEntry = recColorMap[rec.verdict] || recColorMap['Do Not Proceed']
+        coverLabel = rec.verdict.toUpperCase()
+        coverSub   = recSubMap[rec.verdict] || 'Below Threshold'
+        coverColor = recEntry.color
+        coverBg    = recEntry.bg
+      } else {
+        coverLabel = verdictLabel
+        coverSub   = verdictSub
+        coverColor = verdictColor
+        coverBg    = verdictBg
+      }
+
       // Verdict box
-      doc.setFillColor(verdictBg[0], verdictBg[1], verdictBg[2])
+      doc.setFillColor(coverBg[0], coverBg[1], coverBg[2])
       doc.roundedRect(ML, 108, TW, 26, 2, 2, 'F')
-      doc.setDrawColor(verdictColor[0], verdictColor[1], verdictColor[2]); doc.setLineWidth(0.4)
+      doc.setDrawColor(coverColor[0], coverColor[1], coverColor[2]); doc.setLineWidth(0.4)
       doc.rect(ML, 108, TW, 26, 'S'); doc.setLineWidth(0.2)
       doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 110, 125)
-      doc.text('INVESTMENT VERDICT', ML + 4, 116)
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(verdictColor[0], verdictColor[1], verdictColor[2])
-      doc.text(verdictLabel, ML + 4, 126)
+      doc.text('INVESTMENT RECOMMENDATION', ML + 4, 116)
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(coverColor[0], coverColor[1], coverColor[2])
+      doc.text(coverLabel, ML + 4, 126)
       doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 110, 125)
-      doc.text('INVESTMENT CASE', MR - 4, 116, { align: 'right' })
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(verdictColor[0], verdictColor[1], verdictColor[2])
-      doc.text(safe(verdictSub), MR - 4, 126, { align: 'right' })
+      doc.text('RECOMMENDATION', MR - 4, 116, { align: 'right' })
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(coverColor[0], coverColor[1], coverColor[2])
+      doc.text(safe(coverSub), MR - 4, 126, { align: 'right' })
 
       // Cover footer
       doc.setFillColor(10, 15, 28); doc.rect(0, ph - 28, pw, 28, 'F')
@@ -1006,6 +1035,20 @@ export default function FeasibilityProject() {
         ensureSpace(12)
         doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
         doc.text('High IRR is driven by pre-sales timing and low peak equity deployment. Profit on Cost and Equity Multiple should also be reviewed.', ML + 3, y, { maxWidth: TW })
+        y += 10
+      }
+
+      // IRR outlier note (threshold > 100%)
+      if (levIRR !== null && levIRR > 100) {
+        ensureSpace(10)
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(7.5)
+        doc.setTextColor(100, 110, 125)
+        doc.text(
+          'IRR exceeds 100% - driven by minimal equity deployment or pre-sales timing. ' +
+          'Validate equity structure and cash flow phasing before IC submission.',
+          ML + 3, y, { maxWidth: TW }
+        )
         y += 10
       }
 
