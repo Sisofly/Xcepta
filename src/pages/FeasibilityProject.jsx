@@ -418,14 +418,21 @@ export default function FeasibilityProject() {
     if (!sc.latestVersion) return
     // ── B2: Capital structure validation (RE / non-PPP only) ──
     if (!isPPPAvailabilityPayment(project, sc.assumptions || assumptions)) {
-      const eqRaw = getVal(sc.assumptions || assumptions, 'Equity %')
-      const sdRaw = getVal(sc.assumptions || assumptions, 'Senior Debt %')
-      const equityPct     = (eqRaw === null ? 0 : Number(eqRaw)) / 100
-      const seniorDebtPct = (sdRaw === null ? 0 : Number(sdRaw)) / 100
-      if (Math.abs(equityPct + seniorDebtPct - 1) > 1e-6) {
-        const x = eqRaw === null ? 0 : Number(eqRaw)
-        const y = sdRaw === null ? 0 : Number(sdRaw)
-        alert('Equity % (' + x + '%) and Senior Debt % (' + y + '%) must sum to 100%. They currently sum to ' + (x + y) + '%. Please correct before continuing.')
+      const eqRaw   = getVal(sc.assumptions || assumptions, 'Equity %')
+      const sdRaw   = getVal(sc.assumptions || assumptions, 'Senior Debt %')
+      const subRaw  = getVal(sc.assumptions || assumptions, 'Subordinated Debt %')
+      const slRaw   = getVal(sc.assumptions || assumptions, 'Shareholder Loan %')
+      const eq  = eqRaw  === null ? 0 : Number(eqRaw)
+      const sd  = sdRaw  === null ? 0 : Number(sdRaw)
+      const sub = subRaw === null ? 0 : Number(subRaw)
+      const sl  = slRaw  === null ? 0 : Number(slRaw)
+      const total = eq + sd + sub + sl
+      if (Math.abs(total - 100) > 0.01) {
+        alert('Capital structure must sum to 100%. ' +
+          'Current total: ' + total + '% ' +
+          '(Equity ' + eq + '% + Senior Debt ' + sd +
+          '% + Sub Debt ' + sub + '% + SHL ' + sl +
+          '%). Please correct before continuing.')
         return
       }
     }
@@ -544,14 +551,21 @@ export default function FeasibilityProject() {
     if (!version) return
     // ── B2: Capital structure validation (RE / non-PPP only) ──
     if (!isPPPAvailabilityPayment(project, assumptions)) {
-      const eqRaw = getVal(assumptions, 'Equity %')
-      const sdRaw = getVal(assumptions, 'Senior Debt %')
-      const equityPct     = (eqRaw === null ? 0 : Number(eqRaw)) / 100
-      const seniorDebtPct = (sdRaw === null ? 0 : Number(sdRaw)) / 100
-      if (Math.abs(equityPct + seniorDebtPct - 1) > 1e-6) {
-        const x = eqRaw === null ? 0 : Number(eqRaw)
-        const y = sdRaw === null ? 0 : Number(sdRaw)
-        alert('Equity % (' + x + '%) and Senior Debt % (' + y + '%) must sum to 100%. They currently sum to ' + (x + y) + '%. Please correct before continuing.')
+      const eqRaw   = getVal(assumptions, 'Equity %')
+      const sdRaw   = getVal(assumptions, 'Senior Debt %')
+      const subRaw  = getVal(assumptions, 'Subordinated Debt %')
+      const slRaw   = getVal(assumptions, 'Shareholder Loan %')
+      const eq  = eqRaw  === null ? 0 : Number(eqRaw)
+      const sd  = sdRaw  === null ? 0 : Number(sdRaw)
+      const sub = subRaw === null ? 0 : Number(subRaw)
+      const sl  = slRaw  === null ? 0 : Number(slRaw)
+      const total = eq + sd + sub + sl
+      if (Math.abs(total - 100) > 0.01) {
+        alert('Capital structure must sum to 100%. ' +
+          'Current total: ' + total + '% ' +
+          '(Equity ' + eq + '% + Senior Debt ' + sd +
+          '% + Sub Debt ' + sub + '% + SHL ' + sl +
+          '%). Please correct before continuing.')
         return
       }
     }
