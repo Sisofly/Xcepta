@@ -240,6 +240,7 @@ export default function FeasibilityProject() {
       ;({ error } = await supabase.from('assumptions').insert({
         project_id: projectId, name: key, category: 'benchmark_override',
         value: val, unit: null, confidence: 'indicative',
+        tenant_id: project.tenant_id,
       }))
     }
     if (!error) {
