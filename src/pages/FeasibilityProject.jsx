@@ -2252,11 +2252,11 @@ export default function FeasibilityProject() {
 
                     const verdictBg =
                       rec.verdict === 'Proceed'
-                        ? colors.successSoft
+                        ? 'rgba(46, 167, 122, 0.06)'
                         : rec.verdict === 'Do Not Proceed' ||
                           rec.verdict === 'High Risk'
-                          ? colors.dangerSoft
-                          : colors.warningSoft
+                          ? 'rgba(217, 83, 79, 0.06)'
+                          : 'rgba(193, 145, 50, 0.06)'
 
                     const hasFlags   = rec.riskFlags.length > 0
                     const hasSignals = rec.signals.length > 0
@@ -2276,8 +2276,8 @@ export default function FeasibilityProject() {
                       padding:      '3px 10px',
                       borderRadius: '4px',
                       display:      'inline-block',
-                      marginRight:  '0.4rem',
-                      marginBottom: '0.4rem',
+                      marginRight:  '0.3rem',
+                      marginBottom: '0.3rem',
                     }
 
                     const chipStyle = severity =>
