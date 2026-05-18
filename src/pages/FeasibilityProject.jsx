@@ -13,6 +13,7 @@ import {
   fmtCurrency, fmtPct, fmtDSCR, fmtMultiple,
   fmtIRR, fmtNumber,
 } from '../utils/format.js'
+import { getRecommendation } from '../utils/recommend.js'
 
 // ── Assumption edit-type helpers ──
 const DROPDOWN_OPTIONS = { 'Revenue Model': ['Sale', 'Rental', 'Mixed'] }
@@ -2215,6 +2216,168 @@ export default function FeasibilityProject() {
                       )}
                     </div>
                   )}
+
+                  {/* Investment Recommendation */}
+                  {(() => {
+                    const rec = getRecommendation({
+                      irr:            Number(modelOutput.irr),
+                      npv:            Number(modelOutput.npv),
+                      minDSCR:        extraKPIs ? extraKPIs.minDSCR : null,
+                      equityMultiple: Number(modelOutput.equity_multiple),
+                      paybackYear:    extraKPIs ? extraKPIs.paybackYear : null,
+                      dscrBreachYear: extraKPIs ? extraKPIs.dscrBreachYear : null,
+                      isPPP:          pppAP,
+                      irrHurdle:      pppAP ? PPP_IRR_HURDLE : IRR_HURDLE,
+                      pppDscrFloor:   PPP_DSCR_FLOOR,
+                    })
+
+                    const verdictColor =
+                      rec.verdict === 'Proceed'
+                        ? colors.success
+                        : rec.verdict === 'Do Not Proceed' ||
+                          rec.verdict === 'High Risk'
+                          ? colors.danger
+                          : colors.warning
+
+                    const verdictBg =
+                      rec.verdict === 'Proceed'
+                        ? colors.successSoft
+                        : rec.verdict === 'Do Not Proceed' ||
+                          rec.verdict === 'High Risk'
+                          ? colors.dangerSoft
+                          : colors.warningSoft
+
+                    return (
+                      <div style={{
+                        background: verdictBg,
+                        border: `1px solid ${verdictColor}`,
+                        borderRadius: '8px',
+                        padding: '1.25rem 1.5rem',
+                        marginBottom: '2rem',
+                      }}>
+
+                        {/* Verdict header */}
+                        <p style={{
+                          fontSize: '0.7rem',
+                          color: colors.textMuted,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          marginBottom: '0.3rem',
+                        }}>
+                          Investment Recommendation
+                        </p>
+                        <p style={{
+                          fontSize: '1rem',
+                          fontWeight: '700',
+                          color: verdictColor,
+                          marginBottom: '0.5rem',
+                        }}>
+                          {rec.verdict}
+                        </p>
+                        <p style={{
+                          fontSize: '0.8rem',
+                          color: colors.textSecondary,
+                          marginBottom: rec.riskFlags.length > 0 ||
+                            rec.signals.length > 0 ? '1rem' : '0',
+                          lineHeight: '1.5',
+                        }}>
+                          {rec.rationale}
+                        </p>
+
+                        {/* Risk flags */}
+                        {rec.riskFlags.length > 0 && (
+                          <div style={{ marginBottom: rec.signals.length > 0
+                            ? '1rem' : '0' }}>
+                            <p style={{
+                              fontSize: '0.7rem',
+                              color: colors.textMuted,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.05em',
+                              marginBottom: '0.5rem',
+                            }}>
+                              Risk Flags
+                            </p>
+                            <div style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '0.35rem',
+                            }}>
+                              {rec.riskFlags.map((flag, i) => (
+                                <div key={i} style={{
+                                  display: 'flex',
+                                  alignItems: 'flex-start',
+                                  gap: '0.5rem',
+                                }}>
+                                  <div style={{
+                                    width: '6px',
+                                    height: '6px',
+                                    borderRadius: '50%',
+                                    marginTop: '0.35rem',
+                                    flexShrink: 0,
+                                    background: flag.severity === 'danger'
+                                      ? colors.danger
+                                      : colors.warning,
+                                  }} />
+                                  <p style={{
+                                    fontSize: '0.8rem',
+                                    color: colors.textSecondary,
+                                    lineHeight: '1.4',
+                                  }}>
+                                    {flag.message}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Positive signals */}
+                        {rec.signals.length > 0 && (
+                          <div>
+                            <p style={{
+                              fontSize: '0.7rem',
+                              color: colors.textMuted,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.05em',
+                              marginBottom: '0.5rem',
+                            }}>
+                              Strengths
+                            </p>
+                            <div style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '0.35rem',
+                            }}>
+                              {rec.signals.map((signal, i) => (
+                                <div key={i} style={{
+                                  display: 'flex',
+                                  alignItems: 'flex-start',
+                                  gap: '0.5rem',
+                                }}>
+                                  <div style={{
+                                    width: '6px',
+                                    height: '6px',
+                                    borderRadius: '50%',
+                                    marginTop: '0.35rem',
+                                    flexShrink: 0,
+                                    background: colors.success,
+                                  }} />
+                                  <p style={{
+                                    fontSize: '0.8rem',
+                                    color: colors.textSecondary,
+                                    lineHeight: '1.4',
+                                  }}>
+                                    {signal.message}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                      </div>
+                    )
+                  })()}
 
                   {/* Investment Summary */}
                   <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',padding:'1.25rem 1.5rem',marginBottom:'2rem'}}>
