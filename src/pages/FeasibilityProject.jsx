@@ -242,6 +242,7 @@ export default function FeasibilityProject() {
         value: val, unit: null, confidence: 'indicative',
         tenant_id: project.tenant_id,
         module_origin: 'feasibility',
+        source_type: 'user_entry',
       }))
     }
     if (!error) {
