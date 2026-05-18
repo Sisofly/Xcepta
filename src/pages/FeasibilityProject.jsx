@@ -1459,10 +1459,16 @@ export default function FeasibilityProject() {
                 <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'0.75rem',
                   textTransform:'uppercase',letterSpacing:'0.05em'}}>{group.label}</h3>
                 <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',overflow:'hidden'}}>
-                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.875rem'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.875rem',tableLayout:'fixed'}}>
                     <thead><tr style={{borderBottom:`1px solid ${colors.border}`}}>
-                      {['Assumption','Value','Unit','Confidence',''].map((h,i) => (
-                        <th key={i} style={{padding:'0.65rem 1rem',textAlign:'left',color:colors.textSecondary,fontWeight:'500',fontSize:'0.72rem'}}>{h}</th>
+                      {[
+                        {label:'Assumption',width:'35%'},
+                        {label:'Value',     width:'25%'},
+                        {label:'Unit',      width:'15%'},
+                        {label:'Confidence',width:'15%'},
+                        {label:'',          width:'10%'},
+                      ].map((h,i) => (
+                        <th key={i} style={{padding:'0.65rem 1rem',textAlign:'left',color:colors.textSecondary,fontWeight:'500',fontSize:'0.72rem',width:h.width}}>{h.label}</th>
                       ))}
                     </tr></thead>
                     <tbody>
@@ -1863,12 +1869,17 @@ export default function FeasibilityProject() {
                       {/* Expanded rows */}
                       {isOpen && (
                         <div style={{background:colors.surfaceMuted}}>
-                          <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.82rem'}}>
+                          <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.82rem',tableLayout:'fixed'}}>
                             <thead>
                               <tr style={{borderBottom:`1px solid ${colors.border}`}}>
-                                {['Assumption','System Default','Active Value',''].map((h,i) => (
+                                {[
+                                  {label:'Assumption',    width:'30%'},
+                                  {label:'System Default',width:'20%'},
+                                  {label:'Active Value',  width:'35%'},
+                                  {label:'',              width:'15%'},
+                                ].map((h,i) => (
                                   <th key={i} style={{padding:'0.5rem 1rem',textAlign:i===3?'right':'left',
-                                    color:colors.textMuted,fontWeight:'500',fontSize:'0.7rem',whiteSpace:'nowrap'}}>{h}</th>
+                                    color:colors.textMuted,fontWeight:'500',fontSize:'0.7rem',whiteSpace:'nowrap',width:h.width}}>{h.label}</th>
                                 ))}
                               </tr>
                             </thead>
