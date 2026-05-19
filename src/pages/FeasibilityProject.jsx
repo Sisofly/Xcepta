@@ -705,6 +705,12 @@ export default function FeasibilityProject() {
           verdictColor = [185, 28, 28];    verdictBg = [254, 226, 226]
         }
       }
+      if (!hasDevEngine) {
+        verdictLabel = 'FEASIBILITY ONLY'
+        verdictSub   = 'Supplemental Development Analysis Not Included'
+        verdictColor = [92, 127, 146]
+        verdictBg    = [17, 42, 56]
+      }
 
       // ── Meta ──
       var reportDate   = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -1097,10 +1103,10 @@ export default function FeasibilityProject() {
         ...(hasDevEngine ? [
           { label: 'Total Development Cost (Dev Engine)',   value: fmtJOD(totalDevCost), color: [92, 127, 146] },
           { label: 'Gross Development Value (Dev Engine)',  value: fmtJOD(totalGDV),     color: [92, 127, 146] },
+          { label: 'Peak Equity Requirement (Dev Engine)',
+            value: hasFundingGap ? fmtJOD(peakFundingGap) + ' at Month ' + peakGapMonth : 'None',
+            color: hasFundingGap ? [185, 28, 28] : [21, 128, 61] },
         ] : []),
-        { label: 'Peak Equity Requirement (Dev Engine)',
-          value: hasFundingGap ? fmtJOD(peakFundingGap) + ' at Month ' + peakGapMonth : 'None',
-          color: hasFundingGap ? [185, 28, 28] : [21, 128, 61] },
       ]
       kmRows.forEach(function(row, idx) {
         guard(RH + 2)
@@ -1112,6 +1118,19 @@ export default function FeasibilityProject() {
         y += RH
         doc.setDrawColor(230, 233, 240); doc.setLineWidth(0.15); doc.line(ML, y, MR, y); doc.setLineWidth(0.2)
       })
+      if (!hasDevEngine) {
+        ensureSpace(10)
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(7.5)
+        doc.setTextColor(92, 127, 146)
+        doc.text(
+          'Supplemental development cash flow analysis not ' +
+          'included. Run the Development Cash Flow engine ' +
+          'to generate the full investment pack.',
+          ML + 3, y, { maxWidth: TW }
+        )
+        y += 10
+      }
       gap(6)
 
       // ── IRR interpretation notes ──
