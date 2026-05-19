@@ -610,12 +610,12 @@ export default function FeasibilityProject() {
   function generatePDF() {
     setExporting(true)
     try {
-      // ── Guard: must have dev engine results ──
-      if (!version || !version.dev_engine_results) {
-        alert('No results found.\n\nOpen the Development Cash Flow tab and click "Run Engine" first.')
-        setExporting(false)
-        return
-      }
+      // ── Detect whether DevEngine results are present ──
+      const hasDevEngine = !!(
+        version &&
+        version.dev_engine_results &&
+        version.dev_engine_results.summary
+      )
 
       // ── Recommendation engine ──
       var rec = (modelOutput && extraKPIs)
@@ -640,7 +640,7 @@ export default function FeasibilityProject() {
       let y = 0, pageNum = 1
 
       // ── Single source of truth ──
-      var source   = version.dev_engine_results
+      var source   = (version && version.dev_engine_results) || {}
       var sm       = source.summary  || {}
       var schedule = source.schedule || []
 
@@ -693,15 +693,17 @@ export default function FeasibilityProject() {
 
       // ── Investment verdict ──
       var verdictLabel, verdictSub, verdictColor, verdictBg
-      if (levIRR !== null && levIRR >= 15 && npvVal !== null && npvVal >= 0) {
-        verdictLabel = 'PROCEED';        verdictSub = 'Strong Investment Case'
-        verdictColor = [21, 128, 61];    verdictBg = [220, 252, 231]
-      } else if (levIRR !== null && levIRR >= 10) {
-        verdictLabel = 'REVIEW';         verdictSub = 'Acceptable Investment Case'
-        verdictColor = [146, 90, 0];     verdictBg = [254, 243, 199]
-      } else {
-        verdictLabel = 'DO NOT PROCEED'; verdictSub = 'Weak Investment Case'
-        verdictColor = [185, 28, 28];    verdictBg = [254, 226, 226]
+      if (hasDevEngine) {
+        if (levIRR !== null && levIRR >= 15 && npvVal !== null && npvVal >= 0) {
+          verdictLabel = 'PROCEED';        verdictSub = 'Strong Investment Case'
+          verdictColor = [21, 128, 61];    verdictBg = [220, 252, 231]
+        } else if (levIRR !== null && levIRR >= 10) {
+          verdictLabel = 'REVIEW';         verdictSub = 'Acceptable Investment Case'
+          verdictColor = [146, 90, 0];     verdictBg = [254, 243, 199]
+        } else {
+          verdictLabel = 'DO NOT PROCEED'; verdictSub = 'Weak Investment Case'
+          verdictColor = [185, 28, 28];    verdictBg = [254, 226, 226]
+        }
       }
 
       // ── Meta ──
@@ -1092,8 +1094,10 @@ export default function FeasibilityProject() {
         { label: 'Equity Multiple',                       value: feasEMVal,  color: feasEMColor  },
         { label: 'NPV (Feasibility Baseline)',            value: feasNPVVal, color: feasNPVColor },
         { label: 'Payback Period',                        value: feasPBVal,  color: feasPBColor  },
-        { label: 'Total Development Cost (Dev Engine)',   value: fmtJOD(totalDevCost), color: [92, 127, 146] },
-        { label: 'Gross Development Value (Dev Engine)',  value: fmtJOD(totalGDV),     color: [92, 127, 146] },
+        ...(hasDevEngine ? [
+          { label: 'Total Development Cost (Dev Engine)',   value: fmtJOD(totalDevCost), color: [92, 127, 146] },
+          { label: 'Gross Development Value (Dev Engine)',  value: fmtJOD(totalGDV),     color: [92, 127, 146] },
+        ] : []),
         { label: 'Peak Equity Requirement (Dev Engine)',
           value: hasFundingGap ? fmtJOD(peakFundingGap) + ' at Month ' + peakGapMonth : 'None',
           color: hasFundingGap ? [185, 28, 28] : [21, 128, 61] },
@@ -1111,16 +1115,18 @@ export default function FeasibilityProject() {
       gap(6)
 
       // ── IRR interpretation notes ──
-      var noDebt = (loanDrawn || 0) <= 0
+      if (hasDevEngine) {
+        var noDebt = (loanDrawn || 0) <= 0
+        if (noDebt) {
+          ensureSpace(8)
+          doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
+          doc.text('No debt utilized - leveraged and unleveraged IRR are equivalent in this scenario.', ML + 3, y, { maxWidth: TW })
+          y += 7
+        }
+      }
       var feasIRRNum = modelOutput && modelOutput.irr !== null
         ? Number(modelOutput.irr) : null
       var highIRR = feasIRRNum !== null && feasIRRNum > 100
-      if (noDebt) {
-        ensureSpace(8)
-        doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
-        doc.text('No debt utilized - leveraged and unleveraged IRR are equivalent in this scenario.', ML + 3, y, { maxWidth: TW })
-        y += 7
-      }
       if (highIRR) {
         ensureSpace(12)
         doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
@@ -1153,11 +1159,15 @@ export default function FeasibilityProject() {
       var cfCols = [{ label: 'Item', w: 100, align: 'left' }, { label: 'Amount (JOD)', w: TW - 100, align: 'right' }]
       tHead(cfCols)
       var cfSummaryRows = [
-        { label: 'Total Sales Inflow',   value: fmtN(totalSalesInflow), color: [21, 128, 61] },
-        { label: 'Total Hard Cost Draw', value: fmtN(totalHardCost),    color: [185, 28, 28] },
-        { label: 'Total Soft Cost Draw', value: fmtN(totalSoftCost),    color: [185, 28, 28] },
+        ...(hasDevEngine ? [
+          { label: 'Total Sales Inflow',   value: fmtN(totalSalesInflow), color: [21, 128, 61] },
+          { label: 'Total Hard Cost Draw', value: fmtN(totalHardCost),    color: [185, 28, 28] },
+          { label: 'Total Soft Cost Draw', value: fmtN(totalSoftCost),    color: [185, 28, 28] },
+        ] : []),
         { label: 'Total Cost Draw',      value: fmtN(totalCostFromSch), color: [185, 28, 28] },
-        { label: 'Development Profit (GDV minus TDC)', value: fmtN(devProfit),         color: devProfit !== null && devProfit >= 0 ? [21, 128, 61] : [185, 28, 28] },
+        ...(hasDevEngine ? [
+          { label: 'Development Profit (GDV minus TDC)', value: fmtN(devProfit),         color: devProfit !== null && devProfit >= 0 ? [21, 128, 61] : [185, 28, 28] },
+        ] : []),
       ]
       cfSummaryRows.forEach(function(row, idx) {
         guard(RH + 2)
@@ -1172,42 +1182,44 @@ export default function FeasibilityProject() {
       gap(6)
 
       // ── Section D: Funding Analysis ──
-      ensureSpace(85)
-      secHead('Funding Analysis')
-      doc.setFont('helvetica', 'italic')
-      doc.setFontSize(7)
-      doc.setTextColor(92, 127, 146)
-      doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
-      y += 5
-      var faCols = [{ label: 'Item', w: 100, align: 'left' }, { label: 'Value', w: TW - 100, align: 'right' }]
-      tHead(faCols)
-      var totalFunding = (equityDeployed || 0) + (loanDrawn || 0)
-      var equityPct = totalFunding > 0 ? ((equityDeployed || 0) / totalFunding * 100).toFixed(1) + '%' : 'N/A'
-      var debtPct   = totalFunding > 0 ? ((loanDrawn    || 0) / totalFunding * 100).toFixed(1) + '%' : 'N/A'
-      var faRows = [
-        { label: 'Peak Equity Requirement',  value: hasFundingGap ? fmtJOD(peakFundingGap) : 'None (positive CF throughout)',  color: hasFundingGap ? [185, 28, 28] : [21, 128, 61] },
-        { label: 'Month of Peak Equity Requirement', value: hasFundingGap ? 'Month ' + peakGapMonth : '--',  color: [30, 33, 43] },
-        { label: 'Equity Deployed',          value: fmtJOD(equityDeployed),  color: [30, 33, 43] },
-        { label: 'Loan Drawn',               value: fmtJOD(loanDrawn),       color: [30, 33, 43] },
-        { label: 'Equity %',                 value: equityPct,                color: [30, 33, 43] },
-        { label: 'Debt %',                   value: debtPct,                  color: [30, 33, 43] },
-        { label: 'Loan-to-Value (LTV)',      value: ltvVal !== null ? (ltvVal * 100).toFixed(1) + '%' : 'N/A', color: [30, 33, 43] },
-      ]
-      faRows.forEach(function(row, idx) {
-        guard(RH + 2)
-        if (idx % 2 === 0) { doc.setFillColor(249, 250, 253); doc.rect(ML, y, TW, RH, 'F') }
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 66, 80)
-        doc.text(safe(row.label), ML + 3, y + BL)
-        doc.setFont('helvetica', 'bold'); doc.setTextColor(row.color[0], row.color[1], row.color[2])
-        doc.text(safe(row.value), MR - 2, y + BL, { align: 'right' })
-        y += RH
-        doc.setDrawColor(230, 233, 240); doc.setLineWidth(0.15); doc.line(ML, y, MR, y); doc.setLineWidth(0.2)
-      })
+      if (hasDevEngine) {
+        ensureSpace(85)
+        secHead('Funding Analysis')
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(7)
+        doc.setTextColor(92, 127, 146)
+        doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
+        y += 5
+        var faCols = [{ label: 'Item', w: 100, align: 'left' }, { label: 'Value', w: TW - 100, align: 'right' }]
+        tHead(faCols)
+        var totalFunding = (equityDeployed || 0) + (loanDrawn || 0)
+        var equityPct = totalFunding > 0 ? ((equityDeployed || 0) / totalFunding * 100).toFixed(1) + '%' : 'N/A'
+        var debtPct   = totalFunding > 0 ? ((loanDrawn    || 0) / totalFunding * 100).toFixed(1) + '%' : 'N/A'
+        var faRows = [
+          { label: 'Peak Equity Requirement',  value: hasFundingGap ? fmtJOD(peakFundingGap) : 'None (positive CF throughout)',  color: hasFundingGap ? [185, 28, 28] : [21, 128, 61] },
+          { label: 'Month of Peak Equity Requirement', value: hasFundingGap ? 'Month ' + peakGapMonth : '--',  color: [30, 33, 43] },
+          { label: 'Equity Deployed',          value: fmtJOD(equityDeployed),  color: [30, 33, 43] },
+          { label: 'Loan Drawn',               value: fmtJOD(loanDrawn),       color: [30, 33, 43] },
+          { label: 'Equity %',                 value: equityPct,                color: [30, 33, 43] },
+          { label: 'Debt %',                   value: debtPct,                  color: [30, 33, 43] },
+          { label: 'Loan-to-Value (LTV)',      value: ltvVal !== null ? (ltvVal * 100).toFixed(1) + '%' : 'N/A', color: [30, 33, 43] },
+        ]
+        faRows.forEach(function(row, idx) {
+          guard(RH + 2)
+          if (idx % 2 === 0) { doc.setFillColor(249, 250, 253); doc.rect(ML, y, TW, RH, 'F') }
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 66, 80)
+          doc.text(safe(row.label), ML + 3, y + BL)
+          doc.setFont('helvetica', 'bold'); doc.setTextColor(row.color[0], row.color[1], row.color[2])
+          doc.text(safe(row.value), MR - 2, y + BL, { align: 'right' })
+          y += RH
+          doc.setDrawColor(230, 233, 240); doc.setLineWidth(0.15); doc.line(ML, y, MR, y); doc.setLineWidth(0.2)
+        })
+      }
 
       // ══════════════════════════════════════════════════════════════════
       //  PAGE 3 — MONTHLY CASH FLOW SCHEDULE
       // ══════════════════════════════════════════════════════════════════
-      if (schedule.length > 0) {
+      if (hasDevEngine && schedule.length > 0) {
         doc.addPage(); pageNum++; y = 22
         secHead('Monthly Cash Flow Schedule')
         doc.setFont('helvetica', 'italic')
@@ -1252,15 +1264,17 @@ export default function FeasibilityProject() {
         y += 6
 
         // KPI strip footnote
-        gap(3)
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 110, 125)
-        var summaryLine = 'Development Cash Flow Summary  —  '
-          + 'Leveraged IRR: ' + (sm.leveragedIRR || 'N/A')
-          + '  |  Unleveraged IRR: ' + (sm.unleveragedIRR || 'N/A')
-          + '  |  Dev Profit: ' + fmtJOD(devProfit)
-          + '  |  Total Dev Cost: ' + fmtJOD(totalDevCost)
-        doc.text(safe(summaryLine), ML, y, { maxWidth: TW })
-        y += 9
+        if (hasDevEngine) {
+          gap(3)
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 110, 125)
+          var summaryLine = 'Development Cash Flow Summary  —  '
+            + 'Leveraged IRR: ' + (sm.leveragedIRR || 'N/A')
+            + '  |  Unleveraged IRR: ' + (sm.unleveragedIRR || 'N/A')
+            + '  |  Dev Profit: ' + fmtJOD(devProfit)
+            + '  |  Total Dev Cost: ' + fmtJOD(totalDevCost)
+          doc.text(safe(summaryLine), ML, y, { maxWidth: TW })
+          y += 9
+        }
       }
 
       // ══════════════════════════════════════════════════════════════════
@@ -3289,7 +3303,7 @@ export default function FeasibilityProject() {
 
       {/* ══════════════════ EXPORT TAB ══════════════════ */}
       {tab === 'Export' && (() => {
-        const hasResults = !!(version && version.dev_engine_results && version.dev_engine_results.summary)
+        const hasResults = !!(modelOutput)
         return (
           <div style={{maxWidth:'560px'}}>
             <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',padding:'2rem',display:'flex',flexDirection:'column',gap:'1.25rem'}}>
