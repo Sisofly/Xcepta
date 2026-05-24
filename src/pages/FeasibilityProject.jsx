@@ -1168,37 +1168,39 @@ export default function FeasibilityProject() {
       }
 
       // ── Section C: Cash Flow Summary ──
-      ensureSpace(60)
-      secHead('Cash Flow Summary')
-      doc.setFont('helvetica', 'italic')
-      doc.setFontSize(7)
-      doc.setTextColor(92, 127, 146)
-      doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
-      y += 5
-      var cfCols = [{ label: 'Item', w: 100, align: 'left' }, { label: 'Amount (JOD)', w: TW - 100, align: 'right' }]
-      tHead(cfCols)
-      var cfSummaryRows = [
-        ...(hasDevEngine ? [
-          { label: 'Total Sales Inflow',   value: fmtN(totalSalesInflow), color: [21, 128, 61] },
-          { label: 'Total Hard Cost Draw', value: fmtN(totalHardCost),    color: [185, 28, 28] },
-          { label: 'Total Soft Cost Draw', value: fmtN(totalSoftCost),    color: [185, 28, 28] },
-        ] : []),
-        { label: 'Total Cost Draw',      value: fmtN(totalCostFromSch), color: [185, 28, 28] },
-        ...(hasDevEngine ? [
-          { label: 'Development Profit (GDV minus TDC)', value: fmtN(devProfit),         color: devProfit !== null && devProfit >= 0 ? [21, 128, 61] : [185, 28, 28] },
-        ] : []),
-      ]
-      cfSummaryRows.forEach(function(row, idx) {
-        guard(RH + 2)
-        if (idx % 2 === 0) { doc.setFillColor(249, 250, 253); doc.rect(ML, y, TW, RH, 'F') }
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 66, 80)
-        doc.text(safe(row.label), ML + 3, y + BL)
-        doc.setFont('helvetica', 'bold'); doc.setTextColor(row.color[0], row.color[1], row.color[2])
-        doc.text(safe(row.value), MR - 2, y + BL, { align: 'right' })
-        y += RH
-        doc.setDrawColor(230, 233, 240); doc.setLineWidth(0.15); doc.line(ML, y, MR, y); doc.setLineWidth(0.2)
-      })
-      gap(6)
+      if (hasDevEngine) {
+        ensureSpace(60)
+        secHead('Cash Flow Summary')
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(7)
+        doc.setTextColor(92, 127, 146)
+        doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
+        y += 5
+        var cfCols = [{ label: 'Item', w: 100, align: 'left' }, { label: 'Amount (JOD)', w: TW - 100, align: 'right' }]
+        tHead(cfCols)
+        var cfSummaryRows = [
+          ...(hasDevEngine ? [
+            { label: 'Total Sales Inflow',   value: fmtN(totalSalesInflow), color: [21, 128, 61] },
+            { label: 'Total Hard Cost Draw', value: fmtN(totalHardCost),    color: [185, 28, 28] },
+            { label: 'Total Soft Cost Draw', value: fmtN(totalSoftCost),    color: [185, 28, 28] },
+          ] : []),
+          { label: 'Total Cost Draw',      value: fmtN(totalCostFromSch), color: [185, 28, 28] },
+          ...(hasDevEngine ? [
+            { label: 'Development Profit (GDV minus TDC)', value: fmtN(devProfit),         color: devProfit !== null && devProfit >= 0 ? [21, 128, 61] : [185, 28, 28] },
+          ] : []),
+        ]
+        cfSummaryRows.forEach(function(row, idx) {
+          guard(RH + 2)
+          if (idx % 2 === 0) { doc.setFillColor(249, 250, 253); doc.rect(ML, y, TW, RH, 'F') }
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 66, 80)
+          doc.text(safe(row.label), ML + 3, y + BL)
+          doc.setFont('helvetica', 'bold'); doc.setTextColor(row.color[0], row.color[1], row.color[2])
+          doc.text(safe(row.value), MR - 2, y + BL, { align: 'right' })
+          y += RH
+          doc.setDrawColor(230, 233, 240); doc.setLineWidth(0.15); doc.line(ML, y, MR, y); doc.setLineWidth(0.2)
+        })
+        gap(6)
+      }
 
       // ── Section D: Funding Analysis ──
       if (hasDevEngine) {
@@ -1308,7 +1310,9 @@ export default function FeasibilityProject() {
       var finalDebt   = schedule.length ? (schedule[schedule.length - 1].loanBalance || 0) : 0
       var equityReturn = totalSales - totalCosts - finalDebt
 
-      doc.addPage(); pageNum++; y = 22
+      if (hasDevEngine) {
+        doc.addPage(); pageNum++; y = 22
+      }
 
       // ─── helper: two-column label / value row ───────────────────────
       function finRow(label, value, opts) {
@@ -1347,111 +1351,117 @@ export default function FeasibilityProject() {
       }
 
       // ══ A. FINANCIAL SUMMARY ══════════════════════════════════════════
-      secHead('Financial Summary')
-      doc.setFont('helvetica', 'italic')
-      doc.setFontSize(7)
-      doc.setTextColor(92, 127, 146)
-      doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
-      y += 5
+      if (hasDevEngine) {
+        secHead('Financial Summary')
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(7)
+        doc.setTextColor(92, 127, 146)
+        doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
+        y += 5
 
-      finRow('Total Cost Draw (Hard + Soft Costs)', fmtJOD(totalCosts),  { shade: false })
-      finRow('Total Sales Inflow',       fmtJOD(totalSales),  { shade: true,  color: [21, 128, 61] })
-      finDiv()
-      finRow('Gross Margin (Sales minus Cost Draw)', fmtJOD(netProfit),
-        { bold: true, color: netProfit >= 0 ? [21, 128, 61] : [185, 28, 28] })
+        finRow('Total Cost Draw (Hard + Soft Costs)', fmtJOD(totalCosts),  { shade: false })
+        finRow('Total Sales Inflow',       fmtJOD(totalSales),  { shade: true,  color: [21, 128, 61] })
+        finDiv()
+        finRow('Gross Margin (Sales minus Cost Draw)', fmtJOD(netProfit),
+          { bold: true, color: netProfit >= 0 ? [21, 128, 61] : [185, 28, 28] })
 
-      gap(6)
+        gap(6)
 
-      // Profit margin annotation
-      var marginPct = totalSales > 0 ? (netProfit / totalSales * 100).toFixed(1) + '%' : 'N/A'
-      var marginOnCost = totalCosts > 0 ? (netProfit / totalCosts * 100).toFixed(1) + '%' : 'N/A'
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
-      doc.text('Profit on Sales: ' + marginPct + '   |   Profit on Cost: ' + marginOnCost, ML + 3, y)
-      y += 10
+        // Profit margin annotation
+        var marginPct = totalSales > 0 ? (netProfit / totalSales * 100).toFixed(1) + '%' : 'N/A'
+        var marginOnCost = totalCosts > 0 ? (netProfit / totalCosts * 100).toFixed(1) + '%' : 'N/A'
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
+        doc.text('Profit on Sales: ' + marginPct + '   |   Profit on Cost: ' + marginOnCost, ML + 3, y)
+        y += 10
+      }
 
       // ══ B. SOURCES & USES ════════════════════════════════════════════
-      ensureSpace(95)
-      secHead('Sources & Uses')
-      doc.setFont('helvetica', 'italic')
-      doc.setFontSize(7)
-      doc.setTextColor(92, 127, 146)
-      doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
-      y += 5
+      if (hasDevEngine) {
+        ensureSpace(95)
+        secHead('Sources & Uses')
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(7)
+        doc.setTextColor(92, 127, 146)
+        doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
+        y += 5
 
-      // Sources
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(90, 96, 112)
-      doc.text('SOURCES', ML + 3, y); y += 7
-      finSub('Equity',                fmtJOD(totalEquity))
-      finSub('Debt',                  fmtJOD(totalDebt))
-      finDiv()
-      finRow('Total Sources',         fmtJOD(totalEquity + totalDebt), { bold: true })
+        // Sources
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(90, 96, 112)
+        doc.text('SOURCES', ML + 3, y); y += 7
+        finSub('Equity',                fmtJOD(totalEquity))
+        finSub('Debt',                  fmtJOD(totalDebt))
+        finDiv()
+        finRow('Total Sources',         fmtJOD(totalEquity + totalDebt), { bold: true })
 
-      gap(4)
+        gap(4)
 
-      // Uses
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(90, 96, 112)
-      doc.text('USES', ML + 3, y); y += 7
-      finSub('Hard Cost',             fmtJOD(totalHardCost))
-      finSub('Soft Cost',             fmtJOD(totalSoftCost))
-      finDiv()
-      finRow('Total Project Cost',    fmtJOD(totalCosts), { bold: true })
+        // Uses
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(90, 96, 112)
+        doc.text('USES', ML + 3, y); y += 7
+        finSub('Hard Cost',             fmtJOD(totalHardCost))
+        finSub('Soft Cost',             fmtJOD(totalSoftCost))
+        finDiv()
+        finRow('Total Project Cost',    fmtJOD(totalCosts), { bold: true })
 
-      gap(6)
+        gap(6)
 
-      // Sources & Uses scope note
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
-      doc.text(
-        'Pre-sales may fund part of construction. Sources shown represent peak external capital requirement, not total project uses.',
-        ML + 3, y, { maxWidth: TW }
-      )
-      y += 11
+        // Sources & Uses scope note
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
+        doc.text(
+          'Pre-sales may fund part of construction. Sources shown represent peak external capital requirement, not total project uses.',
+          ML + 3, y, { maxWidth: TW }
+        )
+        y += 11
+      }
 
       // ══ C. INVESTMENT WATERFALL ══════════════════════════════════════
-      ensureSpace(80)
-      secHead('Investment Waterfall')
-      doc.setFont('helvetica', 'italic')
-      doc.setFontSize(7)
-      doc.setTextColor(92, 127, 146)
-      doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
-      y += 5
+      if (hasDevEngine) {
+        ensureSpace(80)
+        secHead('Investment Waterfall')
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(7)
+        doc.setTextColor(92, 127, 146)
+        doc.text('Development Cash Flow Engine - Supplementary Analysis', ML, y)
+        y += 5
 
-      // Debt Repayment = loan principal retired during the project (drawn minus residual).
-      // Guarded to >= 0 defensively; the engine should never produce finalDebt > totalDebt.
-      var debtRepaid = Math.max(0, totalDebt - finalDebt)
-      var waterfallRows = [
-        { label: '1.  Equity Invested',   value: fmtJOD(totalEquity),                        color: [30,  90, 185], shade: false },
-        { label: '2.  Debt Drawn',         value: fmtJOD(totalDebt),                          color: [80,  90, 110], shade: true  },
-        { label: '3.  Construction Cost (Hard + Soft)', value: fmtJOD(totalCosts),                color: [185, 28,  28], shade: false },
-        { label: '4.  Total Sales',        value: fmtJOD(totalSales),                         color: [21, 128,  61], shade: true  },
-        { label: '5.  Debt Repayment',     value: fmtJOD(debtRepaid),                         color: [80,  90, 110], shade: false },
-        { label: '6.  Net Development Profit', value: fmtJOD(devProfit),
-          color: devProfit !== null && devProfit >= 0 ? [21, 128, 61] : [185, 28, 28],                               shade: true  },
-      ]
+        // Debt Repayment = loan principal retired during the project (drawn minus residual).
+        // Guarded to >= 0 defensively; the engine should never produce finalDebt > totalDebt.
+        var debtRepaid = Math.max(0, totalDebt - finalDebt)
+        var waterfallRows = [
+          { label: '1.  Equity Invested',   value: fmtJOD(totalEquity),                        color: [30,  90, 185], shade: false },
+          { label: '2.  Debt Drawn',         value: fmtJOD(totalDebt),                          color: [80,  90, 110], shade: true  },
+          { label: '3.  Construction Cost (Hard + Soft)', value: fmtJOD(totalCosts),                color: [185, 28,  28], shade: false },
+          { label: '4.  Total Sales',        value: fmtJOD(totalSales),                         color: [21, 128,  61], shade: true  },
+          { label: '5.  Debt Repayment',     value: fmtJOD(debtRepaid),                         color: [80,  90, 110], shade: false },
+          { label: '6.  Net Development Profit', value: fmtJOD(devProfit),
+            color: devProfit !== null && devProfit >= 0 ? [21, 128, 61] : [185, 28, 28],                               shade: true  },
+        ]
 
-      waterfallRows.forEach(function(row) {
-        guard(10)
-        if (row.shade) { doc.setFillColor(249, 250, 253); doc.rect(ML, y, TW, 9, 'F') }
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(50, 58, 72)
-        doc.text(safe(row.label), ML + 3, y + 6.2)
-        doc.setFont('helvetica', 'bold'); doc.setTextColor(row.color[0], row.color[1], row.color[2])
-        doc.text(safe(row.value), MR - 3, y + 6.2, { align: 'right' })
+        waterfallRows.forEach(function(row) {
+          guard(10)
+          if (row.shade) { doc.setFillColor(249, 250, 253); doc.rect(ML, y, TW, 9, 'F') }
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(50, 58, 72)
+          doc.text(safe(row.label), ML + 3, y + 6.2)
+          doc.setFont('helvetica', 'bold'); doc.setTextColor(row.color[0], row.color[1], row.color[2])
+          doc.text(safe(row.value), MR - 3, y + 6.2, { align: 'right' })
+          y += 9
+          doc.setDrawColor(230, 233, 240); doc.setLineWidth(0.15); doc.line(ML, y, MR, y); doc.setLineWidth(0.2)
+        })
+
+        // Equity multiple annotation
+        finDiv()
+        var eqMultiple = totalEquity > 0 ? (equityReturn / totalEquity).toFixed(2) + 'x' : 'N/A'
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
+        doc.text('Equity Multiple (Return / Invested): ' + eqMultiple, ML + 3, y)
         y += 9
-        doc.setDrawColor(230, 233, 240); doc.setLineWidth(0.15); doc.line(ML, y, MR, y); doc.setLineWidth(0.2)
-      })
-
-      // Equity multiple annotation
-      finDiv()
-      var eqMultiple = totalEquity > 0 ? (equityReturn / totalEquity).toFixed(2) + 'x' : 'N/A'
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 110, 125)
-      doc.text('Equity Multiple (Return / Invested): ' + eqMultiple, ML + 3, y)
-      y += 9
+      }
 
       // ══════════════════════════════════════════════════════════════════
       //  PAGE 5 — SENSITIVITY ANALYSIS
       //  Reads source.sensitivityMatrix stored at run time — no recalculation
       // ══════════════════════════════════════════════════════════════════
       var sensMatrix = source.sensitivityMatrix
-      if (sensMatrix && Array.isArray(sensMatrix) && sensMatrix.length === 3) {
+      if (hasDevEngine && sensMatrix && Array.isArray(sensMatrix) && sensMatrix.length === 3) {
         doc.addPage(); pageNum++; y = 22
         secHead('IRR Sensitivity Analysis')
         doc.setFont('helvetica', 'italic')
@@ -1560,7 +1570,7 @@ export default function FeasibilityProject() {
           ML + 18, y
         )
         y += 6
-      } else {
+      } else if (hasDevEngine) {
         // Matrix not available — note in PDF without crashing
         gap(6)
         doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(185, 28, 28)
