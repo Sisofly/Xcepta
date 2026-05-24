@@ -48,6 +48,8 @@ export default function NewProjectModal({ onClose }) {
     name: '',
     country: 'Jordan',
     currency: 'JOD',
+    accounting_standard: 'IFRS',
+    unit_system: 'metric',
 
     // ── Real Estate ──
     project_subtype: 'Residential',
@@ -173,6 +175,8 @@ export default function NewProjectModal({ onClose }) {
           name:                form.name,
           country:             form.country,
           currency:            form.currency,
+          accounting_standard: form.accounting_standard,
+          unit_system:         form.unit_system,
           sector:              form.sector,
           revenue_model:       form.top_revenue_model,
           financing_structure: financing,
@@ -399,6 +403,47 @@ export default function NewProjectModal({ onClose }) {
               </span>
             </div>
 
+            {/* Jurisdiction & governance metadata */}
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <Field label="Country">
+                <input
+                  value={form.country}
+                  disabled
+                  style={{ ...inputStyle, opacity: 0.45 }}
+                />
+              </Field>
+              <Field label="Currency">
+                <input
+                  value={form.currency}
+                  disabled
+                  style={{ ...inputStyle, opacity: 0.45 }}
+                />
+              </Field>
+            </div>
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <Field label="Accounting Standard">
+                <select
+                  value={form.accounting_standard}
+                  onChange={e => update('accounting_standard', e.target.value)}
+                  style={inputStyle}
+                >
+                  <option value="IFRS">IFRS</option>
+                  <option value="SOCPA">SOCPA</option>
+                  <option value="GAAP">GAAP</option>
+                </select>
+              </Field>
+              <Field label="Unit System">
+                <select
+                  value={form.unit_system}
+                  onChange={e => update('unit_system', e.target.value)}
+                  style={inputStyle}
+                >
+                  <option value="metric">Metric (sqm)</option>
+                  <option value="imperial">Imperial (sqft)</option>
+                </select>
+              </Field>
+            </div>
+
             {/* PPP clarity helper */}
             {isAP && (
               <p style={{ fontSize: '0.75rem', color: colors.textSecondary, marginTop: '-0.5rem' }}>
@@ -434,10 +479,6 @@ export default function NewProjectModal({ onClose }) {
                       {['Traditional', 'Design & Build', 'PPP', 'Turnkey'].map(o => <option key={o}>{o}</option>)}
                     </select>
                   </Field>
-                </div>
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                  <Field label="Country"><input value="Jordan" disabled style={{ ...inputStyle, opacity: 0.45 }} /></Field>
-                  <Field label="Currency"><input value="JOD" disabled style={{ ...inputStyle, opacity: 0.45 }} /></Field>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem' }}>
                   <Field label="GFA — Gross Floor Area (sqm)" required>
