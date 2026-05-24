@@ -1696,7 +1696,11 @@ export default function FeasibilityProject() {
           <span style={{fontSize:'0.75rem',padding:'3px 10px',borderRadius:'20px',
             background:isApproved?colors.successSoft:colors.accentBgSubtle,color:isApproved?colors.success:colors.accent,
             border:isApproved?`1px solid ${colors.success}`:`1px solid ${colors.accent}`}}>
-            {version ? version.status : 'draft'}
+            {version
+              ? (version.status === 'approved'
+                  ? 'APPROVED BASELINE'
+                  : 'WORKING DRAFT')
+              : 'WORKING DRAFT'}
           </span>
           <p style={{fontSize:'0.75rem',color:colors.textMuted,marginTop:'0.4rem'}}>{version ? version.label : ''}</p>
           {isApproved && version.approved_at && (
@@ -1734,8 +1738,8 @@ export default function FeasibilityProject() {
               padding:'1rem 1.5rem',marginBottom:'1.5rem',display:'flex',
               justifyContent:'space-between',alignItems:'center',gap:'1rem',flexWrap:'wrap'}}>
               <div>
-                <p style={{fontSize:'0.875rem',color:colors.warning,fontWeight:'500',marginBottom:'0.2rem'}}>Inputs updated</p>
-                <p style={{fontSize:'0.8rem',color:colors.textSecondary}}>Create a new draft version to re-run the model with these inputs.</p>
+                <p style={{fontSize:'0.875rem',color:colors.warning,fontWeight:'500',marginBottom:'0.2rem'}}>Assumptions modified</p>
+                <p style={{fontSize:'0.8rem',color:colors.textSecondary}}>Approved baseline is unchanged. Create a new draft to lock these inputs and re-run the model.</p>
               </div>
               <button onClick={handleCreateDraft} disabled={creatingDraft}
                 style={{padding:'0.45rem 1.1rem',background:colors.warning,color:colors.surfaceMuted,border:'none',
@@ -1757,6 +1761,35 @@ export default function FeasibilityProject() {
                   borderRadius:'6px',cursor:creatingDraft?'not-allowed':'pointer',fontSize:'0.78rem',whiteSpace:'nowrap'}}>
                 {creatingDraft ? 'Creating...' : '+ New Draft Version'}
               </button>
+            </div>
+          )}
+
+          {version && version.status !== 'approved' && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              marginBottom: '1rem',
+              padding: '0.5rem 0.75rem',
+              background: colors.accentBgSubtle,
+              borderRadius: '6px',
+              border: `1px solid ${colors.border}`,
+            }}>
+              <span style={{
+                fontSize: '0.65rem',
+                fontWeight: '700',
+                color: colors.accent,
+                textTransform: 'uppercase',
+                letterSpacing: '0.06em',
+              }}>
+                Working Draft
+              </span>
+              <span style={{
+                fontSize: '0.75rem',
+                color: colors.textMuted,
+              }}>
+                — changes are saved in this draft but not approved. Approve version to lock as baseline.
+              </span>
             </div>
           )}
 
