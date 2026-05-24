@@ -881,15 +881,15 @@ export default function FeasibilityProject() {
           'Do Not Proceed':           { color: [185, 28, 28],  bg: [254, 226, 226] },
         }
         var recSubMap = {
-          'Proceed':                  'Investment Grade',
-          'Proceed with Conditions':  'Requires Review',
-          'Review Structure':         'Requires Review',
-          'High Risk':                'Below Threshold',
-          'Do Not Proceed':           'Below Threshold',
+          'Proceed':                 'Strong Investment Case',
+          'Proceed with Conditions': 'Conditional Approval',
+          'Review Structure':        'Structural Revisions Required',
+          'High Risk':               'Material Risk Identified',
+          'Do Not Proceed':          'Investment Thresholds Not Met',
         }
         var recEntry = recColorMap[rec.verdict] || recColorMap['Do Not Proceed']
         coverLabel = rec.verdict.toUpperCase()
-        coverSub   = recSubMap[rec.verdict] || 'Below Threshold'
+        coverSub   = recSubMap[rec.verdict] || 'Investment Thresholds Not Met'
         coverColor = recEntry.color
         coverBg    = recEntry.bg
       } else {
@@ -943,14 +943,13 @@ export default function FeasibilityProject() {
           // 'High Risk' or 'Do Not Proceed'
           recFill = [254, 226, 226]; recStroke = [185, 28, 28]
         }
-        var recCategory
-        if (rec.verdict === 'Proceed' || rec.verdict === 'Proceed with Conditions') {
-          recCategory = 'Investment Grade'
-        } else if (rec.verdict === 'Review Structure') {
-          recCategory = 'Requires Review'
-        } else {
-          recCategory = 'Below Threshold'
-        }
+        var recCategory = ({
+          'Proceed':                 'Strong Investment Case',
+          'Proceed with Conditions': 'Conditional Approval',
+          'Review Structure':        'Structural Revisions Required',
+          'High Risk':               'Material Risk Identified',
+          'Do Not Proceed':          'Investment Thresholds Not Met',
+        })[rec.verdict] || 'Investment Thresholds Not Met'
 
         doc.setFillColor(recFill[0], recFill[1], recFill[2])
         doc.rect(ML, y, TW, 18, 'F')
