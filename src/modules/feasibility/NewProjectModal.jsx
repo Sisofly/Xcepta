@@ -21,7 +21,7 @@ const revenueOptions = {
 
 // ── Derived helpers ──
 function getFinancingStructure(modelType) {
-  return modelType === 'Project Finance' ? 'Project Finance' : 'Corporate Finance'
+  return modelType === 'Project Finance' ? 'Project Finance' : 'Real Estate Development'
 }
 
 function getLegacyProjectType(modelType, sector, revenueModel) {
@@ -392,7 +392,7 @@ export default function NewProjectModal({ onClose }) {
               background: colors.surfaceMuted, border: `1px solid ${colors.borderMuted}`,
               borderRadius: '6px', padding: '0.6rem 1rem',
             }}>
-              <span style={{ fontSize: '0.75rem', color: colors.textSecondary }}>Financing Structure</span>
+              <span style={{ fontSize: '0.75rem', color: colors.textSecondary }}>Funding Method</span>
               <span style={{
                 fontSize: '0.75rem', fontWeight: '600', color: badgeColor,
                 background: badgeBackground,
