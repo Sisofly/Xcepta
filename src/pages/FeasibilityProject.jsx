@@ -1986,9 +1986,8 @@ export default function FeasibilityProject() {
                   ],
                 },
                 {
-                  name: 'Financing Structure',
+                  name: 'Debt Terms',
                   keys: [
-                    'equity_pct','senior_debt_pct','shareholder_loan_pct',
                     'senior_debt_interest_rate',
                     'loan_tenor_years','grace_period_years','dsra_months',
                     'debt_arrangement_fee_pct',
