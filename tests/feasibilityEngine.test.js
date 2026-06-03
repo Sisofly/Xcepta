@@ -1420,10 +1420,62 @@ function pppWith(overrides) {
 describe('B34 — PPP base scenario sanity', () => {
   const out = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
 
-  test('B34.1: TDC/debt/equity sizing at 80/20 of 100M', () => {
+  // ── Post-fix sizing semantics (P-009 / P-013, 2026-05-24) ────────────────
+  // Engine no longer sizes debt as TPC × Debt%. With no `Target DSCR` row in
+  // the fixture, the engine defaults target = 1.20 and sculpts supportable
+  // debt to fully amortize a CFADS/1.20-sculpted DS stream over (loanTenor −
+  // grace) = 8 years at 7%, with tax shield on interest.
+  //
+  // Arithmetic (verified by direct engine invocation):
+  //   EBITDA      = AP × (1 − opex%) = 12,000,000 × 0.95 = 11,400,000
+  //   Binary-search converges at supportable debt ≈ 47,507,319.59 — far below
+  //   the requested 80,000,000 because AP=12M cannot service 80M at 1.20 DSCR.
+  //   debt   = min(requested, supportable, tpc) = supportable = 47,507,319.59
+  //   equity = TPC − debt                       = 52,492,680.41
+  test('B34.1: TDC/debt/equity sizing sculpted to default Target DSCR 1.20', () => {
     expect(out.tdc).toBeCloseTo(100_000_000, CURR_DP)
-    expect(out.debt_amount).toBeCloseTo(80_000_000, CURR_DP)
-    expect(out.equity_amount).toBeCloseTo(20_000_000, CURR_DP)
+    // Per user spec point (1): requested debt = TPC × Debt% (informational ceiling)
+    expect(out.debt_sizing.requested_debt).toBeCloseTo(80_000_000, CURR_DP)
+    // Per user spec point (2): actual debt = min(requested, supportable)
+    expect(out.debt_amount).toBeCloseTo(47_507_319.59, CURR_DP)
+    expect(out.debt_amount).toBe(out.debt_sizing.actual_debt)
+    expect(out.debt_amount).toBeLessThan(out.debt_sizing.requested_debt) // supportable binds
+    // Per user spec point (3): equity = TPC − actual debt
+    expect(out.equity_amount).toBeCloseTo(52_492_680.41, CURR_DP)
+    expect(out.equity_amount).toBeCloseTo(out.tdc - out.debt_amount, CURR_DP)
+  })
+
+  // Per user spec point (8): assert the full debt_sizing diagnostic block.
+  // Each field traced to the engine's reported values; arithmetic above.
+  test('B34.1b: debt_sizing diagnostic block surfaces the sizing decision', () => {
+    const ds = out.debt_sizing
+    expect(ds.requested_debt).toBeCloseTo(80_000_000, CURR_DP)
+    expect(ds.supportable_debt).toBeCloseTo(47_507_319.59, CURR_DP)
+    expect(ds.actual_debt).toBeCloseTo(47_507_319.59, CURR_DP)
+    // shortfall = requested − supportable = 80M − 47.507M = 32,492,680.41
+    expect(ds.debt_shortfall).toBeCloseTo(32_492_680.41, CURR_DP)
+    // additional equity = resulting equity − nominal user equity (20% × 100M = 20M)
+    //                   = 52,492,680.41 − 20,000,000 = 32,492,680.41
+    expect(ds.additional_equity_required).toBeCloseTo(32_492_680.41, CURR_DP)
+    expect(ds.resulting_equity).toBeCloseTo(52_492_680.41, CURR_DP)
+    // Per user spec point (4): repay-year DSCRs sit at the target (1.20).
+    // Min DSCR = 1.20 exactly (not a loose ≥). Engine sculpts so each repay
+    // year produces DSCR = target within rounding.
+    expect(ds.min_dscr).toBeCloseTo(1.20, RATIO_DP)
+    // avg_dscr = (grace_DSCR × 2 + 1.20 × 8) / 10
+    //   interest_grace = 47,507,319.59 × 0.07 = 3,325,512.37
+    //   tax_grace      = (11.4M − 3,325,512.37) × 0.20 = 1,614,897.53
+    //   cfads_grace    = 11.4M − 1,614,897.53 = 9,785,102.47
+    //   DSCR_grace     = 9,785,102.47 / 3,325,512.37 = 2.943
+    //   avg            = (2.943 × 2 + 1.20 × 8) / 10 = 15.486 / 10 = 1.5486
+    //   r2(avg)        = 1.55 (engine rounds dscr to 2dp before averaging,
+    //                    so the engine reports 1.55 — match within RATIO_DP).
+    expect(ds.avg_dscr).toBeCloseTo(1.55, RATIO_DP)
+    expect(ds.target_dscr).toBe(1.20)
+    // Numeric-type guards for all nine diagnostic fields.
+    ;['requested_debt','supportable_debt','actual_debt','debt_shortfall',
+      'additional_equity_required','resulting_equity','min_dscr','avg_dscr',
+      'target_dscr'].forEach(k => expect(typeof ds[k]).toBe('number'))
   })
 
   test('B34.2: construction_years = 2 (ceil(24/12)), operations_years = 25', () => {
@@ -1438,13 +1490,25 @@ describe('B34 — PPP base scenario sanity', () => {
   test('B34.4: construction rows are zero-revenue with even equity draw & capex split', () => {
     const constrRows = out.cash_flows.filter(r => r.phase === 'Construction')
     expect(constrRows.length).toBe(2)
+    // Equity per construction year = recomputed equity / construction_years.
+    // For base fixture: 52,492,680.41 / 2 = 26,246,340.205 → r2() rounds to
+    // -26,246,340.21 in the engine. (Pre-fix this was 20M / 2 = -10M; new
+    // sizing recomputes equity to TPC − supportable debt and the construction
+    // loop draws THAT figure.)
+    //
+    // The engine computes equityPerConstrYr from the UNROUNDED equity, while
+    // equity_amount in the return is r2(equity). Dividing the rounded value
+    // by 2 leaves a ½-cent gap from the row's r2-rounded equity_cf, putting
+    // CURR_DP=2 right on its tolerance edge. Use ±0.5 JOD tolerance (same as
+    // B40.3 / B42.2 — invariant holds within rounding).
+    const expectedEqCF = -out.equity_amount / out.construction_years
     constrRows.forEach(r => {
       expect(r.revenue).toBe(0)
       expect(r.opex).toBe(0)
       expect(r.interest).toBe(0)
       expect(r.principal).toBe(0)
-      expect(r.equity_cf).toBeCloseTo(-10_000_000, CURR_DP)  // 20M / 2 yrs
-      expect(r.capex).toBeCloseTo(50_000_000, CURR_DP)        // 100M / 2 yrs
+      expect(r.equity_cf).toBeCloseTo(expectedEqCF, 0)         // ±0.5 JOD, absorbs r2() drift
+      expect(r.capex).toBeCloseTo(50_000_000, CURR_DP)         // 100M / 2 yrs (unchanged)
       expect(r.dscr).toBeNull()
     })
   })
@@ -1476,17 +1540,44 @@ describe('B35 — grace-period principal behavior', () => {
   })
 
   test('B35.2: interest each grace year = debt × rate (balance unchanged through grace)', () => {
-    const expectedInterest = r2(80_000_000 * 0.07)  // 5,600,000
+    // Grace-period balance behavior unchanged from pre-fix: principal = 0, so
+    // outstanding stays at full sized debt across both grace years and into
+    // op-year 3 (first post-grace; debt is reduced only by THAT year's principal
+    // after this row's interest is computed). The number that changed is the
+    // sized debt (47.507M, not 80M); the rate × outstanding rule is the same.
+    const expectedInterest = r2(out.debt_amount * 0.07)  // 47,507,319.59 × 0.07 = 3,325,512.37
     expect(opsRows[0].interest).toBeCloseTo(expectedInterest, CURR_DP)
     expect(opsRows[1].interest).toBeCloseTo(expectedInterest, CURR_DP)
-    // Op 3 interest is still on full 80M (no principal yet repaid)
+    // Op 3 interest is still on full sized debt (no principal yet repaid through end of grace)
     expect(opsRows[2].interest).toBeCloseTo(expectedInterest, CURR_DP)
   })
 
-  test('B35.3: first post-grace principal = annuity − interest', () => {
-    const annuityAmt = annuity(80_000_000, 0.07, 8)  // tenor − grace = 8
-    const expectedPrincipal = r2(annuityAmt - r2(80_000_000 * 0.07))
+  test('B35.3: first post-grace principal = CFADS-sculpted DS − interest (P-013 fix)', () => {
+    // Pre-fix: principal_y3 = level annuity(debt, 7%, 8) − interest.
+    // Post-fix: principal_y3 = DS_sculpted_y3 − interest_y3 where
+    //   interest_y3 = debt × 0.07
+    //   tax_y3      = max(0, (EBITDA − interest_y3) × taxRate)
+    //   cfads_y3    = EBITDA − tax_y3
+    //   DS_y3       = cfads_y3 / target_dscr
+    // Direct arithmetic on the base fixture (EBITDA = 11.4M, tax = 20%,
+    // target = 1.20, debt = 47,507,319.59):
+    //   interest_y3 = 3,325,512.37
+    //   tax_y3      = (11,400,000 − 3,325,512.37) × 0.20 = 1,614,897.53
+    //   cfads_y3    = 9,785,102.47
+    //   DS_y3       = 9,785,102.47 / 1.20 = 8,154,252.06
+    //   principal_y3 = 8,154,252.06 − 3,325,512.37 = 4,828,739.69
+    const EBITDA      = 11_400_000
+    const TARGET_DSCR = 1.20
+    const TAX_RATE    = 0.20
+    const interestY3  = r2(out.debt_amount * 0.07)
+    const taxY3       = Math.max(0, (EBITDA - interestY3) * TAX_RATE)
+    const cfadsY3     = EBITDA - taxY3
+    const dsY3        = cfadsY3 / TARGET_DSCR
+    const expectedPrincipal = r2(dsY3 - interestY3)
+    expect(expectedPrincipal).toBeCloseTo(4_828_739.69, CURR_DP)  // arithmetic sanity
     expect(opsRows[2].principal).toBeCloseTo(expectedPrincipal, CURR_DP)
+    // Per user spec point (4): repay-year DSCR should equal target within rounding.
+    expect(opsRows[2].dscr).toBeCloseTo(TARGET_DSCR, RATIO_DP)
   })
 })
 
@@ -1712,10 +1803,18 @@ describe('B40 — 13-month construction → 2 years', () => {
     expect(out.cash_flows[2].phase).toBe('Operations')
   })
 
-  test('B40.3: Σ construction equity_cf = −equity_amount', () => {
+  test('B40.3: Σ construction equity_cf ≈ −equity_amount (within ±0.5 JOD)', () => {
+    // After the P-009 sizing fix, equity is recomputed to TPC − supportable debt
+    // (here 52,492,680.41). The construction loop draws equity / constrYears
+    // per row and r2()s the row value. With unrounded equity 52,492,680.41 / 2
+    // = 26,246,340.205, r2 → 26,246,340.21, summed across 2 rows =
+    // 52,492,680.42 vs equity_amount 52,492,680.41 → 0.01 JOD drift from
+    // per-row rounding. The invariant Σ ≈ −equity_amount holds within ±0.5 JOD,
+    // so we use CURR_DP=0 here (matches the precision used by the engine's
+    // own debt-amortization invariant in B42.2).
     const constrRows = out.cash_flows.filter(r => r.phase === 'Construction')
     const sumEqCF = constrRows.reduce((s, r) => s + r.equity_cf, 0)
-    expect(sumEqCF).toBeCloseTo(-out.equity_amount, CURR_DP)
+    expect(sumEqCF).toBeCloseTo(-out.equity_amount, 0)  // ±0.5 JOD, absorbs r2() drift
   })
 })
 
@@ -1853,9 +1952,16 @@ describe('B44 — computeRequiredPayment achievable target', () => {
   }
 
   test('B44.1: returned payment, fed back into engine, achieves minDSCR ≥ target; converged=true', () => {
+    // Post-fix (P-009 / P-013): runPPPEngine sculpts debt internally to default
+    // target 1.20, so at any AP including BASE_PAYMENT the engine yields
+    // minDSCR ≥ 1.20. The solver therefore converges on iteration 0 at the
+    // current payment — required_payment EQUALS BASE_PAYMENT (not greater).
+    // The solver itself was not modified (per re-baseline scope); this re-
+    // baseline reflects the engine's new behavior only.
     const TARGET = 1.20
     const result = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, TARGET)
-    expect(result.required_payment).toBeGreaterThan(BASE_PAYMENT)
+    expect(result.required_payment).toBe(BASE_PAYMENT)             // i=0 convergence
+    expect(result.payment_gap).toBe(0)
     expect(minDscrAt(result.required_payment)).toBeGreaterThanOrEqual(TARGET)
     expect(result.converged).toBe(true)
   })
@@ -1918,9 +2024,14 @@ describe('B44 — computeRequiredPayment achievable target', () => {
     // current input path emits NaN/Infinity (Batch 2A safeNum guards all
     // PPP inputs), but the filter must continue to accept finite values
     // exactly as before. This test pins the baseline-converges contract.
+    //
+    // Post-fix (P-009 / P-013): the engine sculpts minDSCR to target by
+    // construction, so the baseline already meets target at iteration 0.
+    // required_payment === BASE_PAYMENT (not greater). The achieved_min_dscr
+    // remains a finite number, which is what the F07 regression guards.
     const result = computeRequiredPayment(P_PPP_BASE_ASSUMPTIONS, 1.20)
     expect(result.converged).toBe(true)
-    expect(result.required_payment).toBeGreaterThan(BASE_PAYMENT)
+    expect(result.required_payment).toBe(BASE_PAYMENT)
     expect(Number.isFinite(result.achieved_min_dscr)).toBe(true)
   })
 
@@ -2276,15 +2387,25 @@ describe('B47 — cash-trap years (DSCR < floor)', () => {
     expect(computePPPBankability(m).cashTrapYears).toEqual([1, 2, 3])
   })
 
-  test('B47.7: integration — baseline PPP cashTrapYears come from dscr_series (ops years 1..10)', () => {
-    // Baseline payment=12M yields minDSCR ≈ 0.69 in the last repayment year
-    // → at least one cash-trap year exists.
+  test('B47.7: integration — baseline PPP cashTrapYears is empty under sculpted sizing', () => {
+    // Pre-fix: baseline payment=12M with full 80M debt yielded minDSCR ≈ 0.69
+    // in the last repayment year, so several years sat below the 1.20 floor
+    // (cash-trap years existed).
+    //
+    // Post-fix (P-009 / P-013): debt is sized down to the supportable value
+    // (~47.5M) such that every repay year sits AT the default DSCR target of
+    // 1.20 by construction. Since the bankability gate uses STRICT < floor
+    // (see B47.3), no year is trapped at the baseline. Confirms that the
+    // sculpted engine produces a bankable amortization profile for the base
+    // fixture instead of a structurally-under-covered one.
     const pppOut = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
     const b = computePPPBankability(pppOut)
-    expect(b.cashTrapYears.length).toBeGreaterThan(0)
-    // All trap years are within the ops range (1..opsYears)
-    b.cashTrapYears.forEach(yr => {
-      expect(yr).toBeGreaterThanOrEqual(1)
+    expect(b.cashTrapYears).toEqual([])
+    // Sanity: the dscr_series exists (10 ops years) and every entry is ≥ 1.20.
+    expect(pppOut.dscr_series.length).toBe(10)
+    pppOut.dscr_series.forEach(d => {
+      expect(d.dscr).not.toBeNull()
+      expect(d.dscr).toBeGreaterThanOrEqual(1.20)
     })
   })
 })
@@ -2768,11 +2889,32 @@ describe('B54 — PPP annual payment monotonically lifts IRR / NPV / minDSCR', (
     expect(outs[1].npv).toBeLessThan(outs[2].npv)
   })
 
-  test('B54.3: minDSCR increases with annual availability payment', () => {
+  test('B54.3: minDSCR plateaus at target; supportable debt monotonically lifts instead', () => {
+    // Pre-fix: higher AP → higher CFADS → higher minDSCR (debt fixed at 80M).
+    // Post-fix (P-009 / P-013): debt now FLEXES with CFADS to maintain DSCR
+    // at target, so minDSCR plateaus at 1.20 across all three payments
+    // (each project is sized to exactly meet the floor) while supportable
+    // debt rises monotonically with AP. Per the new sizing semantics, the
+    // assertion changes from "minDSCR strictly increases" to "supportable
+    // debt strictly increases" (user spec point 6).
+    //
+    // Direct engine outputs for the sweep:
+    //   AP=10M: supportable = 39,589,433.05, minDSCR = 1.20
+    //   AP=12M: supportable = 47,507,319.59, minDSCR = 1.20
+    //   AP=15M: supportable = 59,384,149.40, minDSCR = 1.20
     const dscrs = outs.map(pppMinDscr)
-    dscrs.forEach(d => expect(d).not.toBeNull())
-    expect(dscrs[0]).toBeLessThan(dscrs[1])
-    expect(dscrs[1]).toBeLessThan(dscrs[2])
+    dscrs.forEach(d => {
+      expect(d).not.toBeNull()
+      expect(d).toBeCloseTo(1.20, RATIO_DP)            // plateau at target
+    })
+    // Supportable debt strictly increases with AP.
+    const supportables = outs.map(o => o.debt_sizing.supportable_debt)
+    expect(supportables[0]).toBeLessThan(supportables[1])
+    expect(supportables[1]).toBeLessThan(supportables[2])
+    // debt_amount tracks supportable (no requested-debt ceiling binds at these APs).
+    expect(outs[0].debt_amount).toBeCloseTo(supportables[0], CURR_DP)
+    expect(outs[1].debt_amount).toBeCloseTo(supportables[1], CURR_DP)
+    expect(outs[2].debt_amount).toBeCloseTo(supportables[2], CURR_DP)
   })
 })
 

@@ -287,6 +287,81 @@ function pppVal(assumptions, name) {
   return a && a.value !== null ? Number(a.value) : null
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// PPP roadmap notes — logged 2026-05-24, not implemented.
+//
+// P-015 (deferred): construction debt draw + IDC capitalization +
+//   equity-first drawdown. Currently the PPP path models construction as
+//   100% equity-funded with zero interest charged; debt only flows during
+//   operations. Implementing P-015 would (a) draw equity first, then debt
+//   for the balance of TPC over the construction window, (b) capitalize
+//   interest during construction into the opening debt balance at end of
+//   construction, and (c) revise the sculpting horizon decision. Without
+//   IDC the engine systematically under-sizes debt vs institutional PF
+//   models on long-construction projects (Madaba benchmark gap ≈ 5.5M JOD).
+//
+// P-016 (deferred): quarterly periodicity. Engine is currently annual.
+//   Quarterly resolution would improve construction interest accrual,
+//   pre-completion sales timing (RE side), and DSCR granularity. Out of
+//   scope for the current PPP-fix sequence.
+//
+// Madaba benchmark rate note (input correction, NOT an engine change):
+//   Future Madaba benchmark comparison runs should use operating rate 8.3%
+//   (6.5% base + 1.8% margin), not 7.0%. The 7.0% in our P-009/P-013 dry-
+//   runs was an input error in the test fixture, not an engine defect. No
+//   default or rate-handling code in this file should change as a result.
+// ───────────────────────────────────────────────────────────────────────────
+
+// ── DSCR-driven debt-sizing helper (P-009 / P-013 fix) ─────────────────────
+// Returns the maximum starting debt balance such that, with DSCR-sculpted
+// amortization, the schedule fully repays over `repayYears`.
+//
+// Sculpt rule per post-grace year t:
+//   interest_t = outDebt_t × rate
+//   tax_t      = max(0, (ebitda − interest_t) × taxRate)     ← tax shield on debt
+//   cfads_t    = ebitda − tax_t                              ← post-tax CFADS
+//   ds_t       = cfads_t / target                            ← sculpted DS at target DSCR
+//   principal_t = ds_t − interest_t                          ← debt reduction
+//   outDebt_{t+1} = outDebt_t − principal_t
+//
+// CFADS depends on tax which depends on interest which depends on outstanding,
+// so the equation is implicit. We binary-search the starting debt that drives
+// outDebt to 0 at end of repayYears (tolerance: ±1 JOD).
+//
+// For flat EBITDA (e.g. flat availability payment), this resolves to a
+// near-flat debt-service / rising-principal / falling-interest profile —
+// exactly what flat-CFADS sculpting should produce.
+//
+// Edge cases: returns 0 if ebitda, repayYears, or target ≤ 0.
+function sculptSupportableDebt(ebitda, taxRate, target, rate, repayYears) {
+  if (ebitda <= 0 || repayYears <= 0 || target <= 0) return 0
+
+  // Upper bound: conservative no-shield supportable × 3 (tax shield only adds
+  // a few % of capacity; ×3 is a safe ceiling for all realistic inputs).
+  var af = (rate === 0) ? repayYears : (1 - Math.pow(1 + rate, -repayYears)) / rate
+  var noShieldDebt = ebitda * (1 - taxRate) / target * af
+  var lo = 0
+  var hi = noShieldDebt * 3 + 1   // +1 to avoid lo==hi at zero-tax extremes
+
+  for (var iter = 0; iter < 100; iter++) {
+    var debt = (lo + hi) / 2
+    var outDebt = debt
+    for (var k = 1; k <= repayYears; k++) {
+      var interest = outDebt * rate
+      var tax      = Math.max(0, (ebitda - interest) * taxRate)
+      var cfads    = ebitda - tax
+      var ds       = cfads / target
+      var principal = ds - interest   // unconstrained — sign indicates direction
+      outDebt = outDebt - principal
+    }
+    if (outDebt > 1) hi = debt          // residual balance → too much starting debt
+    else if (outDebt < -1) lo = debt    // over-repaid → too little starting debt
+    else return debt
+    if (hi - lo < 0.5) return (lo + hi) / 2
+  }
+  return (lo + hi) / 2
+}
+
 function runPPPEngine(assumptions) {
   // ── F02 (Batch 2A, 2026-05-16): explicit-zero respect on PPP inputs ──
   // Replaces the legacy `(pppVal(...) || X)` falsy-fallback pattern.
@@ -305,6 +380,10 @@ function runPPPEngine(assumptions) {
   var gracePeriodYrs  = safeNum(pppVal(assumptions, 'Grace Period'), 2)
   var taxRate         = safePct(pppVal(assumptions, 'Tax Rate'), 20)
   var wacc            = safePct(pppVal(assumptions, 'WACC'), 10)
+  // P-009 / P-013: Target DSCR is now the sizing constraint, not a post-hoc
+  // diagnostic. Default 1.20 mirrors the institutional DSCR floor used by the
+  // bankability gate and the computeRequiredPayment solver.
+  var targetDSCR      = safeNum(pppVal(assumptions, 'Target DSCR'), 1.20)
 
   // ── F02 validation: Concession Period and Construction Period must be ≥ 1 ──
   // The old `|| 25` / `|| 24` falsy fallbacks combined with downstream
@@ -331,8 +410,6 @@ function runPPPEngine(assumptions) {
 
   var constrYears = Math.max(1, Math.ceil(constrMonths / 12))
   var opsYears    = Math.max(1, concessionYrs)  // concession = service/operations period; total life = constrYears + opsYears
-  var debt        = tpc * debtPct
-  var equity      = tpc * equityPct
 
   // OPEX: use fixed JOD amount if stored, otherwise % of revenue (default)
   var opexFixed   = pppVal(assumptions, 'OPEX Amount (JOD)')
@@ -341,13 +418,63 @@ function runPPPEngine(assumptions) {
   // Null/missing still falls through to the percentage path.
   var useFixedOpex = opexFixed !== null && opexFixed >= 0
 
-  // Level annuity repayment over (loanTenor - grace) years
-  var repayYears  = Math.max(1, loanTenorYrs - gracePeriodYrs)
-  var annuityAmt  = annuity(debt, interestRate, repayYears)
+  // ─────────────────────────────────────────────────────────────────────────
+  // DEBT SIZING (P-009 / P-013): sculpt to Target DSCR
+  // ─────────────────────────────────────────────────────────────────────────
+  // Pre-fix behavior (broken): debt = TPC × Debt% regardless of CFADS. The
+  // engine then compressed a level annuity into (tenor − grace), producing
+  // back-loaded principal cliffs and DSCRs well below the user-specified
+  // target — see P-013. Target DSCR was never read by the engine — see P-009.
+  //
+  // Post-fix behavior: debt capacity flexes to fit the user-pinned
+  // Availability Payment and Target DSCR.
+  //
+  //   1. Compute sizing EBITDA from flat AP × (1 − opex%) or AP − fixed opex.
+  //   2. sculptSupportableDebt() binary-searches the starting balance that
+  //      fully amortizes a CFADS/target-sculpted DS stream over repayYears
+  //      = loanTenor − grace, at the loan interest rate. The tax shield on
+  //      interest is included; that's why a closed-form PV is insufficient.
+  //   3. Actual debt = min(requestedDebt, supportableDebt, tpc). User can
+  //      under-leverage via Debt%; user cannot over-leverage past DSCR.
+  //   4. Equity = TPC − actualDebt. The construction loop draws THIS equity
+  //      (the old code drew TPC × equityPct — stale once debt was sized).
+  //   5. The seven debt-capacity diagnostics are returned under `debt_sizing`.
+  //
+  // targetDSCR ≤ 0 (per F03 semantics, "no DSCR constraint") falls back to
+  // the legacy requested-debt sizing. Non-viable economics (EBITDA ≤ 0 or
+  // repayYears = 0) yield zero supportable debt.
+  var requestedDebt = tpc * debtPct
+  var repayYears    = Math.max(0, loanTenorYrs - gracePeriodYrs)
+
+  var sizingRevenue = annualPayment
+  var sizingOpex    = useFixedOpex ? opexFixed : sizingRevenue * opexPct
+  var sizingEbitda  = sizingRevenue - sizingOpex
+
+  var supportableDebt
+  if (targetDSCR > 0 && sizingEbitda > 0 && repayYears > 0) {
+    supportableDebt = sculptSupportableDebt(
+      sizingEbitda, taxRate, targetDSCR, interestRate, repayYears
+    )
+  } else if (targetDSCR <= 0) {
+    // F03-style "no DSCR constraint" → debt capacity is unbounded; use requested
+    supportableDebt = requestedDebt
+  } else {
+    // Non-viable economics → zero debt capacity
+    supportableDebt = 0
+  }
+
+  var debt   = Math.max(0, Math.min(requestedDebt, supportableDebt, tpc))
+  var equity = Math.max(0, tpc - debt)
+
+  // Debt-capacity diagnostics (per the P-009/P-013 spec)
+  var debtShortfall    = Math.max(0, requestedDebt - supportableDebt)
+  var userEquityNominal = tpc * equityPct                    // what user wanted to contribute
+  var additionalEquity = Math.max(0, equity - userEquityNominal)
 
   var cfs = [], cfTable = [], dscrSeries = []
 
-  // ── Construction phase: equity drawn evenly, zero revenue ──
+  // ── Construction phase: draw the RECOMPUTED equity (not user nominal) ──
+  // P-009 fix: equityPerConstrYr now reflects the DSCR-sized capital stack.
   var equityPerConstrYr = equity / constrYears
   for (var cy = 0; cy < constrYears; cy++) {
     var eqCF = -equityPerConstrYr
@@ -361,11 +488,17 @@ function runPPPEngine(assumptions) {
     })
   }
 
-  // ── Operations phase ──
+  // ── Operations phase: in-loop DSCR sculpting ──
+  // P-013 fix: principal is no longer a level annuity compressed into
+  // (tenor − grace). Each year's debt service is sized to CFADS / target,
+  // and principal_t = DS_t − interest_t. For flat CFADS this resolves to
+  // ~flat DS / rising principal / falling interest. Outside the repayment
+  // window (post-grace, post-amortization), principal stays at zero.
   var outDebt = debt
   for (var op = 1; op <= opsYears; op++) {
     var yr       = constrYears + op - 1
     var isGrace  = op <= gracePeriodYrs
+    var inRepay  = !isGrace && op <= (gracePeriodYrs + repayYears)
     var hasDebt  = outDebt > 0.01
 
     var revenue  = annualPayment
@@ -373,10 +506,17 @@ function runPPPEngine(assumptions) {
     var ebitda   = r2(revenue - opex)
     var interest = hasDebt ? r2(outDebt * interestRate) : 0
 
-    // Principal: 0 during grace; annuity minus interest during repayment
+    // Sculpted principal: DS_t = CFADS_t / targetDSCR, principal_t = DS_t − interest_t.
+    // CFADS uses the actual tax shield on this year's interest (consistent with
+    // the binary-search sizing). Clamped to [0, outDebt] to handle final-period
+    // rounding and any edge case where DS < interest.
     var principal = 0
-    if (!isGrace && hasDebt) {
-      principal = r2(Math.min(outDebt, Math.max(0, annuityAmt - interest)))
+    if (inRepay && hasDebt) {
+      var pbtPre  = ebitda - interest
+      var taxPre  = Math.max(0, pbtPre * taxRate)
+      var cfadsT  = ebitda - taxPre
+      var sculptedDS = cfadsT / targetDSCR
+      principal = r2(Math.min(outDebt, Math.max(0, sculptedDS - interest)))
     }
     outDebt = r2(Math.max(0, outDebt - principal))
 
@@ -411,11 +551,35 @@ function runPPPEngine(assumptions) {
   var totalOut = cfs.filter(function(c) { return c > 0 }).reduce(function(a, b) { return a + b }, 0)
   var em = totalIn > 0 ? r2(totalOut / totalIn) : null
 
+  // DSCR aggregates for the debt_sizing report
+  var dscrAggVals = dscrSeries
+    .map(function(d) { return d.dscr })
+    .filter(function(v) { return v !== null && Number.isFinite(v) })
+  var minDSCR = dscrAggVals.length ? Math.min.apply(null, dscrAggVals) : null
+  var avgDSCR = dscrAggVals.length
+    ? dscrAggVals.reduce(function(a, b) { return a + b }, 0) / dscrAggVals.length
+    : null
+
   return {
     irr, npv, equity_multiple: em,
     tdc: r2(tpc), debt_amount: r2(debt), equity_amount: r2(equity),
     dscr_series: dscrSeries, cash_flows: cfTable,
     construction_years: constrYears, operations_years: opsYears,
+    // ── Debt-capacity diagnostics (P-009 / P-013) ──
+    // Surfaces the DSCR-driven sizing decision to the UI/PDF so reviewers
+    // can see (a) what the user requested, (b) what CFADS+DSCR could support,
+    // and (c) how much additional equity flows from the gap.
+    debt_sizing: {
+      requested_debt:             r2(requestedDebt),
+      supportable_debt:           r2(supportableDebt),
+      debt_shortfall:             r2(debtShortfall),
+      additional_equity_required: r2(additionalEquity),
+      resulting_equity:           r2(equity),
+      min_dscr:                   minDSCR !== null ? r2(minDSCR) : null,
+      avg_dscr:                   avgDSCR !== null ? r2(avgDSCR) : null,
+      target_dscr:                targetDSCR,
+      actual_debt:                r2(debt),
+    },
   }
 }
 
