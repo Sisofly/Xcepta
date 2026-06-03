@@ -76,7 +76,7 @@ The recommendation engine (`src/utils/recommend.js`) is the single source of inv
 | `dscrBreachYear` | `extraKPIs.dscrBreachYear` | Number or null |
 | `isPPP` | `pppAP` | Boolean |
 | `irrHurdle` | `IRR_HURDLE` or `PPP_IRR_HURDLE` | Display value (e.g. 15 = 15%) |
-| `pppDscrFloor` | `PPP_DSCR_FLOOR` | Number (e.g. 1.30) |
+| `pppDscrFloor` | `PPP_DSCR_FLOOR` | Number (e.g. 1.20) |
 
 **Outputs:**
 
@@ -124,7 +124,7 @@ All investment thresholds are centralized. Thresholds must never be hardcoded in
 |---|---|---|
 | RE IRR hurdle | `FeasibilityProject.jsx` line ~87 | `IRR_HURDLE = 15` |
 | PPP IRR hurdle | `annualEngine.js` export | `PPP_IRR_HURDLE = 10` |
-| PPP DSCR floor | `annualEngine.js` export | `PPP_DSCR_FLOOR = 1.30` |
+| PPP DSCR floor | `annualEngine.js` export | `PPP_DSCR_FLOOR = 1.20` |
 | RE DSCR strong | `recommend.js` internal | `>= 1.25x` |
 | RE DSCR acceptable | `recommend.js` internal | `>= 1.20x` |
 | Equity multiple strong | `recommend.js` internal | `>= 1.8x` |
@@ -340,6 +340,45 @@ Items logged but not yet implemented. Do not implement these without explicit in
 | Future | Clickable confidence badges | Medium |
 | Future | `computePPPBankability()` color returns to UI layer | Medium |
 | Future | Recommendation version delta / history | Phase E |
+| P-010 | PPP debt schedule / auditability (opening/interest/principal/closing/debt service) | High — after P-015 |
+| P-015 | PPP construction debt draw + IDC capitalization + equity-first drawdown | P0 — next |
+| P-016 | PPP quarterly periodicity (currently annual) | Medium |
+| P-017 | `computeRequiredPayment` remediation redundancy under DSCR sizing | Low |
+| P-018 | PPP DSCR default duplicated across 3 literals; should reference `PPP_DSCR_FLOOR`. Dead `?? 1.30` + stale docblocks in `recommend.js` | Low |
+| P-019 | Two-tier DSCR model (size 1.20 / approve 1.30) — deferred underwriting option | Option |
+
+---
+
+## 13. Validation & Test Integrity
+
+**Never re-baseline a test to an engine output until that output is
+benchmark-validated.**
+
+A test exists to catch the engine drifting from correct behavior. If a test's
+expected value is updated to match whatever the engine currently produces —
+without first proving that output is correct against an independent benchmark or
+first-principles arithmetic — the test becomes tautological: it asserts the
+engine equals itself and can never catch a regression, because the thing it
+guards defined it.
+
+When engine behavior changes and tests fail:
+
+1. Do **not** update expected values to the new engine output by default.
+2. First validate the new output against an independent reference (benchmark
+   model, closed-form arithmetic, or documented first principles).
+3. For each re-baselined value, record the arithmetic that makes it correct
+   inline in the test.
+4. Only then update the expectation — to the *validated* number, not merely the
+   *current* number.
+
+**Corollary:** a result that matches a benchmark for the wrong mechanism is a
+latent defect, not a pass. Trace residual gaps to their cause before accepting
+or "fixing" them; a coincidental or curve-fit match hides the real behavior and
+fails silently on the next case.
+
+*Origin: Gate 1 (Madaba PPP validation, 2026-06). Prevented locking a
+grace-inflated Avg DSCR artifact as canonical, and stopped a benchmark-matching
+code change that would have masked the real IDC gap.*
 
 ---
 
@@ -348,6 +387,7 @@ Items logged but not yet implemented. Do not implement these without explicit in
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | May 2026 | Initial doctrine — established following D-0.7a+b engine provenance normalization |
+| 1.1 | June 2026 | Gate 1 PPP validation: §5 DSCR floor corrected 1.30→1.20 (code alignment); §12 logged P-010/P-015/P-016/P-017/P-018/P-019; added §13 Validation & Test Integrity rule |
 
 ---
 
