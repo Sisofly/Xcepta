@@ -426,7 +426,7 @@ export default function FPAProject() {
       doc.setFont('helvetica','bold'); doc.setFontSize(26); doc.setTextColor(248,250,252)
       doc.text(safe(project.name), ML, 62)
       doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(148,163,184)
-      var metaLine=[safe(project.project_type),safe(project.country),safe(project.currency)].filter(Boolean).join('  |  ')
+      var metaLine=[safe(project.sector||project.project_type),safe(project.country),safe(project.currency)].filter(Boolean).join('  |  ')
       doc.text(metaLine, ML, 71)
       doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(100,116,139)
       doc.text('FP&A Performance Summary \u2014 Approved Version', ML, 78)
@@ -484,7 +484,7 @@ export default function FPAProject() {
       // Project tiles
       var tiles=[
         ['Project',  safe(project.name)],
-        ['Sector',   safe(project.project_type)],
+        ['Sector',   safe(project.sector||project.project_type)],
         ['Country',  safe(project.country)],
         ['Currency', safe(project.currency)],
         ['Baseline', versionLabel],
@@ -684,7 +684,7 @@ export default function FPAProject() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2rem' }}>
         <div>
           <h1 style={{ fontSize: '1.75rem', fontWeight: '600', marginBottom: '0.25rem' }}>{project.name}</h1>
-          <p style={{ color: '#8b949e', fontSize: '0.85rem' }}>{project.project_type} · {project.country} · {project.currency}</p>
+          <p style={{ color: '#8b949e', fontSize: '0.85rem' }}>{project.sector || project.project_type} · {project.country} · {project.currency}</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           {variances.length > 0 && (

@@ -26,8 +26,11 @@ function getFinancingStructure(modelType) {
 
 function getLegacyProjectType(modelType, sector, revenueModel) {
   if (modelType === 'Real Estate') return 'Real Estate'
-  if (sector === 'Infrastructure' && revenueModel === 'Availability Payment') return 'Infrastructure / PPP'
-  return sector
+  // P-020: all Project Finance projects map to the constraint-legal 'Infrastructure / PPP'
+  // bucket. projects_project_type_check allows only RE + Infrastructure variants, not the
+  // PF sectors (Healthcare/Energy/Industrial) added in E-0.3a. True sector lives in
+  // projects.sector; all display paths read sector-first.
+  return 'Infrastructure / PPP'
 }
 
 function isAPEngine(revenueModel) {

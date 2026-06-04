@@ -89,7 +89,7 @@ export default function FPA() {
                   {p.name}
                 </p>
                 <p style={{ color: colors.textSecondary, fontSize: '0.8rem' }}>
-                  {p.project_type} · {p.country} · {p.currency}
+                  {p.sector || p.project_type} · {p.country} · {p.currency}
                 </p>
               </div>
               <div style={{ textAlign: 'right' }}>
