@@ -2965,6 +2965,74 @@ export default function FeasibilityProject() {
                       </button>
                     )}
                   </div>
+
+                  {/* Debt Schedule — PPP only. Draw / IDC are placeholder
+                       columns for P-015 (construction debt draw + IDC
+                       capitalization); they render as zero today so the
+                       table shape is final and P-015 can populate them in
+                       place. Pure display: schedule is rolled in the
+                       component from cash_flows + debt_sizing.actual_debt;
+                       no engine math runs here. */}
+                  {pppAP && modelOutput.cash_flows && modelOutput.cash_flows.length > 0 && (() => {
+                    const startingDebt =
+                      modelOutput.debt_sizing && modelOutput.debt_sizing.actual_debt != null
+                        ? Number(modelOutput.debt_sizing.actual_debt)
+                        : (modelOutput.debt_amount != null ? Number(modelOutput.debt_amount) : null)
+                    if (startingDebt === null || !Number.isFinite(startingDebt)) return null
+
+                    // Roll the schedule. Engine has no construction-period
+                    // debt activity today, so Construction rows hold opening
+                    // = closing = startingDebt. Operations rows amortize.
+                    let opening = startingDebt
+                    const rows = modelOutput.cash_flows.map(r => {
+                      const principal = Number(r.principal) || 0
+                      const interest  = Number(r.interest)  || 0
+                      const closing   = opening - principal
+                      const row = {
+                        year: r.year, phase: r.phase,
+                        opening, draw: 0, idc: 0,
+                        interest, principal, closing,
+                      }
+                      opening = closing
+                      return row
+                    })
+                    const finalClosing   = rows[rows.length - 1].closing
+                    const fullyAmortized = Math.abs(finalClosing) <= 1   // ±1 JOD tolerance
+
+                    return (
+                      <div style={{marginTop:'2rem'}}>
+                        <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'1rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>Debt Schedule (JOD)</h3>
+                        <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',overflow:'auto'}}>
+                          <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.8rem',minWidth:'900px'}}>
+                            <thead><tr style={{borderBottom:`1px solid ${colors.border}`}}>
+                              {['Year','Phase','Opening Debt','Draw','IDC','Interest','Principal','Closing Debt'].map(h => (
+                                <th key={h} style={{padding:'0.6rem 0.75rem',textAlign:'right',color:colors.textSecondary,fontWeight:'500',fontSize:'0.7rem',whiteSpace:'nowrap'}}>{h}</th>
+                              ))}
+                            </tr></thead>
+                            <tbody>
+                              {rows.map((row, index) => (
+                                <tr key={row.year} style={{borderBottom:`1px solid ${colors.border}`,background:index%2===0?colors.accentBgSubtle:'transparent'}}>
+                                  <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{row.year}</td>
+                                  <td style={{padding:'0.6rem 0.75rem',color:colors.textMuted,textAlign:'right',fontSize:'0.7rem'}}>{row.phase}</td>
+                                  <td style={{padding:'0.6rem 0.75rem',color:colors.textPrimary,textAlign:'right'}}>{fmtNumber(row.opening)}</td>
+                                  <td style={{padding:'0.6rem 0.75rem',color:colors.textMuted,textAlign:'right'}}>{fmtNumber(row.draw)}</td>
+                                  <td style={{padding:'0.6rem 0.75rem',color:colors.textMuted,textAlign:'right'}}>{fmtNumber(row.idc)}</td>
+                                  <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.interest)}</td>
+                                  <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.principal)}</td>
+                                  <td style={{padding:'0.6rem 0.75rem',color:colors.textPrimary,textAlign:'right'}}>{fmtNumber(row.closing)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {!fullyAmortized && (
+                          <p style={{marginTop:'0.5rem',fontSize:'0.7rem',color:colors.textMuted,fontStyle:'italic'}}>
+                            Schedule does not fully amortize (residual closing: {fmtNumber(finalClosing)} JOD).
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
               ) : (
                 <p style={{color:colors.textMuted,fontSize:'0.85rem'}}>Model output not found.</p>
