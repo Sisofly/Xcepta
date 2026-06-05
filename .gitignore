@@ -27,3 +27,6 @@ dist-ssr
 
 # Local-only PDF export harness + review artifacts (not shared)
 tmp/
+
+# Claude Code session state and worktrees — never commit (P-021)
+.claude/
