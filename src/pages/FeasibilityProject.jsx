@@ -2974,10 +2974,19 @@ export default function FeasibilityProject() {
                        component from cash_flows + debt_sizing.actual_debt;
                        no engine math runs here. */}
                   {pppAP && modelOutput.cash_flows && modelOutput.cash_flows.length > 0 && (() => {
+                    // Starting term-loan balance. Prefer the engine's sized figure; fall back to
+                    // debt_amount; finally derive from cash_flows (total principal repaid = original
+                    // debt, since the loan fully amortizes). The last fallback lets the schedule
+                    // render on older approved baselines whose cached output predates debt_sizing
+                    // (P-022: approved baselines carry old-engine output shapes).
+                    const principalSum = modelOutput.cash_flows.reduce(
+                      (s, r) => s + (Number(r.principal) || 0), 0)
                     const startingDebt =
-                      modelOutput.debt_sizing && modelOutput.debt_sizing.actual_debt != null
+                      (modelOutput.debt_sizing && modelOutput.debt_sizing.actual_debt != null)
                         ? Number(modelOutput.debt_sizing.actual_debt)
-                        : (modelOutput.debt_amount != null ? Number(modelOutput.debt_amount) : null)
+                        : (modelOutput.debt_amount != null)
+                          ? Number(modelOutput.debt_amount)
+                          : (principalSum > 0 ? principalSum : null)
                     if (startingDebt === null || !Number.isFinite(startingDebt)) return null
 
                     // Roll the schedule. Engine has no construction-period
