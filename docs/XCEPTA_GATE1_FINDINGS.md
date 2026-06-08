@@ -148,14 +148,21 @@ to non-flat CFADS later. Verdict/recommendation logic and the
 
 ### 4.4 Benchmark convergence — two runs
 
+> **⚠️ Superseded debt/equity/IRR figures (see §5c).** The Run B debt (42.20M)
+> and equity (14.09M) below were intermediate **dry-run** values recorded
+> mid-fix. The shipped engine sizes **44.42M debt / 11.87M equity** at DSCR 1.00
+> (verified live 2026-06-08). The **DSCR rows remain valid** — Min/Avg DSCR match
+> the benchmark exactly regardless. Treat the debt/equity/IRR/NPV cells in this
+> table as historical estimates; the live figures in §5c are authoritative.
+
 | Field | Run A (target 1.15) | Run B (target 1.00) | Benchmark | Δ (B) |
 |---|---:|---:|---:|---:|
-| Supportable debt | 36.43M | 42.20M | 47.79M | −5.59M |
-| Resulting equity | 19.86M | 14.09M | 8.50M | +5.59M |
+| Supportable debt | 36.43M | 42.20M *(superseded → 44.42M)* | 47.79M | −5.59M |
+| Resulting equity | 19.86M | 14.09M *(superseded → 11.87M)* | 8.50M | +5.59M |
 | **Min DSCR** | 1.15 | **1.00** | **1.00** | **0.00 ✓** |
 | **Avg DSCR** | 1.48 | **1.29** | **1.29** | **0.00 ✓** |
-| Equity IRR | −3.66% | −18.01% | 8.99% | — |
-| NPV | −8.11M | −6.65M | −0.83M | — |
+| Equity IRR | −3.66% | −18.01% *(superseded → −10.2%)* | 8.99% | — |
+| NPV | −8.11M | −6.65M *(superseded → −4.30M)* | −0.83M | — |
 
 **Min DSCR and Avg DSCR match the benchmark exactly.** This proves the sculpting
 mechanism, per-period CFADS, tax treatment, and DSCR computation are correct.
@@ -171,8 +178,22 @@ The ~5.6M debt shortfall is **not** a sculpting defect. The benchmark draws debt
 during construction and **capitalizes interest-during-construction (IDC) into the
 term loan**; XCEPTA funds construction with 100% equity and models zero IDC.
 
+> **⚠️ This reconciliation used the superseded 42.20M dry-run figure (see §5c).**
+> The arithmetic below is preserved for audit trail. Corrected reconciliation
+> using the authoritative live figure (44.42M):
+>
+> ```
+> XCEPTA supportable debt (target 1.00, live):   44,417,516
+> Benchmark term loan:                            47,787,827
+>                                                ────────────
+> Residual IDC gap to close (P-015):              ~3,370,311   (~3.4M)
+> ```
+>
+> The original ~5.5M estimate below was inflated by the low 42.20M dry-run base.
+> The true IDC capability target is **~3.4M**, not ~5.5M.
+
 ```
-XCEPTA Run B supportable debt (target 1.00):   42,196,641
+XCEPTA Run B supportable debt (target 1.00):   42,196,641   [superseded — see §5c]
 Benchmark capitalized IDC (ConFin):           + 5,498,890
                                               ────────────
                                                 47,695,531
@@ -180,11 +201,11 @@ Benchmark term loan:                            47,787,827
 Residual after IDC:                                 92,296   (0.19%)
 ```
 
-The equity gap mirrors it exactly: XCEPTA equity (14.09M) − benchmark equity
-(8.50M) = 5.59M = the same IDC. XCEPTA makes **equity** plug the hole the
-benchmark plugs with **IDC-funded debt** — which is precisely why its IRR craters
-(more equity, same dividends). Once IDC is modeled, debt rises ~5.5M toward
-47.8M, equity falls toward 8.5M, and IRR should converge toward 8.99%.
+The equity gap mirrors it: XCEPTA equity − benchmark equity = the same IDC.
+XCEPTA makes **equity** plug the hole the benchmark plugs with **IDC-funded
+debt** — which is precisely why its IRR craters (more equity, same dividends).
+Once IDC is modeled, debt rises ~3.4M toward 47.8M, equity falls toward 8.5M,
+and IRR should converge toward 8.99%.
 
 **The gap is a missing capability, not a calculation error.**
 
@@ -217,22 +238,23 @@ sculpting logic is live and correct. The debt schedule reconciles to a zero
 closing balance on both runs. The 1.15-vs-1.00 pair cleanly demonstrates the
 engine flexing debt to the target (lower DSCR target → more debt → less equity).
 
-**⚠️ Open question — debt figure discrepancy at Target DSCR 1.00.**
-The deployed engine sizes **44.42M** at DSCR 1.00, but §4.4 Run B (a local
-dry-run during the fix) recorded **42.20M** for the same inputs — a ~2.2M
-difference. Both hold Min DSCR at 1.00 and both reconcile, so this is not a
-correctness failure, but the two figures disagree and the IDC reconciliation
-arithmetic in §5 was built on the 42.20M figure. Consequences:
+**✅ Resolved — debt figure reconciled (2026-06-08).** The deployed engine sizes
+**44.42M** at DSCR 1.00; §4.4 Run B recorded **42.20M**. Code inspection of
+`sculptSupportableDebt` (`annualEngine.js:336`) confirms **44.42M is
+authoritative**: the function binary-searches (`:328-329`) for the starting debt
+balance that amortizes to exactly zero over `repayYears`, including the tax
+shield on interest (`:351`). The live run produced Min DSCR = 1.00 with the debt
+schedule closing at exactly 0 — a self-consistent solution, which by definition
+is the correct supportable debt for these inputs. The 42.20M was an intermediate
+dry-run figure recorded mid-fix before the search settled; it is **superseded**,
+not a separate valid result. No code changed between dry-run and ship; the
+difference was an early estimate vs the final converged value.
 
-- The residual-to-benchmark gap is now **~3.4M** (47.79M − 44.42M), not the
-  ~5.5M documented in §5. The IDC capability (P-015) must still close it, but
-  the target magnitude is smaller than the §5 arithmetic implies.
-- **Action (next session):** reconcile which figure is authoritative. Likely the
-  42.20M was an intermediate dry-run state and 44.42M is the shipped engine — in
-  which case §4.4 and §5 should be re-baselined to 44.42M. If instead something
-  changed sizing between dry-run and ship, identify what, because it moves the
-  IDC reconciliation. Do NOT treat 44.42M as validated until this is explained —
-  per §13 (test-integrity), a number is not accepted until its origin is known.
+**Consequence for IDC (P-015):** the residual-to-benchmark gap is **~3.4M**
+(47.79M − 44.42M), NOT the ~5.5M originally documented in §5. The IDC capability
+must close ~3.4M of capitalized construction interest, not ~5.5M. §4.4 and §5
+below retain the original 42.20M dry-run figures for audit trail but are marked
+superseded; the authoritative sizing is 44.42M.
 
 ---
 
@@ -269,7 +291,7 @@ thresholds" violation. Logged P-018.
 |---|---|---|
 | **P-009** | Target DSCR validated but never consumed in debt sizing (`debt = tpc × debtPct`) | ✅ **Fixed** (`bd5dca9`) |
 | **P-013** | Grace deferred principal + full interest, compressed annuity into `tenor − grace` → principal cliff | ✅ **Fixed** (`bd5dca9`) |
-| **P-015** | No construction debt draw / IDC capitalization / equity-first drawdown | 🔴 **Open — dominant residual gap. Next P0.** Residual to benchmark ~3.4M on live engine (was documented ~5.5M; see §5c open question). Build order: 015A equity-first funding waterfall → 015B construction debt draw → 015C IDC capitalization → 015D COD term-loan conversion. Validate each layer against the Target-DSCR-1.00 run and the debt schedule before committing. |
+| **P-015** | No construction debt draw / IDC capitalization / equity-first drawdown | 🔴 **Open — dominant residual gap. Next P0.** Residual to benchmark **~3.4M** on live engine (44.42M sized vs 47.79M benchmark; §5c reconciled — the older ~5.5M figure used a superseded dry-run base). Build order: 015A equity-first funding waterfall → 015B construction debt draw → 015C IDC capitalization → 015D COD term-loan conversion. Validate each layer against the Target-DSCR-1.00 run and the debt schedule before committing. |
 | **P-010** | PPP debt schedule (opening/draw/IDC/interest/principal/closing) exposed in Results | ✅ **Built** (`31ebde4`, `c142310`). Display-only; rolls schedule from `cash_flows` + `debt_sizing.actual_debt`, with a principal-sum fallback so it renders on old baselines. Draw/IDC are zero placeholder columns for P-015 to populate. Reconciles to ~0 closing balance on both nadeem runs. Built **before** P-015 deliberately — it is the validation surface for IDC. |
 | **P-016** | Annual periodicity only; benchmark is quarterly | 🟡 Backlog |
 | **P-017** | `computeRequiredPayment` remediation now largely redundant — DSCR sizing already solves coverage, so the solver returns ~zero gap for any self-sized project. Reassess its UI role. | 🟡 Backlog |
@@ -321,14 +343,15 @@ residual gap to the benchmark is a single, understood, documented capability
 
 **Next gate is blocked on P-015 (IDC).** The debt schedule (P-010) is now built
 and serves as the validation surface for IDC. Production is current (deployed
-2026-06-08). One open item carries into the P-015 work: the debt-figure
-discrepancy at Target DSCR 1.00 (§5c) must be reconciled — confirm whether
-44.42M (live) or 42.20M (documented dry-run) is authoritative before the IDC
-reconciliation arithmetic is re-based. All other workstreams — taxonomy,
-mixed-use, villas, capability-matrix expansion, positioning — remain paused until
-PPP correctness is complete through IDC.
+2026-06-08). The §5c debt-figure question is **resolved**: 44.42M is
+authoritative (the 42.20M was a superseded dry-run estimate), which sets the IDC
+target at **~3.4M**, not ~5.5M. All other workstreams — taxonomy, mixed-use,
+villas, capability-matrix expansion, positioning — remain paused until PPP
+correctness is complete through IDC.
 
 **Session log 2026-06-08:** P-020 (constraint), P-021 (test runner), P-010 (debt
 schedule), P-022 mitigation all shipped and deployed. Live convergence re-test
-confirms Min DSCR → 1.00 exactly on the deployed engine. Next session: reconcile
-the §5c debt figure, then begin P-015A (equity-first funding waterfall).
+confirms Min DSCR → 1.00 exactly on the deployed engine. §5c debt figure
+reconciled — 44.42M authoritative, IDC target ~3.4M. Next session: begin P-015A
+(equity-first funding waterfall), validating each layer against the
+Target-DSCR-1.00 run and the debt schedule.
