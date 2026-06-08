@@ -1,9 +1,23 @@
 # XCEPTA — Gate 1 Validation Findings
 
-**Status:** Closed — first correctness defect fixed and benchmark-validated
-**Commit:** `ec592cc` — fix(ppp): size debt to Target DSCR via CFADS sculpting (P-009, P-013)
-**Date:** 2026-06-03
+**Status:** Closed — first correctness defect fixed and benchmark-validated. P-010 (debt schedule) now built; production deployment current.
+**Date:** 2026-06-03 (original) · Updated 2026-06-08 (post-deployment verification)
 **Owner:** Saad (product / finance logic) · Engine: `src/modules/feasibility/annualEngine.js`
+
+**Commit chain (on `origin/master`):**
+- `bd5dca9` — fix(ppp): size debt to Target DSCR via CFADS sculpting (P-009, P-013) *(originally `ec592cc` in a worktree; cherry-picked to master)*
+- `c88a2ed` — docs: Gate 1 findings + test-integrity rule
+- `652de13` — fix(ppp): map PF project_type to constraint-legal value; FPA sector-first (P-020)
+- `bdc3951` — chore: local test runner + ignore `.claude` worktrees (P-021)
+- `31ebde4` — feat(ppp): add Debt Schedule to PPP results (P-010)
+- `c142310` — fix(ppp): derive debt-schedule starting balance from principal sum when `debt_sizing` absent (P-010/P-022)
+
+**Deployment note (2026-06-08):** the GitHub→Vercel auto-deploy integration had
+silently disconnected on ~Jun 2, so commits `bd5dca9` through `c142310` were live
+on `origin/master` but **not deployed** to production until manually reconnected
+and redeployed via Vercel "Create Deployment → master" on Jun 8. Auto-deploy is
+restored; verify it fires on the next push. Approved baselines required re-approval
+to regenerate output in the current engine's shape (see P-022).
 
 ---
 
@@ -182,6 +196,46 @@ that matches for the wrong reason is a latent defect.
 
 ---
 
+## 5c. Live production convergence re-test (2026-06-08)
+
+After the Vercel deployment was brought current, both Madaba scenarios were re-run
+on the **deployed** engine to confirm production matches the validated local
+behaviour. Two approved baselines now exist live:
+
+| Field | nadeem 1 (Target 1.15) | Nadeem 2 (Target 1.00) | Benchmark (1.00) |
+|---|---:|---:|---:|
+| Supportable debt | 38.34M | **44.42M** | 47.79M |
+| Resulting equity | 17.95M | 11.87M | 8.50M |
+| **Min DSCR** | 1.15 | **1.00** | **1.00** |
+| Equity IRR | −0.6% | −10.2% | 8.99% |
+| NPV | −5.83M | −4.30M | −0.83M |
+| Equity Multiple | 0.97× | 0.77× | 2.73× |
+| Debt schedule closing (final yr) | 0 | 0 | — |
+
+**Min DSCR converges to 1.00 exactly on the deployed engine**, confirming the
+sculpting logic is live and correct. The debt schedule reconciles to a zero
+closing balance on both runs. The 1.15-vs-1.00 pair cleanly demonstrates the
+engine flexing debt to the target (lower DSCR target → more debt → less equity).
+
+**⚠️ Open question — debt figure discrepancy at Target DSCR 1.00.**
+The deployed engine sizes **44.42M** at DSCR 1.00, but §4.4 Run B (a local
+dry-run during the fix) recorded **42.20M** for the same inputs — a ~2.2M
+difference. Both hold Min DSCR at 1.00 and both reconcile, so this is not a
+correctness failure, but the two figures disagree and the IDC reconciliation
+arithmetic in §5 was built on the 42.20M figure. Consequences:
+
+- The residual-to-benchmark gap is now **~3.4M** (47.79M − 44.42M), not the
+  ~5.5M documented in §5. The IDC capability (P-015) must still close it, but
+  the target magnitude is smaller than the §5 arithmetic implies.
+- **Action (next session):** reconcile which figure is authoritative. Likely the
+  42.20M was an intermediate dry-run state and 44.42M is the shipped engine — in
+  which case §4.4 and §5 should be re-baselined to 44.42M. If instead something
+  changed sizing between dry-run and ship, identify what, because it moves the
+  IDC reconciliation. Do NOT treat 44.42M as validated until this is explained —
+  per §13 (test-integrity), a number is not accepted until its origin is known.
+
+---
+
 ## 5b. DSCR floor reconciliation (incidental finding)
 
 During documentation, Section 5 of `XCEPTA_GOVERNANCE.md` was found to state
@@ -213,14 +267,18 @@ thresholds" violation. Logged P-018.
 
 | ID | Finding | Status |
 |---|---|---|
-| **P-009** | Target DSCR validated but never consumed in debt sizing (`debt = tpc × debtPct`) | ✅ **Fixed** (`ec592cc`) |
-| **P-013** | Grace deferred principal + full interest, compressed annuity into `tenor − grace` → principal cliff | ✅ **Fixed** (`ec592cc`) |
-| **P-015** | No construction debt draw / IDC capitalization / equity-first drawdown | 🔴 **Open — dominant residual gap (~5.5M).** Next P0. |
-| **P-010** | No PPP debt auditability (opening/interest/principal/closing/debt-service schedule not exposed) | 🟠 Open — High. Build after P-015. P-012 was only findable because one debt line happened to be visible. |
+| **P-009** | Target DSCR validated but never consumed in debt sizing (`debt = tpc × debtPct`) | ✅ **Fixed** (`bd5dca9`) |
+| **P-013** | Grace deferred principal + full interest, compressed annuity into `tenor − grace` → principal cliff | ✅ **Fixed** (`bd5dca9`) |
+| **P-015** | No construction debt draw / IDC capitalization / equity-first drawdown | 🔴 **Open — dominant residual gap. Next P0.** Residual to benchmark ~3.4M on live engine (was documented ~5.5M; see §5c open question). Build order: 015A equity-first funding waterfall → 015B construction debt draw → 015C IDC capitalization → 015D COD term-loan conversion. Validate each layer against the Target-DSCR-1.00 run and the debt schedule before committing. |
+| **P-010** | PPP debt schedule (opening/draw/IDC/interest/principal/closing) exposed in Results | ✅ **Built** (`31ebde4`, `c142310`). Display-only; rolls schedule from `cash_flows` + `debt_sizing.actual_debt`, with a principal-sum fallback so it renders on old baselines. Draw/IDC are zero placeholder columns for P-015 to populate. Reconciles to ~0 closing balance on both nadeem runs. Built **before** P-015 deliberately — it is the validation surface for IDC. |
 | **P-016** | Annual periodicity only; benchmark is quarterly | 🟡 Backlog |
 | **P-017** | `computeRequiredPayment` remediation now largely redundant — DSCR sizing already solves coverage, so the solver returns ~zero gap for any self-sized project. Reassess its UI role. | 🟡 Backlog |
 | **P-018** | PPP DSCR default duplicated across three literals (sizing target `annualEngine.js:386`, solver `:609`, floor `:664`) instead of referencing the single `PPP_DSCR_FLOOR` constant. Section 5 "no duplicated thresholds" violation. Also: dead `?? 1.30` fallback + stale 1.30 docblocks in `recommend.js`. Fix when next touching the debt module. | 🟡 Backlog — Low |
 | **P-019** | Two-tier DSCR model (size to lender-minimum 1.20, approve to institutional 1.30) — deferred underwriting-stance option, not adopted. | 🟡 Backlog — option |
+| **P-020** | Project insert failed `projects_project_type_check` for PF sectors (Healthcare/Energy/Industrial) added in E-0.3a — wizard sent raw sector, not in the CHECK whitelist. | ✅ **Fixed** (`652de13`). `getLegacyProjectType` maps all PF projects to constraint-legal `'Infrastructure / PPP'`; true sector stays in `projects.sector`. FPA display paths made sector-first. No DB migration. |
+| **P-021** | No runnable test invocation in main tree — `"type":"module"` + jest 30, no `test` script; raw `npx jest` failed on ESM. 304-test suite only ran inside Claude Code worktrees. | ✅ **Fixed** (`bdc3951`). Added `test` script (`node --experimental-vm-modules`); `npm test` → 304/304 from main tree. `.claude/` gitignored; stale worktrees removed. |
+| **P-022** | Approved baselines carry old-engine output shapes; features built against the newer return shape (e.g. debt schedule needing `debt_sizing`) don't find their fields, and stale cached output can show invalid results behind only a warning banner. Re-approval regenerates correct output. | 🟠 Open — Med. Mitigated for debt schedule by the principal-sum fallback (`c142310`). Consider hard-blocking (not just warning) approved results when engine version changes, and/or auto-regenerating on engine upgrade. |
+| **P-023** | No input/output sanity validation. A missing-zeros TPC entry (56,290 vs 56,290,000) produced a confident "Strong Investment Case / Proceed / 1257% IRR" — dangerous for an institutional tool. | 🟠 Open — **High severity, low effort.** Build on **invariant ratios**, not deal-size thresholds: warn (not block) if Interest/Debt <0.5%, Debt-Service/Debt <1%, DSCR >20×, Equity Multiple >50×, IRR >100%, or simple payback <1yr. These hold across sectors. Schedule after P-015, before P-016. |
 | ~~P-005~~ | "OPEX 570" percentage bug | ⛔ **Struck** — input was 0%; 570 is correct. No Madaba evidence. |
 | ~~P-012~~ | Operating rate 8.25% vs 7.0% | ⛔ **Struck** — engine reads 7% correctly; 8.25% was a service ratio, not the coupon. |
 
@@ -261,6 +319,16 @@ defect (DSCR not consumed in sizing) is fixed and benchmark-validated. The
 residual gap to the benchmark is a single, understood, documented capability
 (IDC), not an error.
 
-**Next gate is blocked on P-015 (IDC).** All other workstreams — taxonomy,
+**Next gate is blocked on P-015 (IDC).** The debt schedule (P-010) is now built
+and serves as the validation surface for IDC. Production is current (deployed
+2026-06-08). One open item carries into the P-015 work: the debt-figure
+discrepancy at Target DSCR 1.00 (§5c) must be reconciled — confirm whether
+44.42M (live) or 42.20M (documented dry-run) is authoritative before the IDC
+reconciliation arithmetic is re-based. All other workstreams — taxonomy,
 mixed-use, villas, capability-matrix expansion, positioning — remain paused until
-PPP correctness is complete through IDC and the debt schedule (P-010).
+PPP correctness is complete through IDC.
+
+**Session log 2026-06-08:** P-020 (constraint), P-021 (test runner), P-010 (debt
+schedule), P-022 mitigation all shipped and deployed. Live convergence re-test
+confirms Min DSCR → 1.00 exactly on the deployed engine. Next session: reconcile
+the §5c debt figure, then begin P-015A (equity-first funding waterfall).
