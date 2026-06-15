@@ -473,17 +473,30 @@ function runPPPEngine(assumptions) {
 
   var cfs = [], cfTable = [], dscrSeries = []
 
-  // ── Construction phase: draw the RECOMPUTED equity (not user nominal) ──
-  // P-009 fix: equityPerConstrYr now reflects the DSCR-sized capital stack.
-  var equityPerConstrYr = equity / constrYears
+  // ── Construction phase: equity-first funding waterfall (P-015A) ──
+  // Each construction year draws equity first (up to equityRemaining),
+  // then debt for the balance of that year's capex. By COD the
+  // cumulative debt drawn equals `debt` exactly; cumulative equity
+  // drawn equals `equity` exactly. IDC (P-015C) is NOT applied here —
+  // construction interest is still zero in this pass.
+  //
+  // Replaces P-009's even equity split; equity_cf timing changes
+  // intentionally, which may shift IRR slightly.
+  var capexPerConstrYr = tpc / constrYears
+  var equityRemaining  = equity
   for (var cy = 0; cy < constrYears; cy++) {
-    var eqCF = -equityPerConstrYr
+    var equityDrawThisYear = Math.min(capexPerConstrYr, equityRemaining)
+    var debtDrawThisYear   = capexPerConstrYr - equityDrawThisYear
+    equityRemaining       -= equityDrawThisYear
+    var eqCF = -equityDrawThisYear
     cfs.push(eqCF)
     cfTable.push({
       year: cy, phase: 'Construction',
       revenue: 0, opex: 0, ebitda: 0,
       interest: 0, pbt: 0, tax: 0, net_income: 0,
-      principal: 0, capex: r2(tpc / constrYears),
+      principal: 0, capex: r2(capexPerConstrYr),
+      equity_draw: r2(equityDrawThisYear),
+      debt_draw:   r2(debtDrawThisYear),
       equity_cf: r2(eqCF), dscr: null,
     })
   }
@@ -540,7 +553,9 @@ function runPPPEngine(assumptions) {
       year: yr, phase: 'Operations',
       revenue: r2(revenue), opex: opex, ebitda: ebitda,
       interest: interest, pbt: pbt, tax: tax, net_income: netInc,
-      principal: principal, capex: 0, equity_cf: eqCF, dscr: dscr,
+      principal: principal, capex: 0,
+      equity_draw: 0, debt_draw: 0,
+      equity_cf: eqCF, dscr: dscr,
     })
   }
 

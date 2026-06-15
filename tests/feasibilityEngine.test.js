@@ -1487,30 +1487,86 @@ describe('B34 — PPP base scenario sanity', () => {
     expect(out.cash_flows.length).toBe(27)
   })
 
-  test('B34.4: construction rows are zero-revenue with even equity draw & capex split', () => {
+  test('B34.4: construction rows follow equity-first funding waterfall (P-015A)', () => {
+    // B34.4 re-baselined for P-015A equity-first construction funding;
+    // replaces prior even-split equity assertion.
+    //
+    // Definition of equity-first funding (per P-015A spec):
+    //   annualConstructionCapex = tpc / constrYears
+    //   remainingEquity starts at equity_amount (sized upstream, locked by B34.1)
+    //   for each construction year:
+    //     equity_draw = min(annualConstructionCapex, remainingEquity)
+    //     debt_draw   = annualConstructionCapex − equity_draw
+    //     remainingEquity -= equity_draw
+    //   equity_cf = −equity_draw  (no debt is paid out of equity in construction)
+    //
+    // Expected per-row draws are computed FROM THE INPUTS (tpc=100M from the
+    // fixture, constrYears=2 from ceil(24/12), equity_amount from B34.1's
+    // independently-derived sizing), NOT by reading the engine's own row
+    // outputs back into the expected values. Any future regression — revert
+    // to even-split, debt-first, mis-rounded capex, etc. — will fail here.
     const constrRows = out.cash_flows.filter(r => r.phase === 'Construction')
     expect(constrRows.length).toBe(2)
-    // Equity per construction year = recomputed equity / construction_years.
-    // For base fixture: 52,492,680.41 / 2 = 26,246,340.205 → r2() rounds to
-    // -26,246,340.21 in the engine. (Pre-fix this was 20M / 2 = -10M; new
-    // sizing recomputes equity to TPC − supportable debt and the construction
-    // loop draws THAT figure.)
-    //
-    // The engine computes equityPerConstrYr from the UNROUNDED equity, while
-    // equity_amount in the return is r2(equity). Dividing the rounded value
-    // by 2 leaves a ½-cent gap from the row's r2-rounded equity_cf, putting
-    // CURR_DP=2 right on its tolerance edge. Use ±0.5 JOD tolerance (same as
-    // B40.3 / B42.2 — invariant holds within rounding).
-    const expectedEqCF = -out.equity_amount / out.construction_years
+
+    // Primary fixture inputs (would be read from P_PPP_BASE_ASSUMPTIONS / Construction Period)
+    const tpc                     = 100_000_000     // P_PPP_BASE 'Total Project Cost'
+    const constrYears             = 2               // ceil(24/12)
+    const annualConstructionCapex = tpc / constrYears   // = 50,000,000
+
+    // Apply the equity-first algorithm offline. Use out.equity_amount as the
+    // budget total (already pinned by B34.1 via independent debt-sizing math).
+    // The algorithm — not the engine output — determines per-row expectations.
+    let remainingEquity = out.equity_amount
+    const expectedDraws = []
+    for (let i = 0; i < constrYears; i++) {
+      const eq = Math.min(annualConstructionCapex, remainingEquity)
+      const dt = annualConstructionCapex - eq
+      expectedDraws.push({ equity_draw: eq, debt_draw: dt })
+      remainingEquity -= eq
+    }
+
+    // Row-level structural invariants (unchanged from prior test)
     constrRows.forEach(r => {
       expect(r.revenue).toBe(0)
       expect(r.opex).toBe(0)
       expect(r.interest).toBe(0)
       expect(r.principal).toBe(0)
-      expect(r.equity_cf).toBeCloseTo(expectedEqCF, 0)         // ±0.5 JOD, absorbs r2() drift
-      expect(r.capex).toBeCloseTo(50_000_000, CURR_DP)         // 100M / 2 yrs (unchanged)
+      expect(r.capex).toBeCloseTo(annualConstructionCapex, CURR_DP)
       expect(r.dscr).toBeNull()
     })
+
+    // Row-level equity-first assertions (the P-015A re-baseline)
+    constrRows.forEach((r, i) => {
+      expect(r.equity_draw).toBeCloseTo(expectedDraws[i].equity_draw, 0)
+      expect(r.debt_draw  ).toBeCloseTo(expectedDraws[i].debt_draw,   0)
+      expect(r.equity_cf  ).toBeCloseTo(-expectedDraws[i].equity_draw, 0)
+    })
+
+    // Strongest single anchor: year-0 equity_cf must equal
+    // −min(annualConstructionCapex, equity_amount). Under the OLD even-split
+    // behavior this would have been −equity_amount/2; the assertion below
+    // would fail with a clear "expected -50,000,000, received -26,246,340.21".
+    expect(constrRows[0].equity_cf).toBeCloseTo(
+      -Math.min(annualConstructionCapex, out.equity_amount), 0
+    )
+
+    // Debt-after-equity ordering: while a year's equity_draw still covers the
+    // full annual capex, that year's debt_draw must be exactly zero. Catches
+    // any future regression that draws debt early or splits proportionally.
+    constrRows.forEach(r => {
+      const equityCoversFullCapex =
+        Math.abs(r.equity_draw - annualConstructionCapex) < 0.5
+      if (equityCoversFullCapex) {
+        expect(r.debt_draw).toBe(0)
+      }
+    })
+
+    // Construction-funding reconciliation invariants
+    const totalEquityDraw = constrRows.reduce((s, r) => s + r.equity_draw, 0)
+    const totalDebtDraw   = constrRows.reduce((s, r) => s + r.debt_draw,   0)
+    expect(totalEquityDraw).toBeCloseTo(out.equity_amount, 0)            // Σ equity_draw ≈ equity
+    expect(totalDebtDraw  ).toBeCloseTo(out.debt_amount,   0)            // Σ debt_draw   ≈ actual debt
+    expect(totalEquityDraw + totalDebtDraw).toBeCloseTo(tpc, 0)          // Σ funds = TPC
   })
 
   test('B34.5: irr, npv, equity_multiple are populated finite numbers', () => {

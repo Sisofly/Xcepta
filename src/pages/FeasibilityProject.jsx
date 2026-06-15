@@ -2966,13 +2966,14 @@ export default function FeasibilityProject() {
                     )}
                   </div>
 
-                  {/* Debt Schedule — PPP only. Draw / IDC are placeholder
-                       columns for P-015 (construction debt draw + IDC
-                       capitalization); they render as zero today so the
-                       table shape is final and P-015 can populate them in
-                       place. Pure display: schedule is rolled in the
-                       component from cash_flows + debt_sizing.actual_debt;
-                       no engine math runs here. */}
+                  {/* Debt Schedule — PPP only. P-015A: Construction rows
+                       ramp opening→closing via debt_draw (equity-first
+                       waterfall). Operations rows amortize from the
+                       construction closing balance. IDC remains 0 here
+                       (P-015C will populate it). Older approved baselines
+                       lack debt_draw on cash_flows rows; we fall back to
+                       the legacy "opening = startingDebt for all rows"
+                       rendering so historic outputs still display. */}
                   {pppAP && modelOutput.cash_flows && modelOutput.cash_flows.length > 0 && (() => {
                     // Starting term-loan balance. Prefer the engine's sized figure; fall back to
                     // debt_amount; finally derive from cash_flows (total principal repaid = original
@@ -2989,17 +2990,26 @@ export default function FeasibilityProject() {
                           : (principalSum > 0 ? principalSum : null)
                     if (startingDebt === null || !Number.isFinite(startingDebt)) return null
 
-                    // Roll the schedule. Engine has no construction-period
-                    // debt activity today, so Construction rows hold opening
-                    // = closing = startingDebt. Operations rows amortize.
-                    let opening = startingDebt
+                    // P-015A: detect whether the engine emitted construction
+                    // debt_draw fields. If present, ramp construction rows
+                    // from 0; operations rows then continue from the
+                    // construction closing balance. If absent (legacy
+                    // baselines), use the old "all rows open at startingDebt"
+                    // shape so older PPP exports still render.
+                    const hasDebtDrawField = modelOutput.cash_flows.some(
+                      r => r.debt_draw != null
+                    )
+                    let opening = hasDebtDrawField ? 0 : startingDebt
                     const rows = modelOutput.cash_flows.map(r => {
-                      const principal = Number(r.principal) || 0
-                      const interest  = Number(r.interest)  || 0
-                      const closing   = opening - principal
+                      const principal = Number(r.principal)  || 0
+                      const interest  = Number(r.interest)   || 0
+                      const draw      = Number(r.debt_draw)  || 0
+                      const closing = (hasDebtDrawField && r.phase === 'Construction')
+                        ? opening + draw
+                        : opening - principal
                       const row = {
                         year: r.year, phase: r.phase,
-                        opening, draw: 0, idc: 0,
+                        opening, draw, idc: 0,
                         interest, principal, closing,
                       }
                       opening = closing
