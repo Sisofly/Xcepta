@@ -285,13 +285,99 @@ thresholds" violation. Logged P-018.
 
 ---
 
+## 5d. P-015A complete + frozen pre-IDC baseline (2026-06-08)
+
+**P-015A — equity-first construction funding waterfall — is COMPLETE.**
+Commit `23d134c`. Implemented, tested (304/304 with invariant-based assertions,
+B34.4 re-baselined), live-verified, and reconciled.
+
+Construction funding now draws equity first, then debt for the balance, instead
+of an even equity split. Each construction `cash_flows` row emits `equity_draw`
+and `debt_draw`; the debt schedule ramps the balance from 0 to the full sized
+debt by COD. This transformed the debt schedule from a reporting artifact into
+an actual funding schedule.
+
+**Live-verified construction ramp (Madaba Target DSCR 1.00):**
+
+| Year | Phase | Opening | Draw | Closing |
+|---|---|---:|---:|---:|
+| 0 | Construction | 0 | 6,890,850 | 6,890,850 |
+| 1 | Construction | 6,890,850 | 18,763,333 | 25,654,184 |
+| 2 | Construction | 25,654,184 | 18,763,333 | 44,417,517 |
+| 3 | Operations | 44,417,517 | 0 | (amortizing) |
+
+**Reconciliation (all PASS):** Σ equity_draw = equity_amount · Σ debt_draw =
+actual_debt · COD closing balance = actual_debt (44,417,517) = operations
+opening debt · construction IDC = 0 (correctly deferred to 015C) · final
+amortization residual = 1 JOD (within ±1 tolerance).
+
+### Frozen pre-IDC base case — Madaba Target DSCR 1.00
+
+This is the **base case** against which 015C (IDC) will be measured. Recorded
+here per institutional model discipline: save the base case before changing the
+debt structure.
+
+| Metric | Pre-IDC value (post-015A) |
+|---|---:|
+| Debt (sized) | 44,417,517 |
+| Equity | 11,872,483 |
+| Min DSCR | 1.00 |
+| Equity IRR | −10.2% |
+| NPV | −4,295,923 |
+| Equity Multiple | 0.77× |
+| Construction IDC | 0 |
+
+### Expected 015C (IDC) behaviour — QUALITATIVE only, NOT anchored targets
+
+Per §13 test-integrity (and to avoid anchoring the engine toward expected
+outputs), the following are the *directional/structural* expectations for IDC.
+The *quantitative* outputs are to be **verified against the benchmark model after
+the fact**, NOT pre-declared as targets:
+
+- ✓ Interest accrues on drawn construction debt and is **capitalized** into the
+  COD balance.
+- ✓ COD debt balance **increases** above 44,417,517 (toward, but do not anchor
+  to, the benchmark term loan).
+- ✓ Operations begin from the larger IDC-adjusted balance.
+- ✓ **Sculpting maintains target DSCR** — Min DSCR should **remain ~1.00**. This
+  is a *structural invariant of the sculpting mechanism*, not a benchmark target:
+  if DSCR drifts off target after IDC, the IDC and sculpting are not composed
+  correctly. Treat DSCR-stays-at-target as a correctness check.
+- ✓ Equity IRR and NPV adjust consistently (equity falls as IDC-funded debt
+  rises; returns improve). Magnitudes verified against benchmark, not assumed.
+
+**Do NOT freeze "IRR should reach 8.99%" or "debt should reach 47.79M" as
+expectations** — those are the benchmark's values to *compare against*, not
+goals to steer toward. A correct IDC implementation is one that reconciles and
+holds DSCR at target; whatever debt/IRR it then produces is *measured*, and the
+residual to the benchmark is *explained*, not forced.
+
+### Planned first step of the 015C work (deferred, not done tonight)
+
+Before touching IDC, add a permanent funding-reconciliation invariant test
+(Σ equity_draw == equity, Σ debt_draw == actual_debt, COD closing == actual_debt
+across fixtures). This guards 015A's reconciliation so that if 015C's COD-balance
+change accidentally breaks the funding waterfall, a test catches it. Deferred
+from tonight deliberately — it belongs at the start of 015C, not bolted onto the
+015A checkpoint.
+
+### Open question for next session — audit P-015B
+
+015A already produces progressive debt draws, COD reconciliation, and operations
+handoff — which was 015B's original scope. **Next session opens by auditing
+P-015B**, not by coding it: is it (a) fully satisfied by 015A, (b) partially
+satisfied, or (c) still requiring implementation? Only then proceed. Likely 015B
+is documentation/confirmation rather than new code, allowing a jump to 015C.
+
+---
+
 ## 6. Findings register
 
 | ID | Finding | Status |
 |---|---|---|
 | **P-009** | Target DSCR validated but never consumed in debt sizing (`debt = tpc × debtPct`) | ✅ **Fixed** (`bd5dca9`) |
 | **P-013** | Grace deferred principal + full interest, compressed annuity into `tenor − grace` → principal cliff | ✅ **Fixed** (`bd5dca9`) |
-| **P-015** | No construction debt draw / IDC capitalization / equity-first drawdown | 🔴 **Open — dominant residual gap. Next P0.** Residual to benchmark **~3.4M** on live engine (44.42M sized vs 47.79M benchmark; §5c reconciled — the older ~5.5M figure used a superseded dry-run base). Build order: 015A equity-first funding waterfall → 015B construction debt draw → 015C IDC capitalization → 015D COD term-loan conversion. Validate each layer against the Target-DSCR-1.00 run and the debt schedule before committing. |
+| **P-015** | Construction debt draw / IDC capitalization / equity-first drawdown | 🟠 **In progress.** **015A ✅ complete** (`23d134c`) — equity-first funding waterfall, live-verified, reconciled (see §5d). **015B status: TO BE DETERMINED** — 015A already produces progressive debt draws, COD reconciliation, and operations handoff, which may fully satisfy 015B's original scope; audit before coding. **015C (IDC capitalization)** is the next *economic* layer and the one that closes the ~3.4M gap. **015D** COD term-loan conversion. Validate each remaining layer against the §5d frozen baseline and the benchmark — do not pre-anchor target outputs. |
 | **P-010** | PPP debt schedule (opening/draw/IDC/interest/principal/closing) exposed in Results | ✅ **Built** (`31ebde4`, `c142310`). Display-only; rolls schedule from `cash_flows` + `debt_sizing.actual_debt`, with a principal-sum fallback so it renders on old baselines. Draw/IDC are zero placeholder columns for P-015 to populate. Reconciles to ~0 closing balance on both nadeem runs. Built **before** P-015 deliberately — it is the validation surface for IDC. |
 | **P-016** | Annual periodicity only; benchmark is quarterly | 🟡 Backlog |
 | **P-017** | `computeRequiredPayment` remediation now largely redundant — DSCR sizing already solves coverage, so the solver returns ~zero gap for any self-sized project. Reassess its UI role. | 🟡 Backlog |
@@ -352,6 +438,13 @@ correctness is complete through IDC.
 **Session log 2026-06-08:** P-020 (constraint), P-021 (test runner), P-010 (debt
 schedule), P-022 mitigation all shipped and deployed. Live convergence re-test
 confirms Min DSCR → 1.00 exactly on the deployed engine. §5c debt figure
-reconciled — 44.42M authoritative, IDC target ~3.4M. Next session: begin P-015A
-(equity-first funding waterfall), validating each layer against the
-Target-DSCR-1.00 run and the debt schedule.
+reconciled — 44.42M authoritative, IDC target ~3.4M.
+
+**Session log 2026-06-08 (cont.):** Full test suite confirmed 304/304 from main
+tree (worktrees cleaned again). **P-015A (equity-first construction funding)
+shipped** (`23d134c`) — live-verified, reconciled; debt schedule now ramps
+construction draws (see §5d). Pre-IDC base case frozen in §5d. Next session:
+**audit P-015B status** (likely satisfied by 015A), then begin 015C (IDC
+capitalization) starting with a funding-reconciliation invariant test. Validate
+015C against the §5d frozen baseline and the benchmark — qualitative
+expectations only, no anchored target outputs.
