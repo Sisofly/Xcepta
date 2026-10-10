@@ -555,3 +555,28 @@ the result of offsetting conventions and is **not** evidence of correctness.
 periodicity has a material effect on returns; P-024 (tenor > concession leaves
 debt unpaid) is an open correctness defect; scope as in §9.5. No work has started
 on P-022, P-023 or P-016.
+
+---
+
+## 10. Production deployment verification — PR #1 (2026-10-10)
+
+**Merge & deploy.** PR #1 was merged as `7a59b14` (merge commit, pinned to the validated head `6aac781`). Vercel production deployment `6980010752` for `7a59b14` completed with status **success** (alias `xcepta.vercel.app`).
+
+**Deployed = validated.** The tree of `7a59b14` is identical to the tree of `6aac781` (`621d2052…`). `master` had no other commits between `5b9cacc` and the merge.
+
+**Approved PPP results not silently overwritten — confirmed by code inspection.**
+- `model_outputs` rows are written only by an explicit user action: *Approve Version* (`handleApprove`) or *Approve and run scenario* (`handleApproveScenario`). Each **inserts a new row**; nothing recalculates or updates stored rows on load or deploy.
+- The only delete is the user-confirmed *Delete scenario* action.
+- Stored approved baselines therefore still hold their original (pre-IDC) outputs. A database-level check (row counts / `computed_at` before vs after deploy) needs Supabase access and is with the product owner.
+
+**Smoke-test finding → hotfix (PR #2).** The Results tab renders the persisted `model_outputs` row, which stores only `irr`, `npv`, `equity_multiple`, `dscr_series` and `cash_flows`, never `debt_schedule` or `debt_sizing`. The fallback schedule rebuild ignored row-level `idc`. For PPP projects approved after #1, the displayed COD balance therefore omitted IDC, and the schedule closed at −IDC (Madaba aligned: 42,404,689 shown vs 47,136,906; residual −4,732,217). Engine figures were unaffected. Fixed in PR #2 (`buildDebtScheduleRows`, tested on the persisted shape). **Not yet deployed — awaiting approval.**
+
+**Live UI smoke test:** pending. It requires a signed-in session on production, which Claude cannot perform (credentials stay with the user). Steps are in PR #2's review notes.
+
+### Known limitations in production until corrected
+
+| ID | Limitation | User-visible effect | Planned fix |
+|---|---|---|---|
+| **P-024** | Loan tenor longer than the concession is accepted. | Debt is sized over years that do not exist, and the balance is left unpaid at concession end with no error. | Blocking validation (approved). Next package. |
+| **P-022** | Approved baselines are not invalidated by engine changes. | PPP projects approved before `7a59b14` with construction debt show **pre-IDC** results (no IDC, lower equity, higher IRR) as if current, until re-approved. | Controlled stale-baseline handling. Third in order. |
+| PR #2 | Debt-schedule display omits IDC for outputs approved after `7a59b14`. | COD balance understated by IDC; −IDC residual note. | Hotfix PR #2, awaiting approval. |

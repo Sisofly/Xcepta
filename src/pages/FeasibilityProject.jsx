@@ -8,6 +8,7 @@ import {
   PPP_DSCR_FLOOR, PPP_IRR_HURDLE,
   isPPPAvailabilityPayment, computePPPBankability, computeRequiredPayment,
 } from '../modules/feasibility/annualEngine'
+import { buildDebtScheduleRows } from '../modules/feasibility/debtSchedule'
 import colors from '../theme/colors.js'
 import {
   fmtCurrency, fmtPct, fmtDSCR, fmtMultiple,
@@ -2966,55 +2967,13 @@ export default function FeasibilityProject() {
                     )}
                   </div>
 
-                  {/* Debt Schedule — PPP only. P-015D: when the engine emits
-                       debt_schedule (opening/draw/IDC/interest/principal/
-                       closing computed from the same variables as the cash
-                       flows), render it verbatim — the UI does no debt math.
-                       Older approved baselines predate debt_schedule; for
-                       those we keep the legacy reconstruction below
-                       (P-015A debt_draw ramp, or "opening = startingDebt"). */}
+                  {/* Debt Schedule — PPP only (P-010 / P-015D). Built by
+                       buildDebtScheduleRows() from the persisted engine
+                       cash_flows (opening + draw + IDC − principal), so it
+                       reconciles for every stored output shape. */}
                   {pppAP && modelOutput.cash_flows && modelOutput.cash_flows.length > 0 && (() => {
-                    // Starting term-loan balance. Prefer the engine's sized figure; fall back to
-                    // debt_amount; finally derive from cash_flows (total principal repaid = original
-                    // debt, since the loan fully amortizes). The last fallback lets the schedule
-                    // render on older approved baselines whose cached output predates debt_sizing
-                    // (P-022: approved baselines carry old-engine output shapes).
-                    const principalSum = modelOutput.cash_flows.reduce(
-                      (s, r) => s + (Number(r.principal) || 0), 0)
-                    const startingDebt =
-                      (modelOutput.debt_sizing && modelOutput.debt_sizing.actual_debt != null)
-                        ? Number(modelOutput.debt_sizing.actual_debt)
-                        : (modelOutput.debt_amount != null)
-                          ? Number(modelOutput.debt_amount)
-                          : (principalSum > 0 ? principalSum : null)
-                    const engineSchedule = Array.isArray(modelOutput.debt_schedule) && modelOutput.debt_schedule.length > 0
-                    if (!engineSchedule && (startingDebt === null || !Number.isFinite(startingDebt))) return null
-
-                    // P-015A: detect whether the engine emitted construction
-                    // debt_draw fields. If present, ramp construction rows
-                    // from 0; operations rows then continue from the
-                    // construction closing balance. If absent (legacy
-                    // baselines), use the old "all rows open at startingDebt"
-                    // shape so older PPP exports still render.
-                    const hasDebtDrawField = modelOutput.cash_flows.some(
-                      r => r.debt_draw != null
-                    )
-                    let opening = hasDebtDrawField ? 0 : startingDebt
-                    const rows = engineSchedule ? modelOutput.debt_schedule : modelOutput.cash_flows.map(r => {
-                      const principal = Number(r.principal)  || 0
-                      const interest  = Number(r.interest)   || 0
-                      const draw      = Number(r.debt_draw)  || 0
-                      const closing = (hasDebtDrawField && r.phase === 'Construction')
-                        ? opening + draw
-                        : opening - principal
-                      const row = {
-                        year: r.year, phase: r.phase,
-                        opening, draw, idc: 0,
-                        interest, principal, closing,
-                      }
-                      opening = closing
-                      return row
-                    })
+                    const rows = buildDebtScheduleRows(modelOutput)
+                    if (!rows) return null
                     const finalClosing   = rows[rows.length - 1].closing
                     const fullyAmortized = Math.abs(finalClosing) <= 1   // ±1 JOD tolerance
 
