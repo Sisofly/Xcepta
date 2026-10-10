@@ -426,59 +426,110 @@ function solveConstructionDebt(tpc, constrYears, constrRate, debtPct, supportabl
   return lo
 }
 
-function runPPPEngine(assumptions) {
-  // ── F02 (Batch 2A, 2026-05-16): explicit-zero respect on PPP inputs ──
-  // Replaces the legacy `(pppVal(...) || X)` falsy-fallback pattern.
-  // safeNum/safePct distinguish missing/null (→ default) from explicit zero
-  // (→ respected). TPC and Annual Availability Payment keep the legacy
-  // `|| 0` form because the no-input default IS 0 (no-op for explicit 0).
-  var tpc             = pppVal(assumptions, 'Total Project Cost')          || 0
-  var debtPct         = safePct(pppVal(assumptions, 'Debt %'), 80)
-  var equityPct       = safePct(pppVal(assumptions, 'Equity %'), 20)
-  var annualPayment   = pppVal(assumptions, 'Annual Availability Payment') || 0
-  var concessionYrs   = safeNum(pppVal(assumptions, 'Concession Period'), 25)
-  var constrMonths    = safeNum(pppVal(assumptions, 'Construction Period'), 24)
-  var opexPct         = safePct(pppVal(assumptions, 'OPEX % of Revenue'), 5)
-  var interestRate    = safePct(pppVal(assumptions, 'Interest Rate'), 7)
-  var loanTenorYrs    = safeNum(pppVal(assumptions, 'Loan Tenor'), 10)
-  var gracePeriodYrs  = safeNum(pppVal(assumptions, 'Grace Period'), 2)
-  var taxRate         = safePct(pppVal(assumptions, 'Tax Rate'), 20)
-  var wacc            = safePct(pppVal(assumptions, 'WACC'), 10)
-  // P-009 / P-013: Target DSCR is now the sizing constraint, not a post-hoc
-  // diagnostic. Default 1.20 mirrors the institutional DSCR floor used by the
-  // bankability gate and the computeRequiredPayment solver.
-  var targetDSCR      = safeNum(pppVal(assumptions, 'Target DSCR'), 1.20)
-  // P-015C: construction-period (IDC) rate. Optional engine input; when
-  // absent the contractual operating rate applies to construction too
+// ─────────────────────────────────────────────────────────────────────────────
+// PPP INPUTS, VALIDATION (blocking) AND OUTPUT SANITY CONTROLS (P-023)
+// ─────────────────────────────────────────────────────────────────────────────
+// Blocking errors are reserved for inputs that are mathematically invalid,
+// incomplete, or that would make the outputs demonstrably unreliable. They
+// throw an Error whose message starts with, and whose `.code` equals, a
+// stable machine-readable code. Economically unusual but possible results
+// never block: they are returned as `warnings` (see computePPPWarnings).
+function pppInputError(code, message, extra) {
+  var e = new Error(code + ': ' + message)
+  e.code = code
+  if (extra) Object.keys(extra).forEach(function(k) { e[k] = extra[k] })
+  return e
+}
+
+// ── F02 (Batch 2A, 2026-05-16): explicit-zero respect on PPP inputs ──
+// safeNum/safePct distinguish missing/null (→ default) from explicit zero
+// (→ respected). TPC and Annual Availability Payment default to 0 when
+// missing; P-023 then rejects a missing/zero TPC explicitly.
+function readPPPInputs(assumptions) {
+  var inp = {
+    tpc:            safeNum(pppVal(assumptions, 'Total Project Cost'), 0),
+    debtPct:        safePct(pppVal(assumptions, 'Debt %'), 80),
+    equityPct:      safePct(pppVal(assumptions, 'Equity %'), 20),
+    annualPayment:  safeNum(pppVal(assumptions, 'Annual Availability Payment'), 0),
+    concessionYrs:  safeNum(pppVal(assumptions, 'Concession Period'), 25),
+    constrMonths:   safeNum(pppVal(assumptions, 'Construction Period'), 24),
+    opexPct:        safePct(pppVal(assumptions, 'OPEX % of Revenue'), 5),
+    opexFixed:      pppVal(assumptions, 'OPEX Amount (JOD)'),
+    interestRate:   safePct(pppVal(assumptions, 'Interest Rate'), 7),
+    loanTenorYrs:   safeNum(pppVal(assumptions, 'Loan Tenor'), 10),
+    gracePeriodYrs: safeNum(pppVal(assumptions, 'Grace Period'), 2),
+    taxRate:        safePct(pppVal(assumptions, 'Tax Rate'), 20),
+    wacc:           safePct(pppVal(assumptions, 'WACC'), 10),
+    // P-009 / P-013: Target DSCR is the sizing constraint. Default 1.20
+    // mirrors the institutional DSCR floor (PPP_DSCR_FLOOR).
+    targetDSCR:     safeNum(pppVal(assumptions, 'Target DSCR'), 1.20),
+    debtPctGiven:   pppVal(assumptions, 'Debt %') !== null,
+    equityPctGiven: pppVal(assumptions, 'Equity %') !== null,
+  }
+  // P-015C: construction-period (IDC) rate; defaults to the operating rate
   // (single-facility assumption). Explicit 0 is respected.
-  var constrRate      = safePct(pppVal(assumptions, 'Construction Interest Rate'), interestRate * 100)
+  inp.constrRate = safePct(pppVal(assumptions, 'Construction Interest Rate'), inp.interestRate * 100)
+  // F09: OPEX Amount = 0 means fixed zero opex; null falls through to %.
+  inp.useFixedOpex = inp.opexFixed !== null
+  return inp
+}
 
+function validatePPPInputs(inp) {
+  function pct01(name, v, maxExclusive) {
+    if (!Number.isFinite(v) || v < 0 || (maxExclusive ? v >= 1 : v > 1)) {
+      throw pppInputError('INPUT_OUT_OF_RANGE',
+        name + ' must be between 0% and ' + (maxExclusive ? 'below ' : '') + '100%; received ' + r2(v * 100) + '%.',
+        { field: name, value: v * 100 })
+    }
+  }
+  if (!(inp.tpc > 0)) {
+    throw pppInputError('TOTAL_PROJECT_COST_INVALID',
+      'Total Project Cost must be a positive amount; received ' + inp.tpc + '.', { value: inp.tpc })
+  }
+  if (inp.annualPayment < 0) {
+    throw pppInputError('AVAILABILITY_PAYMENT_INVALID',
+      'Annual Availability Payment cannot be negative; received ' + inp.annualPayment + '.', { value: inp.annualPayment })
+  }
+  if (inp.useFixedOpex && !(Number(inp.opexFixed) >= 0)) {
+    throw pppInputError('OPEX_AMOUNT_INVALID',
+      'OPEX Amount (JOD) cannot be negative; received ' + inp.opexFixed + '.', { value: inp.opexFixed })
+  }
+  pct01('Debt %', inp.debtPct)
+  pct01('Equity %', inp.equityPct)
+  pct01('OPEX % of Revenue', inp.opexPct)
+  pct01('Tax Rate', inp.taxRate, true)
+  if (!(inp.interestRate >= 0 && inp.interestRate <= 1) || !(inp.constrRate >= 0 && inp.constrRate <= 1)) {
+    throw pppInputError('INTEREST_RATE_INVALID',
+      'Interest rates must be between 0% and 100% p.a.; received operating ' + r2(inp.interestRate * 100) +
+      '%, construction ' + r2(inp.constrRate * 100) + '%.')
+  }
+  if (!(inp.wacc > -1 && inp.wacc <= 1)) {
+    throw pppInputError('DISCOUNT_RATE_INVALID',
+      'WACC must be greater than −100% and at most 100%; received ' + r2(inp.wacc * 100) + '%.', { value: inp.wacc * 100 })
+  }
+  if (!(inp.targetDSCR >= 0)) {
+    throw pppInputError('TARGET_DSCR_INVALID',
+      'Target DSCR cannot be negative; received ' + inp.targetDSCR + '.', { value: inp.targetDSCR })
+  }
   // ── F02 validation: Concession Period and Construction Period must be ≥ 1 ──
-  // The old `|| 25` / `|| 24` falsy fallbacks combined with downstream
-  // Math.max(1, ...) clamps silently produced a 1-year fallback when the
-  // user passed an explicit zero. After Batch 2A, an explicit zero is
-  // respected here — and zero (or negative) values are rejected with a
-  // deterministic, machine-readable error before any computation runs.
-  if (concessionYrs < 1) {
-    var cpErr = new Error(
-      'CONCESSION_PERIOD_INVALID: Concession Period must be >= 1 year; received ' + concessionYrs + '.'
-    )
-    cpErr.code  = 'CONCESSION_PERIOD_INVALID'
-    cpErr.value = concessionYrs
-    throw cpErr
+  if (inp.concessionYrs < 1) {
+    throw pppInputError('CONCESSION_PERIOD_INVALID',
+      'Concession Period must be >= 1 year; received ' + inp.concessionYrs + '.', { value: inp.concessionYrs })
   }
-  if (constrMonths < 1) {
-    var cmErr = new Error(
-      'CONSTRUCTION_PERIOD_INVALID: Construction Period must be >= 1 month; received ' + constrMonths + '.'
-    )
-    cmErr.code  = 'CONSTRUCTION_PERIOD_INVALID'
-    cmErr.value = constrMonths
-    throw cmErr
+  if (inp.constrMonths < 1) {
+    throw pppInputError('CONSTRUCTION_PERIOD_INVALID',
+      'Construction Period must be >= 1 month; received ' + inp.constrMonths + '.', { value: inp.constrMonths })
   }
-
-  var constrYears = Math.max(1, Math.ceil(constrMonths / 12))
-  var opsYears    = Math.max(1, concessionYrs)  // concession = service/operations period; total life = constrYears + opsYears
-
+  // ── P-025: the annual engine has whole-year periods. A fractional
+  // concession/tenor/grace was previously floored silently (e.g. 9.5 → 9).
+  function whole(name, v) {
+    if (Math.abs(v - Math.round(v)) > 1e-9) {
+      throw pppInputError('PERIOD_NOT_WHOLE_YEARS',
+        name + ' must be a whole number of years in an annual model; received ' + v +
+        '. Use whole years (or quarterly periodicity for quarter-year terms).', { field: name, value: v })
+    }
+  }
+  whole('Concession Period', inp.concessionYrs)
   // ── P-024: debt maturity must fall within the concession ──
   // Tenor is measured from COD (P-015D), grace years are part of the tenor,
   // and the concession (operations period) also starts at COD. So:
@@ -488,45 +539,177 @@ function runPPPEngine(assumptions) {
   // never receives and leave principal outstanding at hand-back. The engine
   // rejects such terms rather than shortening them: the user must correct
   // the financing assumptions. Only enforced when debt is requested.
-  if (debtPct > 0) {
-    if (loanTenorYrs < 1) {
-      var ltErr = new Error(
-        'LOAN_TENOR_INVALID: Loan Tenor must be at least 1 year when Debt % > 0; received ' + loanTenorYrs + '.'
-      )
-      ltErr.code  = 'LOAN_TENOR_INVALID'
-      ltErr.value = loanTenorYrs
-      throw ltErr
+  if (inp.debtPct > 0) {
+    var constrYears = Math.max(1, Math.ceil(inp.constrMonths / 12))
+    var tenor = inp.loanTenorYrs, grace = inp.gracePeriodYrs, conc = inp.concessionYrs
+    if (tenor < 1) {
+      throw pppInputError('LOAN_TENOR_INVALID',
+        'Loan Tenor must be at least 1 year when Debt % > 0; received ' + tenor + '.', { value: tenor })
     }
-    if (gracePeriodYrs < 0 || gracePeriodYrs >= loanTenorYrs) {
-      var gpErr = new Error(
-        'GRACE_PERIOD_INVALID: Grace Period (' + gracePeriodYrs + ' yrs) must be ≥ 0 and shorter than the ' +
-        'Loan Tenor (' + loanTenorYrs + ' yrs), otherwise the loan has no repayment period.'
-      )
-      gpErr.code  = 'GRACE_PERIOD_INVALID'
-      gpErr.value = gracePeriodYrs
-      throw gpErr
+    if (grace < 0 || grace >= tenor) {
+      throw pppInputError('GRACE_PERIOD_INVALID',
+        'Grace Period (' + grace + ' yrs) must be ≥ 0 and shorter than the Loan Tenor (' + tenor +
+        ' yrs), otherwise the loan has no repayment period.', { value: grace })
     }
-    if (loanTenorYrs > opsYears) {
-      var lmErr = new Error(
-        'LOAN_MATURITY_EXCEEDS_CONCESSION: the loan matures ' + loanTenorYrs + ' yrs after COD (project year ' +
-        (constrYears + loanTenorYrs) + ' incl. ' + constrYears + ' construction yrs), but the concession expires ' +
-        opsYears + ' yrs after COD (project year ' + (constrYears + opsYears) + '). Reduce the Loan Tenor ' +
-        '(including the ' + gracePeriodYrs + '-yr grace period) to at most ' + opsYears + ' yrs, or extend the Concession Period.'
-      )
-      lmErr.code            = 'LOAN_MATURITY_EXCEEDS_CONCESSION'
-      lmErr.loan_tenor      = loanTenorYrs
-      lmErr.concession      = opsYears
-      lmErr.construction    = constrYears
-      throw lmErr
+    whole('Loan Tenor', tenor)
+    whole('Grace Period', grace)
+    if (tenor > conc) {
+      throw pppInputError('LOAN_MATURITY_EXCEEDS_CONCESSION',
+        'the loan matures ' + tenor + ' yrs after COD (project year ' + (constrYears + tenor) + ' incl. ' +
+        constrYears + ' construction yrs), but the concession expires ' + conc + ' yrs after COD (project year ' +
+        (constrYears + conc) + '). Reduce the Loan Tenor (including the ' + grace + '-yr grace period) to at most ' +
+        conc + ' yrs, or extend the Concession Period.',
+        { loan_tenor: tenor, concession: conc, construction: constrYears })
     }
   }
+}
 
-  // OPEX: use fixed JOD amount if stored, otherwise % of revenue (default)
-  var opexFixed   = pppVal(assumptions, 'OPEX Amount (JOD)')
-  // F09 (Batch 2B, 2026-05-16): explicit zero respected — `OPEX Amount = 0`
-  // now means "fixed zero opex", not a fall-through to revenue × opex%.
-  // Null/missing still falls through to the percentage path.
-  var useFixedOpex = opexFixed !== null && opexFixed >= 0
+// ── P-023: output reconciliation gate ─────────────────────────────────────
+// Re-checks the funding and debt identities on the finished result. A
+// failure means the outputs are demonstrably unreliable, so the engine
+// throws rather than returning numbers that do not reconcile. Returns the
+// measured differences for audit (persisted with the result, P-022).
+function checkPPPIntegrity(result, inp) {
+  var rows   = result.cash_flows
+  var sched  = result.debt_schedule
+  var constr = rows.filter(function(r) { return r.phase === 'Construction' })
+  var sumC   = function(k) { return constr.reduce(function(s, r) { return s + (r[k] || 0) }, 0) }
+  var tol    = Math.max(1, 0.01 * rows.length)
+  var sourcesUses = sumC('equity_draw') + sumC('debt_draw') + sumC('idc') - (inp.tpc + result.idc_capitalized)
+  var codDiff     = result.debt_amount - (result.debt_sizing.principal_drawn + result.idc_capitalized)
+  var maxGap = 0
+  for (var i = 0; i < sched.length; i++) {
+    var s = sched[i]
+    maxGap = Math.max(maxGap, Math.abs(s.closing - (s.opening + s.draw + s.idc - s.principal)))
+    if (i > 0) maxGap = Math.max(maxGap, Math.abs(s.opening - sched[i - 1].closing))
+  }
+  var finalBalance = sched.length ? sched[sched.length - 1].closing : 0
+  var finalTol     = Math.max(2, tol)
+  var failures = []
+  if (Math.abs(sourcesUses) > tol)   failures.push('sources ≠ uses by ' + r2(sourcesUses))
+  if (Math.abs(codDiff) > tol)       failures.push('COD debt ≠ principal + IDC by ' + r2(codDiff))
+  if (maxGap > tol)                  failures.push('debt roll-forward breaks by ' + r2(maxGap))
+  if (Math.abs(finalBalance) > finalTol) failures.push('debt not repaid by concession expiry (residual ' + r2(finalBalance) + ')')
+  if (failures.length) {
+    throw pppInputError('OUTPUT_RECONCILIATION_FAILED',
+      'the calculated schedules do not reconcile: ' + failures.join('; ') + '. Results withheld.',
+      { failures: failures })
+  }
+  return {
+    passed: true,
+    sources_uses_diff: r2(sourcesUses),
+    cod_diff: r2(codDiff),
+    max_rollforward_gap: r2(maxGap),
+    final_balance: r2(finalBalance),
+    tolerance: tol,
+  }
+}
+
+// ── P-023: reasonableness warnings ─────────────────────────────────────────
+// Invariant-ratio checks that hold across sectors and deal sizes. They flag
+// results that are possible but economically suspicious (typically an input
+// scaling error) and never change or block the result. Severity:
+//   'warning' — likely input error or unreliable metric, review before use
+//   'info'    — material modelling outcome the user should be aware of
+function computePPPWarnings(result, inp) {
+  var w = []
+  function add(code, severity, message, value) {
+    w.push({ code: code, severity: severity, message: message, value: value === undefined ? null : value })
+  }
+  var ops   = result.cash_flows.filter(function(r) { return r.phase === 'Operations' })
+  var debt  = result.debt_amount
+  var ds    = result.debt_sizing
+  var fmt   = function(n) { return Math.round(n).toLocaleString('en-US') }
+
+  if (inp.annualPayment > inp.tpc) {
+    add('POSSIBLE_INPUT_SCALE_ERROR', 'warning',
+      'Annual Availability Payment (' + fmt(inp.annualPayment) + ') exceeds Total Project Cost (' + fmt(inp.tpc) +
+      '). Check both are entered in the same units (e.g. missing zeros).', inp.annualPayment / inp.tpc)
+  }
+  var ebitda0 = ops.length ? ops[0].ebitda : 0
+  if (ops.length && ops.every(function(r) { return r.ebitda <= 0 })) {
+    add('NON_POSITIVE_EBITDA', 'warning',
+      'Operating EBITDA is zero or negative in every year (revenue does not cover operating costs).', ebitda0)
+  }
+  if (debt > 0.01) {
+    if (inp.interestRate < 0.005) {
+      add('INTEREST_COST_IMPLAUSIBLY_LOW', 'warning',
+        'Debt interest rate is ' + r2(inp.interestRate * 100) + '% p.a. (below 0.5%). Check the rate was entered ' +
+        'as a percentage (e.g. 7 for 7%).', inp.interestRate * 100)
+    }
+    var maxDS = ops.reduce(function(m, r) { return Math.max(m, r.interest + r.principal) }, 0)
+    if (maxDS / debt < 0.01) {
+      add('DEBT_SERVICE_IMPLAUSIBLY_LOW', 'warning',
+        'Peak annual debt service is ' + r2(maxDS / debt * 100) + '% of the debt (below 1%).', maxDS / debt)
+    }
+  }
+  if (ds.min_dscr !== null && ds.min_dscr > 20) {
+    add('DSCR_EXTREME', 'warning', 'Minimum DSCR is ' + ds.min_dscr + '× (above 20×). Check revenue and debt inputs.', ds.min_dscr)
+  }
+  if (result.equity_multiple !== null && result.equity_multiple > 50) {
+    add('EQUITY_MULTIPLE_EXTREME', 'warning', 'Equity multiple is ' + result.equity_multiple + '× (above 50×).', result.equity_multiple)
+  }
+  if (result.irr !== null && result.irr > 100) {
+    add('IRR_EXTREME', 'warning', 'Equity IRR is ' + result.irr + '% (above 100%). Check input scaling.', result.irr)
+  }
+  if (result.irr === null) {
+    add('IRR_NOT_COMPUTABLE', 'warning',
+      'Equity IRR could not be computed (the equity cash flows have no sign change or no convergent solution). ' +
+      'Rely on NPV and equity multiple.', null)
+  }
+  var invested = -result.cash_flows.filter(function(r) { return r.phase === 'Construction' })
+    .reduce(function(s, r) { return s + r.equity_cf }, 0)
+  if (invested > 0 && ops.length && ops[0].equity_cf >= invested) {
+    add('PAYBACK_UNDER_ONE_YEAR', 'warning',
+      'Equity is paid back within the first operating year, which is implausible for a PPP. Check input scaling.', null)
+  }
+  if (inp.targetDSCR === 0) {
+    add('NO_DSCR_CONSTRAINT', 'warning',
+      'Target DSCR is 0, so debt is not limited by cash flow: Debt % alone sets the debt amount.', 0)
+  } else if (inp.targetDSCR < 1) {
+    add('TARGET_DSCR_BELOW_ONE', 'warning',
+      'Target DSCR ' + inp.targetDSCR + '× is below 1.00×: debt service is sized above available cash flow.', inp.targetDSCR)
+  }
+  if (inp.debtPct > 0 && debt <= 0.01) {
+    add('NO_DEBT_CAPACITY', 'warning',
+      'Operating cash flows cannot support any debt at the target DSCR; the project is modelled as fully equity-funded.', 0)
+  } else if (ds.binding_constraint === 'dscr') {
+    add('DEBT_LIMITED_BY_DSCR', 'info',
+      'Requested debt (' + fmt(ds.requested_debt) + ') exceeds what CFADS supports at ' + ds.target_dscr +
+      '× DSCR (' + fmt(ds.supportable_debt) + '). Debt was reduced and equity increased by ' +
+      fmt(ds.debt_shortfall) + '.', ds.debt_shortfall)
+  }
+  if (inp.debtPctGiven && inp.equityPctGiven && Math.abs((inp.debtPct + inp.equityPct) * 100 - 100) > 0.01) {
+    add('INPUT_GEARING_NOT_100', 'info',
+      'Debt % (' + r2(inp.debtPct * 100) + ') + Equity % (' + r2(inp.equityPct * 100) + ') ≠ 100%. Debt % is the ' +
+      'requested gearing; equity is calculated as the balancing item, so the Equity % input is informational only.', null)
+  }
+  return w
+}
+
+function runPPPEngine(assumptions) {
+  var inp = readPPPInputs(assumptions)
+  validatePPPInputs(inp)
+  var tpc             = inp.tpc
+  var debtPct         = inp.debtPct
+  var equityPct       = inp.equityPct
+  var annualPayment   = inp.annualPayment
+  var concessionYrs   = inp.concessionYrs
+  var constrMonths    = inp.constrMonths
+  var opexPct         = inp.opexPct
+  var interestRate    = inp.interestRate
+  var loanTenorYrs    = inp.loanTenorYrs
+  var gracePeriodYrs  = inp.gracePeriodYrs
+  var taxRate         = inp.taxRate
+  var wacc            = inp.wacc
+  var targetDSCR      = inp.targetDSCR
+  var constrRate      = inp.constrRate
+
+  var constrYears = Math.max(1, Math.ceil(constrMonths / 12))
+  var opsYears    = Math.max(1, concessionYrs)  // concession = service/operations period; total life = constrYears + opsYears
+
+  var opexFixed    = inp.opexFixed
+  var useFixedOpex = inp.useFixedOpex
 
   // ─────────────────────────────────────────────────────────────────────────
   // DEBT SIZING (P-009 / P-013): sculpt to Target DSCR
@@ -720,7 +903,7 @@ function runPPPEngine(assumptions) {
     ? dscrAggVals.reduce(function(a, b) { return a + b }, 0) / dscrAggVals.length
     : null
 
-  return {
+  var result = {
     irr, npv, equity_multiple: em,
     tdc: r2(tpc), debt_amount: r2(debt), equity_amount: r2(equity),
     dscr_series: dscrSeries, cash_flows: cfTable,
@@ -758,6 +941,11 @@ function runPPPEngine(assumptions) {
       repayment_years:            repayYears,          // tenor − grace
     },
   }
+  // P-023: reconciliation gate (throws if the outputs do not reconcile) and
+  // reasonableness warnings (never block).
+  result.integrity = checkPPPIntegrity(result, inp)
+  result.warnings  = computePPPWarnings(result, inp)
+  return result
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

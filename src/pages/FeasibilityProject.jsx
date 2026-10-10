@@ -9,6 +9,7 @@ import {
   isPPPAvailabilityPayment, computePPPBankability, computeRequiredPayment,
 } from '../modules/feasibility/annualEngine'
 import { buildDebtScheduleRows } from '../modules/feasibility/debtSchedule'
+import PPPMessages from '../modules/feasibility/PPPMessages'
 import colors from '../theme/colors.js'
 import {
   fmtCurrency, fmtPct, fmtDSCR, fmtMultiple,
@@ -93,6 +94,21 @@ function dscrColor(v) {
   if (v >= 1.25) return colors.success
   if (v >= 1.0) return colors.warning
   return colors.danger
+}
+
+// P-023: lists PPP model warnings in the approval confirmation so they are
+// seen before a baseline is locked. Blocking errors are left to the
+// approve handler (its engine run throws and nothing is written).
+function pppConfirmNote(project, assumptionRows) {
+  if (!isPPPAvailabilityPayment(project, assumptionRows)) return ''
+  try {
+    const ws = runPPPEngine(assumptionRows).warnings || []
+    if (!ws.length) return ''
+    return '\n\nModel checks (' + ws.length + '):\n' +
+      ws.map(w => '• ' + (w.severity === 'warning' ? 'Warning: ' : 'Note: ') + w.message).join('\n')
+  } catch {
+    return ''
+  }
 }
 
 export default function FeasibilityProject() {
@@ -437,7 +453,8 @@ export default function FeasibilityProject() {
         return
       }
     }
-    const confirmed = window.confirm('Approve and run this scenario? The model will be computed with current assumptions and key drivers.')
+    const confirmed = window.confirm('Approve and run this scenario? The model will be computed with current assumptions and key drivers.' +
+      pppConfirmNote(project, sc.assumptions || assumptions))
     if (!confirmed) return
     setScApproving(sc.scenario_id)
     try {
@@ -570,7 +587,8 @@ export default function FeasibilityProject() {
         return
       }
     }
-    const confirmed = window.confirm('Approve this version? This is irreversible - the baseline will be locked for variance tracking.')
+    const confirmed = window.confirm('Approve this version? This is irreversible - the baseline will be locked for variance tracking.' +
+      pppConfirmNote(project, assumptions))
     if (!confirmed) return
     setApproving(true)
     try {
@@ -1607,10 +1625,25 @@ export default function FeasibilityProject() {
   // ── PPP bankability — uses user-defined target DSCR as floor ──
   const pppBankability = pppAP ? computePPPBankability(modelOutput || latestApprovedOutput, targetDSCR) : null
 
+  // ── P-023: live input check — one engine run on the current assumptions.
+  // Blocking input errors are shown instead of crashing the page; the
+  // render-time solver below only runs when the inputs are valid.
+  let pppLiveCheck = null
+  if (pppAP && assumptions.length) {
+    try {
+      const live = runPPPEngine(assumptions)
+      pppLiveCheck = { error: null, warnings: live.warnings || [] }
+    } catch (err) {
+      pppLiveCheck = { error: err, warnings: [] }
+    }
+  }
+
   // ── Required payment solver ──
-  const requiredPaymentResult = pppAP && assumptions.length
-    ? computeRequiredPayment(assumptions, targetDSCR)
-    : null
+  let requiredPaymentResult = null
+  if (pppLiveCheck && !pppLiveCheck.error) {
+    try { requiredPaymentResult = computeRequiredPayment(assumptions, targetDSCR) }
+    catch { requiredPaymentResult = null }
+  }
 
   // Stale output: detect stored DSCR values from old engine runs (threshold was 0.01, not 1)
   // These produce absurd ratios (100M+). Flag so user knows to re-approve.
@@ -1743,6 +1776,10 @@ export default function FeasibilityProject() {
       {/* ══════════════════ ASSUMPTIONS TAB ══════════════════ */}
       {tab === 'Assumptions' && (
         <div>
+          {pppLiveCheck && (
+            <PPPMessages error={pppLiveCheck.error} warnings={pppLiveCheck.warnings}
+              title="Checks on the current inputs" />
+          )}
           {isApproved && assumptionsModified && (
             <div style={{background:colors.warningSoft,border:`1px solid ${colors.warning}`,borderRadius:'8px',
               padding:'1rem 1.5rem',marginBottom:'1.5rem',display:'flex',
@@ -2358,7 +2395,11 @@ export default function FeasibilityProject() {
                   Approving this version locks it as the baseline for FP&A variance tracking and generates the basic feasibility results.
                 </p>
               </div>
-              <button onClick={handleApprove} disabled={approving}
+              {pppLiveCheck && (
+                <PPPMessages error={pppLiveCheck.error} warnings={pppLiveCheck.warnings}
+                  title="Checks on the current inputs" />
+              )}
+              <button onClick={handleApprove} disabled={approving || !!(pppLiveCheck && pppLiveCheck.error)}
                 style={{padding:'0.55rem 1.4rem',background:colors.success,color:'white',border:`1px solid ${colors.success}`,
                   borderRadius:'6px',cursor:approving?'not-allowed':'pointer',fontSize:'0.875rem',fontWeight:'500',opacity:approving?0.6:1}}>
                 {approving ? 'Approving & running model...' : 'Approve Version'}
@@ -2413,6 +2454,10 @@ export default function FeasibilityProject() {
                         {creatingDraft ? 'Creating...' : '+ New Draft'}
                       </button>
                     </div>
+                  )}
+                  {pppAP && (
+                    <PPPMessages warnings={modelOutput.warnings}
+                      title="Model checks saved with this approved result" />
                   )}
                   {pppAP && pppBankability && (
                     <div style={{marginBottom:'2rem'}}>
