@@ -44,7 +44,13 @@ function Run($exe, [string[]]$argList) {
   if ($LASTEXITCODE -ne 0) { throw "$exe failed (exit $LASTEXITCODE)" }
 }
 
+# Use the standard PostgreSQL client install folder if it is not on PATH yet
+foreach ($v in 17, 16, 15) {
+  $bin = "C:\Program Files\PostgreSQL\$v\bin"
+  if ((Test-Path "$bin\pg_dump.exe") -and -not (Get-Command pg_dump -ErrorAction SilentlyContinue)) { $env:Path = "$bin;$env:Path"; break }
+}
 Need pg_dump; Need psql
+Write-Host ('Using ' + (& pg_dump --version))
 New-Item -ItemType Directory -Force db/schema, db/staging | Out-Null
 
 Write-Host ''
