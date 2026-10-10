@@ -396,18 +396,18 @@ is documentation/confirmation rather than new code, allowing a jump to 015C.
 | **P-013** | Grace deferred principal + full interest, compressed annuity into `tenor − grace` → principal cliff | ✅ **Fixed** (`bd5dca9`) |
 | **P-015** | Construction debt draw / IDC capitalization / equity-first drawdown | ✅ **Complete — pending Gate 1 authorization** (§9). **015A** ✅ `23d134c`. **015B** ✅ closed: satisfied by 015A (evidence §9.1); no code. **015C** ✅ `617100e`: IDC capitalized, solved against DSCR capacity and gearing on TPC + IDC. **015D** ✅ `617100e`/`f8c4a2c`: COD conversion with an engine-emitted `debt_schedule` and explicit tenor/grace basis. 559/559 tests. IDC does **not** close the Madaba gap (§9.2). |
 | **P-010** | PPP debt schedule (opening/draw/IDC/interest/principal/closing) exposed in Results | ✅ **Built** (`31ebde4`, `c142310`). **Updated `f8c4a2c`:** renders the engine's `debt_schedule` verbatim, including IDC. The legacy reconstruction is kept only for outputs that predate `debt_schedule`. |
-| **P-016** | Annual periodicity only; benchmark is quarterly | 🟡 Backlog |
+| **P-016** | Annual periodicity only; benchmark is quarterly | ✅ **Done in rc1** (`d7a9b50`): annual / quarterly engine. Annual outputs byte-identical to production; quarterly Madaba IRR gap reduced to +0.39pp, fully attributed (§11). |
 | **P-017** | `computeRequiredPayment` remediation now largely redundant — DSCR sizing already solves coverage, so the solver returns ~zero gap for any self-sized project. Reassess its UI role. | 🟡 Backlog |
 | **P-018** | PPP DSCR default duplicated across three literals (sizing target `annualEngine.js:386`, solver `:609`, floor `:664`) instead of referencing the single `PPP_DSCR_FLOOR` constant. Section 5 "no duplicated thresholds" violation. Also: dead `?? 1.30` fallback + stale 1.30 docblocks in `recommend.js`. Fix when next touching the debt module. | 🟡 Backlog — Low |
 | **P-019** | Two-tier DSCR model (size to lender-minimum 1.20, approve to institutional 1.30) — deferred underwriting-stance option, not adopted. | 🟡 Backlog — option |
 | **P-020** | Project insert failed `projects_project_type_check` for PF sectors (Healthcare/Energy/Industrial) added in E-0.3a — wizard sent raw sector, not in the CHECK whitelist. | ✅ **Fixed** (`652de13`). `getLegacyProjectType` maps all PF projects to constraint-legal `'Infrastructure / PPP'`; true sector stays in `projects.sector`. FPA display paths made sector-first. No DB migration. |
 | **P-021** | No runnable test invocation in main tree — `"type":"module"` + jest 30, no `test` script; raw `npx jest` failed on ESM. 304-test suite only ran inside Claude Code worktrees. | ✅ **Fixed** (`bdc3951`). Added `test` script (`node --experimental-vm-modules`); `npm test` → 304/304 from main tree. `.claude/` gitignored; stale worktrees removed. |
-| **P-022** | Approved baselines carry old-engine output shapes; features built against the newer return shape (e.g. debt schedule needing `debt_sizing`) don't find their fields, and stale cached output can show invalid results behind only a warning banner. Re-approval regenerates correct output. | 🟠 Open — **Med→High.** Mitigated for debt schedule by the principal-sum fallback (`c142310`). Evidence of real harm: §5d recorded stale pre-015A IRR/NPV as the validated post-015A baseline. After P-015C every stored PPP baseline with construction debt is pre-IDC. Consider hard-blocking approved results when the engine version changes, and/or auto-regenerating on engine upgrade. **Next package, after authorization.** |
-| **P-023** | No input/output sanity validation. A missing-zeros TPC entry (56,290 vs 56,290,000) produced a confident "Strong Investment Case / Proceed / 1257% IRR" — dangerous for an institutional tool. | 🟠 Open — **High severity, low effort.** Build on **invariant ratios**, not deal-size thresholds: warn (not block) if Interest/Debt <0.5%, Debt-Service/Debt <1%, DSCR >20×, Equity Multiple >50×, IRR >100%, or simple payback <1yr. These hold across sectors. Schedule after P-015, before P-016. |
-| **P-024** | Loan tenor longer than the concession: debt is sized over tenor − grace, but only the concession's operating years exist, so the balance is left unpaid at concession end with no error (base fixture, concession 5: residual 32.16M). Pre-existing. | 🔴 Open — **High.** Needs a policy decision: cap the repayment window at the concession, or block the input. |
-| **P-025** | Fractional loan tenor (e.g. 9.5) is silently floored to whole years in sizing and repayment while `repayment_years` reports 7.5. | 🟠 Open — Med (P-023 validation). |
-| **P-026** | IRR timing convention: the period-index IRR dates construction-year-0 equity a full period before op-year-1 flows; with equity-first funding this flatters IRR (+0.79pp on Madaba). | 🟡 Backlog — convention, P-016-adjacent. |
-| **P-027** | No construction-cost profile input (even capex only); `ceil(months/12)` makes a 30-month build accrue IDC like a 36-month build. | 🟡 Backlog — Low–Med. |
+| **P-022** | Approved baselines carry old-engine output shapes; stale output could be shown as current. | ✅ **Done in rc1** (`e981d86`): immutable versioned results (payload, engine version, inputs snapshot), additive migration, saved-only display, current / outdated / legacy disclosure. **Migration must be applied before deploy.** |
+| **P-023** | No input/output sanity validation (the "1257% IRR" missing-zeros incident). | ✅ **Done in rc1** (`856d59d`): 15 blocking codes, reconciliation gate, invariant-ratio warnings (the incident is now flagged). |
+| **P-024** | Loan tenor longer than the concession left debt unpaid with no error. | ✅ **Done in rc1** (`20304b4`): blocking `LOAN_MATURITY_EXCEEDS_CONCESSION`. Production left debt unpaid in 98 of 207 sampled cases (up to 91% of the loan). |
+| **P-025** | Fractional tenor silently floored. | ✅ **Done in rc1** (`856d59d`): blocked in annual models; quarter-year terms supported in quarterly models. |
+| **P-026** | IRR equity-timing convention (period-end dating of equity-first equity). | 🟡 Residual, reduced: +0.79pp (annual) → +0.175pp (quarterly) on Madaba. Convention, documented. |
+| **P-027** | No construction-cost profile; partial-year builds. | ✅ **Done in rc1** (`d7a9b50`): Construction Cost Profile input; quarterly models resolve 30-month builds to 10 quarters. |
 | ~~P-005~~ | "OPEX 570" percentage bug | ⛔ **Struck** — input was 0%; 570 is correct. No Madaba evidence. |
 | ~~P-012~~ | Operating rate 8.25% vs 7.0% | ⛔ **Struck** — engine reads 7% correctly; 8.25% was a service ratio, not the coupon. |
 
@@ -580,3 +580,26 @@ on P-022, P-023 or P-016.
 | **P-024** | Loan tenor longer than the concession is accepted. | Debt is sized over years that do not exist, and the balance is left unpaid at concession end with no error. | Blocking validation (approved). Next package. |
 | **P-022** | Approved baselines are not invalidated by engine changes. | PPP projects approved before `7a59b14` with construction debt show **pre-IDC** results (no IDC, lower equity, higher IRR) as if current, until re-approved. | Controlled stale-baseline handling. Third in order. |
 | PR #2 | Debt-schedule display omits IDC for outputs approved after `7a59b14`. | COD balance understated by IDC; −IDC residual note. | Hotfix PR #2, awaiting approval. |
+
+
+---
+
+## 11. PPP completion sprint — release candidate rc1 (2026-10-10)
+
+The full consolidated report is **`docs/PPP_COMPLETION_REPORT_RC1.md`**. Assessment: **CONDITIONAL PASS**. The conditions are the P-022 migration, a live smoke test, and the absence of database-integration tests.
+
+Summary:
+- PR #2, P-024, P-023/P-025, P-022, P-016 (quarterly) and variable-CFADS sizing are implemented on `rc/ppp-v1`.
+- 687/687 automated tests pass.
+- A 1,000-scenario independent harness found zero failures.
+- Annual outputs are byte-identical to production `7a59b14` for every valid input.
+
+Madaba, quarterly, with the workbook's own construction timing, against the benchmark:
+- IDC: 5.264M vs 5.499M (−235k: quarterly vs monthly accrual −166k, day count −77k, equity +8.5k)
+- COD debt: 47.59M vs 47.79M
+- Debt repaid in ops quarter 30 in both
+- Equity IRR: 9.38% vs 8.99% (+0.20pp lower IDC, +0.175pp equity dating)
+
+Variable-CFADS sizing matches closed-form growing-annuity capacity within 1 JOD.
+
+New observation (not changed, P-018): the page uses `Target DSCR || 1.20` as the bankability floor, so an explicit 0 is floored to 1.20 for the verdict while the engine applies no DSCR constraint. This is conservative and left as is pending a P-018 decision.

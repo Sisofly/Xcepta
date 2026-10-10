@@ -342,13 +342,13 @@ Items logged but not yet implemented. Do not implement these without explicit in
 | Future | Recommendation version delta / history | Phase E |
 | P-010 | PPP debt schedule / auditability — built; renders engine `debt_schedule` (2026-10-10) | Done |
 | P-015 | PPP construction debt draw + IDC capitalization + equity-first drawdown — A/B/C/D complete, Gate 1 CONDITIONAL PASS pending authorization | Done — awaiting sign-off |
-| P-022 | Approved-baseline integrity after engine changes (stale outputs presented as current) | High — next package, after authorization |
-| P-023 | Input/output sanity validation (blocking errors + reasonableness warnings) | High — next package, after authorization |
-| P-024 | Loan tenor > concession leaves debt unpaid with no error | High — policy decision required |
-| P-025 | Fractional loan tenor silently floored | Medium |
-| P-026 | IRR equity-timing convention under equity-first funding | Medium |
-| P-027 | Construction cost profile input / partial-year IDC | Low–Medium |
-| P-016 | PPP quarterly periodicity (currently annual) | Medium |
+| P-022 | Versioned PPP result persistence / baseline integrity — done in rc1; requires migration `db/migrations/2026-10-10_p022_versioned_model_outputs.sql` before deploy | Done — awaiting release |
+| P-023 | PPP input blocking + output sanity warnings + reconciliation gate — done in rc1 | Done — awaiting release |
+| P-024 | Loan maturity beyond concession blocked — done in rc1 | Done — awaiting release |
+| P-025 | Fractional tenor — blocked annually, supported quarterly — done in rc1 | Done — awaiting release |
+| P-026 | IRR equity-timing convention (residual +0.175pp quarterly) | Low — documented |
+| P-027 | Construction cost profile — done in rc1 | Done — awaiting release |
+| P-016 | PPP quarterly periodicity — done in rc1 (annual default unchanged) | Done — awaiting release |
 | P-017 | `computeRequiredPayment` remediation redundancy under DSCR sizing | Low |
 | P-018 | PPP DSCR default duplicated across 3 literals; should reference `PPP_DSCR_FLOOR`. Dead `?? 1.30` + stale docblocks in `recommend.js` | Low |
 | P-019 | Two-tier DSCR model (size 1.20 / approve 1.30) — deferred underwriting option | Option |
@@ -383,6 +383,13 @@ or "fixing" them; a coincidental or curve-fit match hides the real behavior and
 fails silently on the next case.
 
 *Origin: Gate 1 (Madaba PPP validation, 2026-06). Prevented locking a
+
+**PPP engine versioning (P-022, 2026-10).** `PPP_ENGINE_VERSION` in
+`annualEngine.js` must be bumped in the same commit as any change that alters a
+PPP financial output for the same inputs. `PPP_ENGINE_COMPATIBLE_VERSIONS` may
+list an earlier version only if a differential test shows byte-identical
+outputs. Saved results from versions not listed are presented as outdated and
+are never recalculated silently.
 grace-inflated Avg DSCR artifact as canonical, and stopped a benchmark-matching
 code change that would have masked the real IDC gap.*
 
@@ -394,6 +401,7 @@ code change that would have masked the real IDC gap.*
 |---|---|---|
 | 1.0 | May 2026 | Initial doctrine — established following D-0.7a+b engine provenance normalization |
 | 1.1 | June 2026 | Gate 1 PPP validation: §5 DSCR floor corrected 1.30→1.20 (code alignment); §12 logged P-010/P-015/P-016/P-017/P-018/P-019; added §13 Validation & Test Integrity rule |
+| 1.2 | October 2026 | §12 PPP items P-016/P-022–P-027 completed in rc1; §13 adds the PPP engine versioning rule |
 
 ---
 
