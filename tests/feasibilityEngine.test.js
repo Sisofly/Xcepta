@@ -1787,9 +1787,18 @@ describe('B38 — PPP input falsy-fallback hardened (Batch 2A)', () => {
   })
 
   test('B38.5: Concession Period=1 (minimum valid) → runs (1 ops year)', () => {
-    const out = runPPPEngine(pppWith({ 'Concession Period': 1 }))
+    // P-024 (2026-10-10): the base fixture's 10-yr loan cannot mature inside a
+    // 1-yr concession and is now rejected (see B38.5b). This test's subject is
+    // the concession validator, so the loan is shortened to fit (1-yr tenor,
+    // no grace) — the concession input under test is unchanged.
+    const out = runPPPEngine(pppWith({ 'Concession Period': 1, 'Loan Tenor': 1, 'Grace Period': 0 }))
     expect(out).toBeDefined()
     expect(out.operations_years).toBe(1)
+  })
+
+  test('B38.5b: P-024 — loan maturity beyond concession expiry is blocked', () => {
+    expect(() => runPPPEngine(pppWith({ 'Concession Period': 1 })))
+      .toThrow(/LOAN_MATURITY_EXCEEDS_CONCESSION/)
   })
 
   test('B38.6: Construction Period=6 months (sub-year) → runs (1 construction year via ceil)', () => {

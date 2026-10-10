@@ -479,6 +479,48 @@ function runPPPEngine(assumptions) {
   var constrYears = Math.max(1, Math.ceil(constrMonths / 12))
   var opsYears    = Math.max(1, concessionYrs)  // concession = service/operations period; total life = constrYears + opsYears
 
+  // ── P-024: debt maturity must fall within the concession ──
+  // Tenor is measured from COD (P-015D), grace years are part of the tenor,
+  // and the concession (operations period) also starts at COD. So:
+  //   loan maturity      = COD + tenor        = project year constrYears + tenor
+  //   concession expiry  = COD + concession   = project year constrYears + concession
+  // A loan that matures after expiry would be sized on cash flows the SPV
+  // never receives and leave principal outstanding at hand-back. The engine
+  // rejects such terms rather than shortening them: the user must correct
+  // the financing assumptions. Only enforced when debt is requested.
+  if (debtPct > 0) {
+    if (loanTenorYrs < 1) {
+      var ltErr = new Error(
+        'LOAN_TENOR_INVALID: Loan Tenor must be at least 1 year when Debt % > 0; received ' + loanTenorYrs + '.'
+      )
+      ltErr.code  = 'LOAN_TENOR_INVALID'
+      ltErr.value = loanTenorYrs
+      throw ltErr
+    }
+    if (gracePeriodYrs < 0 || gracePeriodYrs >= loanTenorYrs) {
+      var gpErr = new Error(
+        'GRACE_PERIOD_INVALID: Grace Period (' + gracePeriodYrs + ' yrs) must be ≥ 0 and shorter than the ' +
+        'Loan Tenor (' + loanTenorYrs + ' yrs), otherwise the loan has no repayment period.'
+      )
+      gpErr.code  = 'GRACE_PERIOD_INVALID'
+      gpErr.value = gracePeriodYrs
+      throw gpErr
+    }
+    if (loanTenorYrs > opsYears) {
+      var lmErr = new Error(
+        'LOAN_MATURITY_EXCEEDS_CONCESSION: the loan matures ' + loanTenorYrs + ' yrs after COD (project year ' +
+        (constrYears + loanTenorYrs) + ' incl. ' + constrYears + ' construction yrs), but the concession expires ' +
+        opsYears + ' yrs after COD (project year ' + (constrYears + opsYears) + '). Reduce the Loan Tenor ' +
+        '(including the ' + gracePeriodYrs + '-yr grace period) to at most ' + opsYears + ' yrs, or extend the Concession Period.'
+      )
+      lmErr.code            = 'LOAN_MATURITY_EXCEEDS_CONCESSION'
+      lmErr.loan_tenor      = loanTenorYrs
+      lmErr.concession      = opsYears
+      lmErr.construction    = constrYears
+      throw lmErr
+    }
+  }
+
   // OPEX: use fixed JOD amount if stored, otherwise % of revenue (default)
   var opexFixed   = pppVal(assumptions, 'OPEX Amount (JOD)')
   // F09 (Batch 2B, 2026-05-16): explicit zero respected — `OPEX Amount = 0`
