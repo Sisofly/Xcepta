@@ -22,11 +22,20 @@ import {
 import { getRecommendation } from '../utils/recommend.js'
 
 // ── Assumption edit-type helpers ──
-const DROPDOWN_OPTIONS = { 'Revenue Model': ['Sale', 'Rental', 'Mixed'] }
+const DROPDOWN_OPTIONS = {
+  'Revenue Model': ['Sale', 'Rental', 'Mixed'],
+  // PPP (P-016 / Phase 3)
+  'Model Periodicity': ['Annual', 'Quarterly'],
+  'Revenue Basis': ['Contractual', 'Demand Estimate'],
+  'Repayment Profile': ['Sculpted', 'Annuity', 'Equal Principal'],
+}
 const DATE_FIELDS = ['Construction Start Date', 'Operations Start Date']
+// Free-text list inputs (stored in `unit`), e.g. "10, 20, 30"
+const TEXT_FIELDS = ['Revenue Profile', 'Construction Cost Profile', 'Quarterly Revenue Weights']
 function editType(name) {
   if (DROPDOWN_OPTIONS[name]) return 'dropdown'
   if (DATE_FIELDS.includes(name)) return 'date'
+  if (TEXT_FIELDS.includes(name)) return 'text'
   return 'number'
 }
 function isEditable(a) { return editType(a.name) !== 'number' || a.value !== null }
@@ -64,7 +73,33 @@ const PPP_DISPLAY_LABELS = {
   'Annual Availability Payment': 'Annual Availability Payment (JOD)',
   'Total Project Cost':          'Total Project Cost (JOD)',
   'OPEX % of Revenue':           'OPEX % of Annual Payment',
+  'Model Periodicity':                 'Model Periodicity (annual / quarterly calculation)',
+  'Construction Cost Profile':         'Construction Cost Profile (weights per construction year or quarter)',
+  'Construction Interest Rate':        'Construction Interest Rate (IDC, % p.a.)',
+  'OPEX Amount (JOD)':                 'Fixed OPEX (JOD per year, replaces OPEX %)',
+  'Availability Payment Escalation %': 'Availability Payment Escalation (% p.a.)',
+  'OPEX Escalation %':                 'Fixed OPEX Escalation (% p.a.)',
+  'Revenue Profile':                   'Revenue Profile (JOD per operating year, replaces AP)',
+  'Revenue Basis':                     'Revenue Basis (contractual vs demand estimate)',
+  'Quarterly Revenue Weights':         'Quarterly Revenue Weights (4 values, quarterly models)',
+  'Repayment Profile':                 'Debt Repayment Profile',
 }
+
+// P-016 / Phase 3 optional PPP inputs. Existing projects do not have these
+// rows; the Assumptions tab offers to add them. Every default is NEUTRAL —
+// adding a row does not change any result until its value is edited.
+const PPP_OPTIONAL_INPUTS = [
+  { name: 'Model Periodicity',                 category: 'ppp_structure', unit: 'Annual' },
+  { name: 'Construction Cost Profile',         category: 'ppp_structure', unit: '' },
+  { name: 'Construction Interest Rate',        category: 'ppp_financing', unit: 'percent', valueFrom: 'Interest Rate' },
+  { name: 'Repayment Profile',                 category: 'ppp_financing', unit: 'Sculpted' },
+  { name: 'Availability Payment Escalation %', category: 'ppp_revenue',   unit: 'percent', value: 0 },
+  { name: 'OPEX Amount (JOD)',                 category: 'ppp_revenue',   unit: 'JOD', valueFrom: 'fixedOpexEquivalent' },
+  { name: 'OPEX Escalation %',                 category: 'ppp_revenue',   unit: 'percent', value: 0 },
+  { name: 'Revenue Profile',                   category: 'ppp_revenue',   unit: '' },
+  { name: 'Revenue Basis',                     category: 'ppp_revenue',   unit: 'Contractual' },
+  { name: 'Quarterly Revenue Weights',         category: 'ppp_revenue',   unit: '' },
+]
 
 function fmtPPPAssumptionValue(a) {
   if (a.value === null || a.value === undefined) return a.unit || '---'
@@ -124,6 +159,7 @@ export default function FeasibilityProject() {
   const [defaults, setDefaults] = useState([])
   const [variances, setVariances] = useState([])
   const [modelOutput, setModelOutput] = useState(null)
+  const [showQuarterlyDebt, setShowQuarterlyDebt] = useState(false)
   const [tab, setTab] = useState('Assumptions')
   const [loading, setLoading] = useState(true)
   const [approving, setApproving] = useState(false)
@@ -232,7 +268,7 @@ export default function FeasibilityProject() {
   async function handleSaveAssumption(assumptionId, name) {
     setSavingAssumption(true)
     const type = editType(name)
-    const isUnitField = type === 'dropdown' || type === 'date'
+    const isUnitField = type === 'dropdown' || type === 'date' || type === 'text'
     let payload, updatedFields
     if (isUnitField) {
       payload = { unit: editingValue }; updatedFields = { unit: editingValue }
@@ -246,6 +282,28 @@ export default function FeasibilityProject() {
       if (version && version.status === 'approved') setAssumptionsModified(true)
     } else { alert('Save failed: ' + error.message) }
     setEditingId(null); setEditingValue(''); setSavingAssumption(false)
+  }
+
+  // P-016 / Phase 3: add a missing optional PPP input with its neutral
+  // default (see PPP_OPTIONAL_INPUTS). Base (project-level) rows only.
+  async function handleAddPPPInput(def) {
+    const { data: { user } } = await supabase.auth.getUser()
+    let value = def.value === undefined ? null : def.value
+    if (def.valueFrom === 'Interest Rate') value = pppVal(assumptions, 'Interest Rate') ?? 7
+    if (def.valueFrom === 'fixedOpexEquivalent') {
+      const ap = pppVal(assumptions, 'Annual Availability Payment') || 0
+      const pct = pppVal(assumptions, 'OPEX % of Revenue') ?? 5
+      value = Math.round(ap * pct / 100)
+    }
+    const { data, error } = await supabase.from('assumptions').insert({
+      project_id: projectId, scenario_id: null, name: def.name, category: def.category,
+      value, unit: def.unit, confidence: 'indicative',
+      tenant_id: project.tenant_id, author_user_id: user ? user.id : null,
+      module_origin: 'feasibility', source_type: 'user_entry',
+    }).select().single()
+    if (error) { alert('Could not add input: ' + error.message); return }
+    setAssumptions(prev => [...prev, data])
+    if (version && version.status === 'approved') setAssumptionsModified(true)
   }
 
   async function handleSaveOverride(key) {
@@ -359,7 +417,7 @@ export default function FeasibilityProject() {
   async function handleSaveScenarioAssumption(assumptionId, name, scenarioAssumptions) {
     setScSaving(true)
     const type = editType(name)
-    const isUnitField = type === 'dropdown' || type === 'date'
+    const isUnitField = type === 'dropdown' || type === 'date' || type === 'text'
     const payload = isUnitField ? { unit: scEditingValue } : {
       value: scEditingValue !== '' && !isNaN(Number(scEditingValue)) ? Number(scEditingValue) : scEditingValue
     }
@@ -1690,7 +1748,7 @@ export default function FeasibilityProject() {
   if (pppAP && assumptions.length) {
     try {
       const live = runPPPEngine(assumptions)
-      pppLiveCheck = { error: null, warnings: live.warnings || [] }
+      pppLiveCheck = { error: null, warnings: live.warnings || [], hasDebt: live.debt_amount > 0.01 }
     } catch (err) {
       pppLiveCheck = { error: err, warnings: [] }
     }
@@ -1698,7 +1756,9 @@ export default function FeasibilityProject() {
 
   // ── Required payment solver ──
   let requiredPaymentResult = null
-  if (pppLiveCheck && !pppLiveCheck.error) {
+  // Skipped when there is no debt: the solver cannot converge without a
+  // DSCR series and would run its full 2,000 iterations on every render.
+  if (pppLiveCheck && !pppLiveCheck.error && pppLiveCheck.hasDebt) {
     try { requiredPaymentResult = computeRequiredPayment(assumptions, targetDSCR) }
     catch { requiredPaymentResult = null }
   }
@@ -1940,9 +2000,9 @@ export default function FeasibilityProject() {
                                   <input type="date" value={editingValue} onChange={e => setEditingValue(e.target.value)} autoFocus
                                     style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.2rem 0.5rem',fontSize:'0.875rem'}} />
                                 ) : (
-                                  <input type="number" value={editingValue} onChange={e => setEditingValue(e.target.value)} autoFocus
+                                  <input type={type === 'text' ? 'text' : 'number'} placeholder={type === 'text' ? 'e.g. 10, 20, 30' : undefined} value={editingValue} onChange={e => setEditingValue(e.target.value)} autoFocus
                                     onKeyDown={e => { if(e.key==='Enter') handleSaveAssumption(a.assumption_id,a.name); if(e.key==='Escape'){setEditingId(null);setEditingValue('')} }}
-                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.2rem 0.5rem',fontSize:'0.875rem',width:'110px'}} />
+                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.2rem 0.5rem',fontSize:'0.875rem',width: type === 'text' ? '220px' : '110px'}} />
                                 )
                               ) : pppAP ? fmtPPPAssumptionValue(a) : displayVal(a)}
                             </td>
@@ -2018,6 +2078,32 @@ export default function FeasibilityProject() {
                     : 'Enter Construction Period and Operations / Revenue Period above to see the full timeline.'
                   }
                 </p>
+              </div>
+            )
+          })()}
+
+          {/* ── P-016 / Phase 3: optional PPP inputs not yet on this project ── */}
+          {pppAP && (() => {
+            const missing = PPP_OPTIONAL_INPUTS.filter(d => !assumptions.some(a => a.name === d.name))
+            if (!missing.length) return null
+            return (
+              <div style={{marginBottom:'2rem'}}>
+                <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'0.4rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
+                  Optional PPP inputs
+                </h3>
+                <p style={{fontSize:'0.75rem',color:colors.textMuted,marginBottom:'0.75rem',lineHeight:1.5}}>
+                  Quarterly calculation, escalation, revenue/demand profiles, construction timing and repayment profile.
+                  Each input is added with a neutral default, so results do not change until you edit its value.
+                </p>
+                <div style={{display:'flex',flexWrap:'wrap',gap:'0.5rem'}}>
+                  {missing.map(d => (
+                    <button key={d.name} onClick={() => handleAddPPPInput(d)}
+                      style={{padding:'0.35rem 0.8rem',background:'none',border:`1px solid ${colors.border}`,borderRadius:'6px',
+                        color:colors.textSecondary,cursor:'pointer',fontSize:'0.75rem'}}>
+                      + {PPP_DISPLAY_LABELS[d.name] || d.name}
+                    </button>
+                  ))}
+                </div>
               </div>
             )
           })()}
@@ -2992,7 +3078,7 @@ export default function FeasibilityProject() {
                   {modelOutput.dscr_series && modelOutput.dscr_series.length > 0 && (
                     <div style={{marginBottom:'2rem'}}>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem',flexWrap:'wrap',gap:'0.5rem'}}>
-                        <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,textTransform:'uppercase',letterSpacing:'0.05em'}}>DSCR — Annual Series</h3>
+                        <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,textTransform:'uppercase',letterSpacing:'0.05em'}}>DSCR — Annual Series{modelOutput.periodicity === 'quarterly' ? ' (Σ CFADS ÷ Σ debt service per year; quarterly minimum ' + (modelOutput.debt_sizing && modelOutput.debt_sizing.min_dscr != null ? modelOutput.debt_sizing.min_dscr.toFixed(2) + 'x' : '—') + ')' : ''}</h3>
                         {extraKPIs && extraKPIs.dscrBreachYear && (
                           <span style={{fontSize:'0.75rem',padding:'3px 10px',borderRadius:'20px',
                             background:colors.dangerSoft,color:colors.danger,border:`1px solid ${colors.danger}`}}>
@@ -3043,7 +3129,7 @@ export default function FeasibilityProject() {
 
                   {/* Annual Cash Flows */}
                   <div>
-                    <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'1rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>Annual Cash Flows (JOD)</h3>
+                    <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'1rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>Annual Cash Flows (JOD){modelOutput.periodicity === 'quarterly' ? ' — aggregated from the quarterly model' : ''}</h3>
                     <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',overflow:'auto'}}>
                       <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.8rem',minWidth:'900px'}}>
                         <thead><tr style={{borderBottom:`1px solid ${colors.border}`}}>
@@ -3083,14 +3169,22 @@ export default function FeasibilityProject() {
                        cash_flows (opening + draw + IDC − principal), so it
                        reconciles for every stored output shape. */}
                   {pppAP && modelOutput.cash_flows && modelOutput.cash_flows.length > 0 && (() => {
-                    const rows = buildDebtScheduleRows(modelOutput)
+                    const rows = showQuarterlyDebt && Array.isArray(modelOutput.debt_schedule_periodic)
+                      ? modelOutput.debt_schedule_periodic.map((r, i) => ({ ...r, year: r.phase === 'Construction' ? 'C-Q' + (i + 1) : 'O-Q' + (i + 1 - (modelOutput.construction_periods || 0)) }))
+                      : buildDebtScheduleRows(modelOutput)
                     if (!rows) return null
                     const finalClosing   = rows[rows.length - 1].closing
                     const fullyAmortized = Math.abs(finalClosing) <= 1   // ±1 JOD tolerance
 
                     return (
                       <div style={{marginTop:'2rem'}}>
-                        <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'1rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>Debt Schedule (JOD)</h3>
+                        <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'1rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>Debt Schedule (JOD){showQuarterlyDebt && modelOutput.debt_schedule_periodic ? ' — quarterly' : ' — annual'}</h3>
+                        {Array.isArray(modelOutput.debt_schedule_periodic) && (
+                          <button onClick={() => setShowQuarterlyDebt(v => !v)}
+                            style={{marginBottom:'0.75rem',background:'none',border:'none',color:colors.accent,cursor:'pointer',fontSize:'0.78rem',padding:0}}>
+                            {showQuarterlyDebt ? 'Show annual totals' : 'Show quarterly detail'}
+                          </button>
+                        )}
                         <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',overflow:'auto'}}>
                           <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.8rem',minWidth:'900px'}}>
                             <thead><tr style={{borderBottom:`1px solid ${colors.border}`}}>
@@ -3410,9 +3504,9 @@ export default function FeasibilityProject() {
                                                   <input type="date" value={scEditingValue} onChange={e => setScEditingValue(e.target.value)} autoFocus
                                                     style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.15rem 0.4rem',fontSize:'0.82rem'}} />
                                                 ) : (
-                                                  <input type="number" value={scEditingValue} onChange={e => setScEditingValue(e.target.value)} autoFocus
+                                                  <input type={type === 'text' ? 'text' : 'number'} value={scEditingValue} onChange={e => setScEditingValue(e.target.value)} autoFocus
                                                     onKeyDown={e => { if(e.key==='Enter') handleSaveScenarioAssumption(a.assumption_id, a.name); if(e.key==='Escape'){setScEditingId(null);setScEditingValue('')} }}
-                                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.15rem 0.4rem',fontSize:'0.82rem',width:'90px',textAlign:'right'}} />
+                                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.15rem 0.4rem',fontSize:'0.82rem',width: type === 'text' ? '180px' : '90px',textAlign:'right'}} />
                                                 )
                                               ) : (
                                                 <span>{a.value !== null ? a.value : (a.unit || '—')}</span>
