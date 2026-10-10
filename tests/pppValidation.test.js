@@ -203,3 +203,12 @@ describe('P-018 — quarterly covenant-frequency gate', () => {
     expect(b.minDSCR).toBe(Math.min(annualMin, out.debt_sizing.min_dscr))
   })
 })
+
+describe('Scope disclosure — tax depreciation not modelled', () => {
+  test('S1: every taxable result carries the disclosure; a zero-tax result does not', () => {
+    const w = run({}).warnings.find(x => x.code === 'TAX_DEPRECIATION_NOT_MODELLED')
+    expect(w.severity).toBe('warning')
+    expect(w.message).toMatch(/understated \(conservative\)/)
+    expect(run({ 'Tax Rate': 0 }).warnings.map(x => x.code)).not.toContain('TAX_DEPRECIATION_NOT_MODELLED')
+  })
+})

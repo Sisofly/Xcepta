@@ -838,6 +838,16 @@ function computePPPWarnings(result, inp) {
       'Annual revenue (peak ' + fmt(peakRevenue) + ') exceeds Total Project Cost (' + fmt(inp.tpc) +
       '). Check both are entered in the same units (e.g. missing zeros).', peakRevenue / inp.tpc)
   }
+  // Item 4 (scope): tax depreciation and loss carry-forward are not modelled.
+  // For taxable projects this overstates tax, so CFADS, debt capacity and
+  // equity returns are understated (conservative) — material in magnitude
+  // (e.g. +1.3pp to +6.3pp equity IRR on tested cases). Always disclosed.
+  if (inp.taxRate > 0 && ops.some(function(r) { return r.tax > 0 })) {
+    add('TAX_DEPRECIATION_NOT_MODELLED', 'warning',
+      'Tax is charged on EBITDA less interest with no tax depreciation of the project cost and no loss carry-forward. ' +
+      'Tax is therefore overstated: CFADS, debt capacity and equity returns are understated (conservative) for this taxable project.',
+      inp.taxRate * 100)
+  }
   if (result.revenue_basis === 'demand_estimate') {
     add('DEMAND_REVENUE_ESTIMATE', 'info',
       'Revenue is an estimate of demand, not a contractual payment: debt capacity and returns depend on traffic/usage ' +
@@ -888,12 +898,12 @@ function computePPPWarnings(result, inp) {
   var uw = inp.underwritingDSCR
   if (inp.targetDSCR > 0 && inp.targetDSCR < uw) {
     add('SCULPT_TARGET_BELOW_UNDERWRITING', 'warning',
-      'Debt is sculpted to a ' + inp.targetDSCR + '× DSCR target, below the ' + uw + '× lender minimum (underwriting) ' +
+      'Debt is sculpted to a ' + inp.targetDSCR.toFixed(2) + '× DSCR target, below the ' + uw.toFixed(2) + '× lender minimum (underwriting) ' +
       'threshold: the project will not meet underwriting coverage at this debt size.', inp.targetDSCR)
   }
   if (ds.min_dscr !== null && ds.min_dscr < uw) {
     add('DSCR_BELOW_UNDERWRITING', 'warning',
-      'Minimum ' + ds.dscr_basis + ' DSCR ' + ds.min_dscr + '× is below the ' + uw + '× lender minimum (underwriting) threshold.', ds.min_dscr)
+      'Minimum ' + ds.dscr_basis + ' DSCR ' + ds.min_dscr.toFixed(2) + '× is below the ' + uw.toFixed(2) + '× lender minimum (underwriting) threshold.', ds.min_dscr)
   }
   if (inp.targetDSCR === 0) {
     add('NO_DSCR_CONSTRAINT', 'warning',
