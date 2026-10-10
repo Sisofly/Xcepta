@@ -5,11 +5,15 @@ import { jsPDF } from 'jspdf'
 import DevEngineTab from './DevEngineTab'
 import {
   getVal, pppVal, runEngine, runPPPEngine,
-  PPP_DSCR_FLOOR, PPP_IRR_HURDLE,
+  PPP_DSCR_FLOOR, PPP_IRR_HURDLE, PPP_ENGINE_VERSION, PPP_ENGINE_COMPATIBLE_VERSIONS,
   isPPPAvailabilityPayment, computePPPBankability, computeRequiredPayment,
 } from '../modules/feasibility/annualEngine'
 import { buildDebtScheduleRows } from '../modules/feasibility/debtSchedule'
 import PPPMessages from '../modules/feasibility/PPPMessages'
+import PPPResultProvenance from '../modules/feasibility/PPPResultProvenance'
+import {
+  buildPPPOutputRecord, hydrateModelOutput, isMissingP022Columns,
+} from '../modules/feasibility/resultPersistence'
 import colors from '../theme/colors.js'
 import {
   fmtCurrency, fmtPct, fmtDSCR, fmtMultiple,
@@ -200,7 +204,7 @@ export default function FeasibilityProject() {
       if (versionData && versionData.status === 'approved') {
         const { data: outputs } = await supabase.from('model_outputs').select('*')
           .eq('version_id', versionData.version_id).order('computed_at', { ascending: false }).limit(1)
-        if (outputs && outputs.length) setModelOutput(outputs[0])
+        if (outputs && outputs.length) setModelOutput(hydrateModelOutput(outputs[0]))
       }
       // Always load latest approved output for PDF (works even when current version is draft)
       if (scenarios && scenarios.length) {
@@ -211,7 +215,7 @@ export default function FeasibilityProject() {
           setLatestApprovedVersion(approvedVers[0])
           const { data: approvedOutputs } = await supabase.from('model_outputs').select('*')
             .eq('version_id', approvedVers[0].version_id).order('computed_at', { ascending: false }).limit(1)
-          if (approvedOutputs && approvedOutputs.length) setLatestApprovedOutput(approvedOutputs[0])
+          if (approvedOutputs && approvedOutputs.length) setLatestApprovedOutput(hydrateModelOutput(approvedOutputs[0]))
         }
       }
       // Prepared By
@@ -291,7 +295,7 @@ export default function FeasibilityProject() {
       if (latestVer && latestVer.status === 'approved') {
         const { data: outs } = await supabase.from('model_outputs').select('*')
           .eq('version_id', latestVer.version_id).order('computed_at', { ascending: false }).limit(1)
-        output = outs && outs.length ? outs[0] : null
+        output = outs && outs.length ? hydrateModelOutput(outs[0]) : null
       }
       const { data: scAssump } = await supabase.from('assumptions').select('*')
         .eq('project_id', projectId).eq('scenario_id', s.scenario_id)
@@ -459,6 +463,15 @@ export default function FeasibilityProject() {
     setScApproving(sc.scenario_id)
     try {
       const newLabel = sc.latestVersion.label.replace('Draft', 'Approved')
+      // P-022: PPP scenarios run the engine first (a blocking input error
+      // leaves the scenario a draft) and persist a complete versioned result
+      // before approving the version.
+      if (isPPPAvailabilityPayment(project, sc.assumptions || assumptions)) {
+        const scOutput = runPPPEngine(sc.assumptions || assumptions)
+        await persistApprovedPPP(scOutput, sc.assumptions || assumptions, sc.latestVersion.version_id, newLabel)
+        await loadScenarios()
+        return
+      }
       await supabase.from('versions').update({
         status: 'approved', approved_at: new Date().toISOString(), label: newLabel,
       }).eq('version_id', sc.latestVersion.version_id)
@@ -552,7 +565,7 @@ export default function FeasibilityProject() {
     if (latestVer && latestVer.status === 'approved') {
       const { data: outputs } = await supabase.from('model_outputs').select('*')
         .eq('version_id', latestVer.version_id).order('computed_at', { ascending: false }).limit(1)
-      if (outputs && outputs.length) setModelOutput(outputs[0])
+      if (outputs && outputs.length) setModelOutput(hydrateModelOutput(outputs[0]))
     }
     const { data: approvedVers } = await supabase.from('versions').select('*')
       .eq('scenario_id', scenarioId).eq('status', 'approved')
@@ -561,7 +574,40 @@ export default function FeasibilityProject() {
       setLatestApprovedVersion(approvedVers[0])
       const { data: approvedOutputs } = await supabase.from('model_outputs').select('*')
         .eq('version_id', approvedVers[0].version_id).order('computed_at', { ascending: false }).limit(1)
-      if (approvedOutputs && approvedOutputs.length) setLatestApprovedOutput(approvedOutputs[0])
+      if (approvedOutputs && approvedOutputs.length) setLatestApprovedOutput(hydrateModelOutput(approvedOutputs[0]))
+    }
+  }
+
+  // ── P-022: write one immutable, versioned PPP result, then approve ──
+  // 1. insert the complete record (engine output, engine version, inputs)
+  // 2. flip the version to approved
+  // If step 2 fails the just-inserted row is removed, so no orphan result is
+  // left on a draft version. If the P-022 columns are missing (migration not
+  // applied) nothing is written and the version stays a draft.
+  async function persistApprovedPPP(output, assumptionRows, versionId, approvedLabel) {
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data: userData } = await supabase.from('users').select('tenant_id').eq('user_id', user.id).single()
+    const record = buildPPPOutputRecord(output, {
+      assumptions: assumptionRows, engineVersion: PPP_ENGINE_VERSION,
+      versionId, projectId, tenantId: userData.tenant_id, userId: user.id,
+    })
+    const { data: inserted, error: insertError } = await supabase.from('model_outputs').insert(record).select()
+    if (insertError) {
+      if (isMissingP022Columns(insertError)) {
+        throw new Error('The database has not been upgraded for versioned results (P-022 migration). ' +
+          'Approval cancelled — nothing was saved. Please ask an administrator to apply ' +
+          'db/migrations/2026-10-10_p022_versioned_model_outputs.sql.')
+      }
+      throw insertError
+    }
+    const { error: approveError } = await supabase.from('versions').update({
+      status: 'approved', approved_at: new Date().toISOString(), label: approvedLabel,
+    }).eq('version_id', versionId)
+    if (approveError) {
+      const row = Array.isArray(inserted) ? inserted[0] : inserted
+      const pk = row && ['output_id', 'model_output_id', 'id'].find(k => row[k] != null)
+      if (pk) await supabase.from('model_outputs').delete().eq(pk, row[pk])
+      throw approveError
     }
   }
 
@@ -597,9 +643,21 @@ export default function FeasibilityProject() {
       const mergedDefs = getMergedDefaults(defaults, overrides)
       const isPPP = isPPPAvailabilityPayment(project, assumptions)
       const output = isPPP ? runPPPEngine(assumptions) : runEngine(assumptions, mergedDefs)
+      const newLabel = version.label ? version.label.replace('Draft', 'Approved') : version.label
+
+      // ── P-022: PPP results are persisted as a complete, versioned record
+      // BEFORE the version is flipped to approved, so a version can never be
+      // approved without its full result. ──
+      if (isPPP) {
+        await persistApprovedPPP(output, assumptions, version.version_id, newLabel)
+        const approvedVersion = { ...version, status: 'approved', approved_at: new Date().toISOString(), label: newLabel }
+        setVersion(approvedVersion)
+        await refreshApprovalState(version.scenario_id)
+        setTab('Results')
+        return
+      }
 
       // ── Engine succeeded — flip the version to approved ──
-      const newLabel = version.label ? version.label.replace('Draft', 'Approved') : version.label
       const { error } = await supabase.from('versions').update({
         status: 'approved', approved_at: new Date().toISOString(), label: newLabel,
       }).eq('version_id', version.version_id)
@@ -2456,6 +2514,11 @@ export default function FeasibilityProject() {
                     </div>
                   )}
                   {pppAP && (
+                    <PPPResultProvenance modelOutput={modelOutput} assumptions={assumptions}
+                      engineVersion={PPP_ENGINE_VERSION} compatibleVersions={PPP_ENGINE_COMPATIBLE_VERSIONS}
+                      onNewDraft={handleCreateDraft} creatingDraft={creatingDraft} />
+                  )}
+                  {pppAP && (
                     <PPPMessages warnings={modelOutput.warnings}
                       title="Model checks saved with this approved result" />
                   )}
@@ -2594,6 +2657,9 @@ export default function FeasibilityProject() {
                         }}>
                           <p style={{fontSize:'0.7rem',color:colors.textSecondary,marginBottom:'0.6rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
                             DSCR Remediation — Target {targetDSCR.toFixed(2)}x
+                          </p>
+                          <p style={{fontSize:'0.7rem',color:colors.textMuted,marginBottom:'0.6rem',fontStyle:'italic'}}>
+                            Live analysis on the current Assumptions tab inputs — not part of the approved, saved result.
                           </p>
                           <div style={{display:'flex',flexDirection:'column',gap:'0.35rem'}}>
                             <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.8rem'}}>

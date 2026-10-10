@@ -945,6 +945,7 @@ function runPPPEngine(assumptions) {
   // reasonableness warnings (never block).
   result.integrity = checkPPPIntegrity(result, inp)
   result.warnings  = computePPPWarnings(result, inp)
+  result.engine_version = PPP_ENGINE_VERSION
   return result
 }
 
@@ -1026,6 +1027,13 @@ function isPPPAvailabilityPayment(project, assumptions) {
 
 // ─── PPP BANKABILITY ASSESSMENT ──────────────────────────────────────────────
 // Derived purely from stored modelOutput — no re-run needed.
+// P-022: version stamped on every PPP result. Bump whenever any financial
+// output for the same inputs changes; list in PPP_ENGINE_COMPATIBLE_VERSIONS
+// every earlier version whose outputs are identical to the current engine.
+// Results from versions not listed are flagged as outdated (stale_engine).
+var PPP_ENGINE_VERSION = '2.0.0'
+var PPP_ENGINE_COMPATIBLE_VERSIONS = ['2.0.0']
+
 var PPP_DSCR_FLOOR  = 1.20
 var PPP_IRR_HURDLE  = 10    // % equity IRR
 
@@ -1122,6 +1130,6 @@ export {
   getVal, getUnit, getDefault, pppVal, r2,
   annuity, npvCalc, irrCalc,
   runEngine, runPPPEngine,
-  PPP_DSCR_FLOOR, PPP_IRR_HURDLE,
+  PPP_DSCR_FLOOR, PPP_IRR_HURDLE, PPP_ENGINE_VERSION, PPP_ENGINE_COMPATIBLE_VERSIONS,
   isPPPAvailabilityPayment, computePPPBankability, computeRequiredPayment,
 }
