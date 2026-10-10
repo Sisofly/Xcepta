@@ -4,7 +4,7 @@
 |---|---|
 | `migrations/` | Ordered, forward-only migration files (`YYYY-MM-DD_<topic>.sql`). Apply to **staging first**, then production (see `docs/STAGING_AND_RELEASE.md` §5). Never edit an applied migration. |
 | `schema/` | Local-only schema-only export of production (`production_baseline.sql`), used to build staging. Git-ignored while the repository is public. |
-| `staging/` | Staging-only helpers: `seed_staging_user.sql` (synthetic test user/tenant); reference-data dumps (git-ignored). |
+| `staging/` | Staging-only helpers: `seed_staging_users.sql` (synthetic tenants/users, via `npm run staging:seed`), `verify_staging.sql`; reference-data dumps and reports (git-ignored). |
 
 Applied migrations:
 

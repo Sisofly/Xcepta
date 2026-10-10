@@ -11,7 +11,10 @@
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "verify:staging": "node scripts/staging/verify-lifecycle.mjs",
     "verify:staging:isolation": "node scripts/staging/verify-isolation.mjs",
-    "staging:build": "powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1"
+    "staging:build": "powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1",
+    "staging:inspect": "powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1 -Mode Inspect",
+    "staging:resume": "powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1 -Mode Resume",
+    "staging:seed": "powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1 -Mode SeedUsers"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.1",

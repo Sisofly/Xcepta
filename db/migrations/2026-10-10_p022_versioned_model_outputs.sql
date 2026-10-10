@@ -1,4 +1,4 @@
--- P-022 — versioned PPP result persistence (ADDITIVE, non-destructive)
+-- P-022 - versioned PPP result persistence (ADDITIVE, non-destructive)
 -- ---------------------------------------------------------------------------
 -- Adds nullable columns to public.model_outputs. Existing rows are NOT
 -- modified: they keep NULL in every new column, which the application reads

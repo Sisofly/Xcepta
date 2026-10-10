@@ -51,19 +51,22 @@ You use your own accounts throughout. Never paste passwords or keys into chat.
 2. **Create the staging Supabase project.**
    - Supabase dashboard → *New project* → name `xcepta-staging`, the same region as production, a strong database password saved in your password manager.
    - Note its **Project URL** and **anon public key** (Project Settings → API).
-3–4. **Export the production structure and build staging — automated.**
-   - Install the PostgreSQL client tools once: `winget install -e --id PostgreSQL.PostgreSQL.17`, then open a new terminal.
-   - Run `npm run staging:build` (`scripts/staging/build-staging.ps1`). It asks for the production and staging *Session pooler* URIs (Supabase → Connect) and then each password as **hidden input** in your terminal. It then:
-     - exports the production **structure only** (read-only, no rows), plus the `static_defaults` benchmark table;
-     - checks the dump contains no data and that staging is empty;
-     - makes the dump Supabase-compatible;
-     - applies it, the reference data, and every `db/migrations` file to staging;
-     - runs `db/staging/verify_staging.sql`. That reports RLS status and policies per table, the P-022 columns, the primary key, row counts and auth users, saved to `db/staging/verify_report.txt`.
-   - It refuses any staging URI that contains the production project reference, and never drops anything.
-   - Dumps and reports stay local (git-ignored).
-5. **Create the synthetic staging test user.**
-   - Staging dashboard → Authentication → Users → *Add user* → a staging-only email, auto-confirm, a new password. Copy its **UID**.
-   - Then run `db/staging/seed_staging_user.sql` in the staging SQL editor, after filling in the UID and following its notes.
+3–4. **Build staging from the production structure.**
+   Install the PostgreSQL client tools once (`winget install -e --id PostgreSQL.PostgreSQL.17 --override "--mode unattended --disable-components server,pgAdmin,stackbuilder"`); the scripts find them without PATH changes.
+
+   | Command | What it does | Touches production? |
+   |---|---|---|
+   | `npm run staging:build` | Exports the production **structure only** (pg_dump, read-only) plus the `static_defaults` reference table. Imports into an **empty** staging in **one transaction** (all-or-nothing), then applies reference data and migrations, then verifies. | Read-only export |
+   | `npm run staging:build -- -ResetStaging` | Staging refresh. Drops **only** XCEPTA's 13 tables and 1 function on staging (typed `RESET <staging-ref>` confirmation), then imports as above. | Read-only export |
+   | `npm run staging:inspect` | Read-only object-by-object comparison of staging with the exported structure: 154 checks covering tables, constraints, indexes, functions, RLS, policies, and table/function/schema grants. Writes `db/staging/inspect_report.txt`. | No |
+   | `npm run staging:resume` | Finishes a partly applied import, **only if inspect finds nothing missing**. Applies the postgres default privileges (idempotent), reference data (only if empty) and migrations (idempotent), in one transaction. | No |
+
+   - **Platform-managed SQL is excluded** (`scripts/staging/prepare-dump.mjs`): `ALTER DEFAULT PRIVILEGES FOR ROLE supabase_*` (Supabase's own defaults, not changeable by the `postgres` login; the cause of the 2026-10-10 failure at line 1213) and the schema-level `public` statements. All application grants, RLS and policies are kept verbatim.
+   - The staging URI must be the staging project, and the production URI the production project, both on the session pooler port 5432.
+   - Exports and reports stay local (git-ignored).
+5. **Create and link the synthetic staging test users.**
+   - Staging dashboard → Authentication → Users → *Add user* (staging-only email, auto-confirm). Add a second user too if you want cross-tenant RLS checks.
+   - Then run `npm run staging:seed`. It links each user to a new synthetic tenant (admin role); re-running it is harmless.
 6. **Scope the Vercel environment variables.**
    - Vercel → project `xcepta` → Settings → Environment Variables. For **each** of `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`:
      - make sure the **existing production value is ticked for Production only**;

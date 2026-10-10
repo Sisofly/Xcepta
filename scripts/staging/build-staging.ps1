@@ -1,39 +1,52 @@
 <#
-  build-staging.ps1 — build the XCEPTA STAGING database from the production
-  STRUCTURE (no customer data), apply migrations, and verify.
+  build-staging.ps1 - build / inspect / resume / seed the XCEPTA STAGING database.
+  Production is only ever READ (structure-only pg_dump in Build mode).
 
-  Run from the repository root in PowerShell:
-      powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1
+    npm run staging:inspect   Read-only comparison of staging with the production
+                              structure (154 objects: tables, constraints, indexes,
+                              functions, RLS, policies, grants) + status report.
+    npm run staging:resume    Finish a partially applied import: only if the
+                              inspection finds NOTHING missing. Applies the
+                              postgres default privileges (idempotent), the
+                              reference data (only if that table is empty) and
+                              db/migrations (idempotent), in one transaction.
+    npm run staging:build     Fresh build: export production structure (read-only),
+                              import into an EMPTY staging in ONE transaction
+                              (all-or-nothing), then reference data + migrations.
+      add -ResetStaging       Staging refresh: first drops ONLY the application's
+                              own tables/functions on staging (typed confirmation
+                              naming the staging project), then imports.
+    npm run staging:seed      Link existing staging auth users (created in the
+                              dashboard) to synthetic tenants. Idempotent.
 
-  What it does
-    1. Exports the production schema (public schema: tables, constraints,
-       RLS policies, functions, grants) with pg_dump --schema-only. READ-ONLY
-       on production. No rows are exported, except step 2.
-    2. Exports the non-personal benchmark reference table public.static_defaults.
-    3. Checks the dump contains no data rows, and that staging is empty.
-    4. Applies the schema, the reference data, and every file in
-       db/migrations (in name order) to STAGING.
-    5. Runs db/staging/verify_staging.sql against STAGING and saves the report
-       to db/staging/verify_report.txt (git-ignored).
-
-  Safety
-    - Connection strings are typed into THIS terminal, never into chat.
-    - Passwords are read as hidden input, used for this process only, then cleared.
-    - Refuses to write to any database whose connection string contains the
-      production project reference.
+  Connection strings and passwords are typed into THIS terminal only. Passwords
+  are hidden, used for this process, then cleared. The staging target must be
+  project $StagingRef; the production source must be project $ProdRef.
 #>
-param([switch]$Force, [string]$StagingRef = 'ldhsckzvfuwpxywqloag')
+param(
+  [ValidateSet('Build', 'Inspect', 'Resume', 'SeedUsers')][string]$Mode = 'Build',
+  [switch]$ResetStaging,
+  [string]$StagingRef = 'ldhsckzvfuwpxywqloag'
+)
 $ErrorActionPreference = 'Stop'
 $ProdRef = 'acaqynigacgpswobiasb'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $root
 
-function Need($cmd) {
-  if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
-    throw "$cmd not found. Install the PostgreSQL 17 client tools (winget install -e --id PostgreSQL.PostgreSQL.17), then open a NEW terminal and add 'C:\Program Files\PostgreSQL\17\bin' to PATH if needed."
-  }
+# -- helpers --
+foreach ($v in 17, 16, 15) {
+  $bin = "C:\Program Files\PostgreSQL\$v\bin"
+  if ((Test-Path "$bin\pg_dump.exe") -and -not (Get-Command pg_dump -ErrorAction SilentlyContinue)) { $env:Path = "$bin;$env:Path"; break }
+}
+foreach ($c in 'pg_dump', 'psql', 'node') {
+  if (-not (Get-Command $c -ErrorAction SilentlyContinue)) { throw "$c not found. Install the PostgreSQL 17 client tools / Node.js first." }
 }
 function StripPassword($uri) { return ($uri.Trim() -replace '^(postgres(ql)?://[^:/@]+):[^@]*@', '$1@') }
+function RefOf($uri) {
+  if ($uri -match '^postgres(ql)?://postgres\.([a-z0-9]{20})@[^/]+\.pooler\.supabase\.com:5432/') { return $Matches[2] }   # session pooler only
+  if ($uri -match '^postgres(ql)?://postgres@db\.([a-z0-9]{20})\.supabase\.co:5432/') { return $Matches[2] }
+  return $null
+}
 function ReadSecret($prompt) {
   $s = Read-Host -AsSecureString $prompt
   $b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)
@@ -41,81 +54,126 @@ function ReadSecret($prompt) {
 }
 function Run($exe, [string[]]$argList) {
   & $exe @argList
-  if ($LASTEXITCODE -ne 0) { throw "$exe failed (exit $LASTEXITCODE)" }
+  if ($LASTEXITCODE -ne 0) { throw "$exe failed (exit $LASTEXITCODE). Steps run with --single-transaction are fully rolled back on failure." }
+}
+function HostOf($u) { return ($u -replace '^[^@]+@', '' -replace '/.*$', '') }
+function ReadStaging() {
+  $u = StripPassword (Read-Host 'STAGING session pooler URI (port 5432)')
+  $r = RefOf $u
+  if ($u -match $ProdRef -or $r -eq $ProdRef) { throw 'REFUSED: the STAGING URI points at the production project.' }
+  if ($r -ne $StagingRef) { throw "The STAGING URI is not for project $StagingRef (found '$r')." }
+  return $u
+}
+function PsqlStaging([string[]]$argList) { Run psql (@($script:stg, '-v', 'ON_ERROR_STOP=1') + $argList) }
+function PrepareFromLocalDump() {
+  if (-not (Test-Path db/schema/production_baseline.sql)) { throw 'No local production structure export found (db/schema/production_baseline.sql). Run npm run staging:build first.' }
+  Run node @('scripts/staging/prepare-dump.mjs', 'db/schema/production_baseline.sql', 'db/schema/production_baseline.supabase.sql', 'db/schema/default_privileges_postgres.sql')
+  Run node @('scripts/staging/schema-inventory.mjs', 'db/schema/production_baseline.supabase.sql', 'db/schema/inventory_check.sql', 'db/schema/reset_app_objects.sql')
+}
+function Inventory() {
+  $out = & psql $script:stg -v ON_ERROR_STOP=1 -At -f db/schema/inventory_check.sql
+  if ($LASTEXITCODE -ne 0) { throw 'Inventory query failed.' }
+  $rows = @($out | Where-Object { $_ -match '^[a-z_]+\|' } | ForEach-Object { $p = $_ -split '\|'; [pscustomobject]@{ Kind = $p[0]; Name = $p[1]; Detail = $p[2]; Present = ($p[3] -eq 'true') } })
+  $summary = $rows | Group-Object Kind | ForEach-Object { [pscustomobject]@{ Kind = $_.Name; Expected = $_.Count; Present = @($_.Group | Where-Object Present).Count } }
+  $missing = @($rows | Where-Object { -not $_.Present })
+  $report = @('Staging inventory vs production structure (' + (Get-Date -Format s) + ')', ($summary | Format-Table -AutoSize | Out-String))
+  if ($missing.Count) { $report += 'MISSING:'; $report += ($missing | ForEach-Object { '  ' + $_.Kind + ' ' + $_.Name + ' ' + $_.Detail }) } else { $report += 'MISSING: none' }
+  $report | Tee-Object -FilePath db/staging/inspect_report.txt | Write-Host
+  return @{ Total = $rows.Count; Missing = $missing.Count }
+}
+function StagingCounts() {
+  & psql $script:stg -v ON_ERROR_STOP=1 -At -c "select 'projects='||(select count(*) from public.projects)||' versions='||(select count(*) from public.versions)||' model_outputs='||(select count(*) from public.model_outputs)||' users='||(select count(*) from public.users)||' tenants='||(select count(*) from public.tenants)||' static_defaults='||(select count(*) from public.static_defaults)"
+}
+function ApplyRemaining() {
+  # Reference data only if the table is empty; default privileges + migrations are idempotent.
+  $n = & psql $script:stg -At -c 'select count(*) from public.static_defaults'
+  if ($LASTEXITCODE -ne 0) { throw 'Could not read public.static_defaults.' }
+  $files = @('db/schema/default_privileges_postgres.sql')
+  if ([int]$n -eq 0) { $files += 'db/staging/reference_static_defaults.sql' } else { Write-Host "static_defaults already has $n rows - reference data not reloaded." }
+  $files += (Get-ChildItem db/migrations -Filter *.sql | Sort-Object Name | ForEach-Object { $_.FullName })
+  $argList = @('--single-transaction', '-q'); foreach ($f in $files) { $argList += @('-f', $f) }
+  Write-Host ('Applying in ONE transaction: ' + (($files | ForEach-Object { Split-Path $_ -Leaf }) -join ', '))
+  PsqlStaging $argList
 }
 
-# Use the standard PostgreSQL client install folder if it is not on PATH yet
-foreach ($v in 17, 16, 15) {
-  $bin = "C:\Program Files\PostgreSQL\$v\bin"
-  if ((Test-Path "$bin\pg_dump.exe") -and -not (Get-Command pg_dump -ErrorAction SilentlyContinue)) { $env:Path = "$bin;$env:Path"; break }
-}
-Need pg_dump; Need psql
-Write-Host ('Using ' + (& pg_dump --version))
+Write-Host ('Using ' + (& pg_dump --version) + '; mode ' + $Mode + $(if ($ResetStaging) { ' -ResetStaging' } else { '' })) -ForegroundColor Cyan
 New-Item -ItemType Directory -Force db/schema, db/staging | Out-Null
 
-Write-Host ''
-Write-Host 'Supabase dashboard -> project -> Connect -> "Session pooler" -> copy the URI.' -ForegroundColor Cyan
-Write-Host 'The password part is removed automatically; you will be asked for it separately (hidden).' -ForegroundColor Cyan
-$prod = StripPassword (Read-Host 'PRODUCTION session pooler URI')
-$stg  = StripPassword (Read-Host 'STAGING session pooler URI')
-# Each URI must name exactly its expected project (pooler user "postgres.<ref>"
-# or direct host "db.<ref>.supabase.co").
-function RefOf($uri) {
-  if ($uri -match '^postgres(ql)?://postgres\.([a-z0-9]{20})@[^/]+\.pooler\.supabase\.com:5432/') { return $Matches[2] }   # session pooler only (6543 = transaction pooler, unsuitable for pg_dump)
-  if ($uri -match '^postgres(ql)?://postgres@db\.([a-z0-9]{20})\.supabase\.co:\d+/') { return $Matches[2] }
-  return $null
+# -- modes that never touch production --
+if ($Mode -ne 'Build') {
+  $script:stg = ReadStaging
+  Write-Host ('  STAGING : project ' + $StagingRef + ' at ' + (HostOf $script:stg)) -ForegroundColor Yellow
+  $env:PGPASSWORD = ReadSecret 'STAGING database password (hidden)'
+  try {
+    if ($Mode -eq 'Inspect') {
+      PrepareFromLocalDump
+      $r = Inventory
+      Write-Host ('Rows in staging: ' + (StagingCounts))
+      & psql $script:stg -v ON_ERROR_STOP=1 -f db/staging/verify_staging.sql | Tee-Object -FilePath db/staging/verify_report.txt | Out-Null
+      Write-Host ''
+      if ($r.Missing -eq 0) { Write-Host "INSPECTION: all $($r.Total) expected objects present. Safe to run: npm run staging:resume" -ForegroundColor Green }
+      else { Write-Host "INSPECTION: $($r.Missing) of $($r.Total) expected objects MISSING. Do not resume; see db/staging/inspect_report.txt" -ForegroundColor Red }
+    }
+    elseif ($Mode -eq 'Resume') {
+      PrepareFromLocalDump
+      $r = Inventory
+      if ($r.Missing -ne 0) { throw "Resume refused: $($r.Missing) expected object(s) missing in staging. Nothing was changed." }
+      if ((Read-Host 'All objects present. Type YES to apply the remaining steps to STAGING') -ne 'YES') { throw 'Cancelled. Nothing was changed.' }
+      ApplyRemaining
+      $r2 = Inventory
+      & psql $script:stg -v ON_ERROR_STOP=1 -f db/staging/verify_staging.sql | Tee-Object -FilePath db/staging/verify_report.txt
+      if ($r2.Missing -ne 0) { throw 'Post-resume inventory reports missing objects.' }
+      Write-Host 'RESUME COMPLETE: staging matches the production structure and P-022 is applied.' -ForegroundColor Green
+    }
+    elseif ($Mode -eq 'SeedUsers') {
+      $emails = @((Read-Host 'Staging test user email (must already exist in staging Authentication -> Users)'))
+      $second = Read-Host 'Optional second staging user email on a DIFFERENT tenant (press Enter to skip)'
+      if ($second) { $emails += $second }
+      $i = 0
+      foreach ($e in $emails) {
+        $i++
+        PsqlStaging @('-q', '-v', ('email=' + $e), '-v', ('tenant_name=SYNTHETIC - Staging Tenant ' + [char](64 + $i)), '-f', 'db/staging/seed_staging_users.sql')
+      }
+      & psql $script:stg -At -c "select u.email || ' -> tenant ' || t.name || ' (' || u.role || ')' from public.users u join public.tenants t using (tenant_id) order by t.name"
+      Write-Host 'Staging test users linked to synthetic tenants.' -ForegroundColor Green
+    }
+  } finally { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue }
+  return
 }
-$prodRefSeen = RefOf $prod; $stgRefSeen = RefOf $stg
-if ($stg -match $ProdRef -or $stgRefSeen -eq $ProdRef) { throw 'REFUSED: the STAGING URI points at the production project.' }
-if ($prodRefSeen -ne $ProdRef)    { throw "The PRODUCTION URI is not for project $ProdRef (found '$prodRefSeen'). Copy it from the production project's Connect dialog." }
-if ($stgRefSeen -ne $StagingRef)  { throw "The STAGING URI is not for project $StagingRef (found '$stgRefSeen'). Copy it from the xcepta-staging project's Connect dialog." }
-$hostOf = { param($u) ($u -replace '^[^@]+@', '' -replace '/.*$', '') }
-Write-Host ''
-Write-Host ('  READ (schema-only export) : project ' + $prodRefSeen + ' at ' + (& $hostOf $prod)) -ForegroundColor Yellow
-Write-Host ('  WRITE (all changes)       : project ' + $stgRefSeen + ' at ' + (& $hostOf $stg)) -ForegroundColor Yellow
-if ((Read-Host 'Type YES to continue') -ne 'YES') { throw 'Cancelled by user. Nothing was read or written.' }
 
-# ── 1-2. Export from production (read-only) ────────────────────────────────
-$env:PGPASSWORD = ReadSecret 'PRODUCTION database password (hidden; used only for the read-only export)'
+# -- Build: read production structure, import into staging --
+Write-Host 'Supabase dashboard -> project -> Connect -> Session pooler (port 5432). The password part is removed automatically.' -ForegroundColor Cyan
+$prod = StripPassword (Read-Host 'PRODUCTION session pooler URI (port 5432)')
+if ((RefOf $prod) -ne $ProdRef) { throw "The PRODUCTION URI is not for project $ProdRef." }
+$script:stg = ReadStaging
+Write-Host ''
+Write-Host ('  READ  (structure-only export) : project ' + $ProdRef + ' at ' + (HostOf $prod)) -ForegroundColor Yellow
+Write-Host ('  WRITE (all changes)           : project ' + $StagingRef + ' at ' + (HostOf $script:stg)) -ForegroundColor Yellow
+if ((Read-Host 'Type YES to continue') -ne 'YES') { throw 'Cancelled. Nothing was read or written.' }
+
+$env:PGPASSWORD = ReadSecret 'PRODUCTION database password (hidden; read-only export)'
 try {
-  Write-Host 'Exporting production schema (structure only)...'
   Run pg_dump @($prod, '--schema-only', '--schema=public', '--no-owner', '--file', 'db/schema/production_baseline.sql')
-  Write-Host 'Exporting reference table public.static_defaults...'
   Run pg_dump @($prod, '--data-only', '--table=public.static_defaults', '--no-owner', '--file', 'db/staging/reference_static_defaults.sql')
 } finally { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue }
+PrepareFromLocalDump
 
-# ── 3. Sanity: the baseline holds structure only; make it Supabase-compatible
-$baseline = Get-Content db/schema/production_baseline.sql -Raw
-if ($baseline -match '(?m)^COPY |(?m)^INSERT INTO ') { throw 'The schema dump unexpectedly contains data rows. Stopping.' }
-$baseline = $baseline `
-  -replace '(?m)^SET transaction_timeout = .*$', '-- (removed: pg_dump 17 setting unknown to the Supabase server)' `
-  -replace '(?m)^CREATE SCHEMA public;$', '-- (removed: schema public already exists in Supabase)' `
-  -replace '(?m)^ALTER SCHEMA public OWNER TO .*$', '-- (removed: owner)' `
-  -replace '(?m)^COMMENT ON SCHEMA public IS .*$', '-- (removed: schema comment)'
-Set-Content -Path db/schema/production_baseline.supabase.sql -Value $baseline -Encoding UTF8
-
-# ── 4. Apply to staging ────────────────────────────────────────────────────
 $env:PGPASSWORD = ReadSecret 'STAGING database password (hidden)'
 try {
-  $existing = & psql $stg -At -c "select count(*) from information_schema.tables where table_schema='public' and table_name in ('projects','versions','model_outputs')"
+  $existing = & psql $script:stg -At -c "select count(*) from information_schema.tables where table_schema='public' and table_name in ('projects','versions','model_outputs','tenants','users')"
   if ($LASTEXITCODE -ne 0) { throw 'Could not connect to staging.' }
-  if ([int]$existing -gt 0 -and -not $Force) {
-    throw 'Staging already contains XCEPTA tables. Re-run with -Force only if you intend to apply on top (this script never drops anything).'
+  if ([int]$existing -gt 0) {
+    if (-not $ResetStaging) { throw 'Staging already contains XCEPTA tables. Use npm run staging:inspect (and staging:resume), or re-run with -ResetStaging to refresh staging.' }
+    Write-Host ('Staging currently holds: ' + (StagingCounts)) -ForegroundColor Yellow
+    Write-Host 'Reset will DROP ONLY these application objects on STAGING (see db/schema/reset_app_objects.sql); auth, storage and Supabase schemas are untouched.' -ForegroundColor Yellow
+    if ((Read-Host "Type RESET $StagingRef to confirm") -ne "RESET $StagingRef") { throw 'Reset not confirmed. Nothing was changed.' }
+    PsqlStaging @('-q', '-f', 'db/schema/reset_app_objects.sql')
   }
-  Write-Host 'Applying schema to STAGING...'
-  Run psql @($stg, '-v', 'ON_ERROR_STOP=1', '-q', '-f', 'db/schema/production_baseline.supabase.sql')
-  Write-Host 'Loading reference data to STAGING...'
-  Run psql @($stg, '-v', 'ON_ERROR_STOP=1', '-q', '-f', 'db/staging/reference_static_defaults.sql')
-  Get-ChildItem db/migrations -Filter *.sql | Sort-Object Name | ForEach-Object {
-    Write-Host ('Applying migration ' + $_.Name + ' to STAGING...')
-    Run psql @($stg, '-v', 'ON_ERROR_STOP=1', '-q', '-f', $_.FullName)
-  }
-  # ── 5. Verify ─────────────────────────────────────────────────────────────
-  Write-Host 'Verifying STAGING...'
-  & psql $stg -v ON_ERROR_STOP=1 -f db/staging/verify_staging.sql | Tee-Object -FilePath db/staging/verify_report.txt
-  if ($LASTEXITCODE -ne 0) { throw 'Verification query failed.' }
+  Write-Host 'Importing production structure into STAGING in ONE transaction...'
+  PsqlStaging @('--single-transaction', '-q', '-f', 'db/schema/production_baseline.supabase.sql')
+  ApplyRemaining
+  $r = Inventory
+  & psql $script:stg -v ON_ERROR_STOP=1 -f db/staging/verify_staging.sql | Tee-Object -FilePath db/staging/verify_report.txt
+  if ($r.Missing -ne 0) { throw 'Post-build inventory reports missing objects.' }
+  Write-Host 'STAGING BUILT: structure matches production; P-022 applied.' -ForegroundColor Green
 } finally { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue }
-
-Write-Host ''
-Write-Host 'Staging database built. Report saved to db/staging/verify_report.txt' -ForegroundColor Green
-Write-Host 'Next: create the staging test user (runbook step 5).' -ForegroundColor Green
