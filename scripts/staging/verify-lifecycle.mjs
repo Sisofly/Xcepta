@@ -3,6 +3,7 @@
  * staging-verify.mjs — end-to-end PPP verification against the STAGING database
  * ---------------------------------------------------------------------------
  *   npm run verify:staging            (add -- --cleanup to delete what it created)
+ *   (file: scripts/staging/verify-lifecycle.mjs)
  *
  * Reads VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY and STAGING_TEST_EMAIL /
  * STAGING_TEST_PASSWORD from the shell or .env.local (never commit them).
@@ -17,33 +18,19 @@
  * and checks the reloaded result equals the engine output exactly.
  * ---------------------------------------------------------------------------
  */
-import { readFileSync, existsSync } from 'node:fs'
 import process from 'node:process'
 import { createClient } from '@supabase/supabase-js'
-import { PRODUCTION_SUPABASE_REF, projectRefFromUrl } from '../src/config/supabaseGuard.js'
-import { runPPPEngine, PPP_ENGINE_VERSION, PPP_ENGINE_COMPATIBLE_VERSIONS } from '../src/modules/feasibility/annualEngine.js'
-import { savePPPApproval, loadLatestModelOutput } from '../src/modules/feasibility/pppResultStore.js'
-import { assessResultCurrency } from '../src/modules/feasibility/resultPersistence.js'
-import { buildDebtScheduleRows } from '../src/modules/feasibility/debtSchedule.js'
-import { pppFundingSummaryRows, pppPdfMetricValues } from '../src/modules/feasibility/pppReporting.js'
+import { PRODUCTION_SUPABASE_REF } from '../../src/config/supabaseGuard.js'
+import { runPPPEngine, PPP_ENGINE_VERSION, PPP_ENGINE_COMPATIBLE_VERSIONS } from '../../src/modules/feasibility/annualEngine.js'
+import { savePPPApproval, loadLatestModelOutput } from '../../src/modules/feasibility/pppResultStore.js'
+import { assessResultCurrency } from '../../src/modules/feasibility/resultPersistence.js'
+import { buildDebtScheduleRows } from '../../src/modules/feasibility/debtSchedule.js'
+import { pppFundingSummaryRows, pppPdfMetricValues } from '../../src/modules/feasibility/pppReporting.js'
+import { loadStagingEnv, fail } from './env.mjs'
 
-// ── environment (shell wins over .env.local) ────────────────────────────────
-const env = { ...process.env }
-if (existsSync('.env.local')) {
-  for (const line of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/)
-    if (m && env[m[1]] === undefined) env[m[1]] = m[2].replace(/^['"]|['"]$/g, '')
-  }
-}
+const { env, ref } = loadStagingEnv(['STAGING_TEST_EMAIL', 'STAGING_TEST_PASSWORD'])
 const url = env.VITE_SUPABASE_URL, key = env.VITE_SUPABASE_ANON_KEY
-const ref = projectRefFromUrl(url)
-if (!ref) fail('VITE_SUPABASE_URL is missing or invalid.')
-if (ref === PRODUCTION_SUPABASE_REF) fail('REFUSED: this is the PRODUCTION Supabase project. staging-verify only runs against staging.')
-if (!key || !env.STAGING_TEST_EMAIL || !env.STAGING_TEST_PASSWORD) {
-  fail('Set VITE_SUPABASE_ANON_KEY, STAGING_TEST_EMAIL and STAGING_TEST_PASSWORD (shell or .env.local).')
-}
 const cleanup = process.argv.includes('--cleanup')
-function fail(msg) { console.error('✖ ' + msg); process.exit(2) }
 
 const db = createClient(url, key, { auth: { persistSession: false } })
 const results = []

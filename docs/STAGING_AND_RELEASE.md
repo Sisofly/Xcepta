@@ -52,29 +52,16 @@ You use your own accounts throughout. Never paste passwords or keys into chat.
 2. **Create the staging Supabase project.**
    - Supabase dashboard → *New project* → name `xcepta-staging`, the same region as production, a strong database password saved in your password manager.
    - Note its **Project URL** and **anon public key** (Project Settings → API).
-3. **Export the production schema (structure only, no data).**
-   - Install the PostgreSQL client tools once: `winget install -e --id PostgreSQL.PostgreSQL.17` (or the EDB installer, "Command Line Tools" only).
-   - Production dashboard → *Connect* → copy the **Session pooler** URI. pg_dump will **prompt for the password**; don't put it in the command.
-   ```bash
-   pg_dump "postgresql://postgres.acaqynigacgpswobiasb@<pooler-host>:5432/postgres" --schema-only --schema=public --no-owner --file db/schema/production_baseline.sql
-   ```
-   ```bash
-   pg_dump "postgresql://postgres.acaqynigacgpswobiasb@<pooler-host>:5432/postgres" --data-only --table=public.static_defaults --file db/staging/reference_static_defaults.sql
-   ```
-   - The first command is read-only on production and copies structure, RLS policies and functions, with no rows.
-   - The second copies only the benchmark reference table, which is non-personal and used by the real-estate engine.
-   - Keep both files local (they are git-ignored by `db/schema/.gitignore`) unless the repository is private.
-4. **Build the staging database.** Use the staging Session pooler URI; psql prompts for the staging password.
-   ```bash
-   psql "postgresql://postgres.<staging-ref>@<pooler-host>:5432/postgres" -v ON_ERROR_STOP=1 -f db/schema/production_baseline.sql
-   ```
-   ```bash
-   psql "postgresql://postgres.<staging-ref>@<pooler-host>:5432/postgres" -v ON_ERROR_STOP=1 -f db/staging/reference_static_defaults.sql
-   ```
-   ```bash
-   psql "postgresql://postgres.<staging-ref>@<pooler-host>:5432/postgres" -v ON_ERROR_STOP=1 -f db/migrations/2026-10-10_p022_versioned_model_outputs.sql
-   ```
-   If the baseline stops on an object Supabase already creates (for example `create schema public`), remove that statement from the local file and re-run.
+3–4. **Export the production structure and build staging — automated.**
+   - Install the PostgreSQL client tools once: `winget install -e --id PostgreSQL.PostgreSQL.17`, then open a new terminal.
+   - Run `npm run staging:build` (`scripts/staging/build-staging.ps1`). It asks for the production and staging *Session pooler* URIs (Supabase → Connect) and then each password as **hidden input** in your terminal. It then:
+     - exports the production **structure only** (read-only, no rows), plus the `static_defaults` benchmark table;
+     - checks the dump contains no data and that staging is empty;
+     - makes the dump Supabase-compatible;
+     - applies it, the reference data, and every `db/migrations` file to staging;
+     - runs `db/staging/verify_staging.sql`. That reports RLS status and policies per table, the P-022 columns, the primary key, row counts and auth users, saved to `db/staging/verify_report.txt`.
+   - It refuses any staging URI that contains the production project reference, and never drops anything.
+   - Dumps and reports stay local (git-ignored).
 5. **Create the synthetic staging test user.**
    - Staging dashboard → Authentication → Users → *Add user* → a staging-only email, auto-confirm, a new password. Copy its **UID**.
    - Then run `db/staging/seed_staging_user.sql` in the staging SQL editor, after filling in the UID and following its notes.
@@ -84,7 +71,9 @@ You use your own accounts throughout. Never paste passwords or keys into chat.
      - add a second entry with the **staging** value, ticked for **Preview** and **Development**.
    - Then: Deployments → the PR #3 preview → *Redeploy*. The build should pass and show the amber STAGING banner.
 7. **Point local development at staging.** Copy `.env.example` to `.env.local` (replacing the production values) and fill in the staging URL, anon key and test-user credentials.
-8. **Verify staging end to end:** `npm run verify:staging`. Expect "All staging checks passed". Add `-- --cleanup` to remove the synthetic projects it created.
+8. **Verify staging end to end:**
+   - `npm run verify:staging:isolation`: authentication, anonymous access and tenant RLS. For cross-tenant checks, add a second staging user on a different tenant via `STAGING_TEST_EMAIL_2` / `STAGING_TEST_PASSWORD_2`.
+   - `npm run verify:staging`: the financial lifecycle. Expect "All staging checks passed". Add `-- --cleanup` to remove the synthetic projects it created.
 9. **Preview smoke test** (`docs/PPP_COMPLETION_REPORT_RC1.md` §8.4) on the redeployed PR #3 preview, now on staging.
 
 ## 5. Controlled production migration and rollback
