@@ -10,7 +10,7 @@
 | Environment variables | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (build-time, bundled; the anon key is public by design and protected by RLS). `BASE_URL` (local PDF harness only). | — | Scoped per environment in Vercel (§4, step 6). |
 | Vercel | Project `xcepta` (git-linked; production = `master`, previews = PR branches). The repository cannot show how the env vars are scoped, but the PR #1/#3 previews ran against **production Supabase**. | **High** — every preview could read and write production data. | Preview scope → staging, enforced by the build guard. |
 | Local development | `.env.local` points at production Supabase. | **High** — local testing wrote to production. | The guard now blocks this unless explicitly overridden. |
-| `.env` in git | `.env` was **tracked** (since `be598e9`, 2026-05-12) and contained `OPENAI_API_KEY`. **The repository is public.** | **Critical** — treat the key as exposed. | Untracked and ignored (`.env`, `.env.*`). **You must revoke the key** (§4, step 1). |
+| `.env` in git | `.env` was tracked (since `be598e9`) with an `OPENAI_API_KEY` entry. **Checked 2026-10-10: the value is a 25-character placeholder, not an OpenAI key format.** A full-history scan for credential patterns (OpenAI/AWS/GitHub tokens, Supabase JWT / service-role / secret keys, DB URLs with passwords, hard-coded keys) found **none**. | Low (hygiene) | Untracked and ignored (`.env`, `.env.*`). No revocation needed. |
 | Schema in repo | No DDL for the app's tables. `schema.sql` is stale (`re_projects`, `cf_engine_runs`, …). | Medium — staging cannot be rebuilt from the repo. | Schema-only baseline exported from production (§4, step 3). |
 | Migrations | `db/migrations/2026-10-10_p022_versioned_model_outputs.sql` (additive). **P-028 (tax depreciation) needs no database change** — it is engine-only. A future engine-version bump marks earlier approvals "outdated" in the app, with no data change. | — | Apply to staging first, then production (§5). |
 
@@ -46,8 +46,7 @@ Local dev ───────────────────────�
 
 You use your own accounts throughout. Never paste passwords or keys into chat.
 
-1. **Revoke the exposed OpenAI key** (urgent).
-   - platform.openai.com → API keys → revoke the key that was in `.env`; create a new one only if you use it, and keep it out of git.
+1. **Exposed-key check: done (no action needed).** The committed `OPENAI_API_KEY` was a placeholder; the history scan is clean. Still recommended:
    - Recommended: GitHub → Sisofly/Xcepta → Settings → General → *Change repository visibility* → **Private**. The key also remains in git history; revoking it neutralises it, and a history rewrite is optional.
 2. **Create the staging Supabase project.**
    - Supabase dashboard → *New project* → name `xcepta-staging`, the same region as production, a strong database password saved in your password manager.
