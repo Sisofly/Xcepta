@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from 'react-router-dom'
-import { supabase } from '../../lib/supabase'
+import { supabase, DATABASE_TARGET, DATABASE_WARNING, DEPLOY_ENV } from '../../lib/supabase'
 import colors from '../../theme/colors.js'
 
 // ── XCEPTA icon mark — light version (inline SVG, no file dependency) ──
@@ -61,6 +61,18 @@ export default function AppLayout() {
       </aside>
 
       <main style={{ flex: 1, overflowY: 'auto', padding: '2.5rem' }}>
+        {/* Environment banner: any non-production database is labelled so
+            staging data can never be mistaken for production. */}
+        {(DATABASE_TARGET !== 'production' || DATABASE_WARNING) && (
+          <div style={{ margin: '-1.5rem 0 1.5rem', padding: '0.45rem 0.9rem', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600,
+            background: DATABASE_WARNING ? colors.dangerSoft : colors.warningSoft,
+            border: `1px solid ${DATABASE_WARNING ? colors.danger : colors.warning}`,
+            color: DATABASE_WARNING ? colors.danger : colors.warning }}>
+            {DATABASE_WARNING
+              ? DATABASE_WARNING
+              : 'STAGING (' + DEPLOY_ENV + ') — synthetic test data only. Not connected to production.'}
+          </div>
+        )}
         <Outlet />
       </main>
     </div>

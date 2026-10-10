@@ -1,0 +1,2 @@
+# Reference-data dumps from production stay local.
+reference_*.sql
