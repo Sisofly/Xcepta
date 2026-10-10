@@ -290,15 +290,13 @@ function pppVal(assumptions, name) {
 // ───────────────────────────────────────────────────────────────────────────
 // PPP roadmap notes — logged 2026-05-24, not implemented.
 //
-// P-015 (deferred): construction debt draw + IDC capitalization +
-//   equity-first drawdown. Currently the PPP path models construction as
-//   100% equity-funded with zero interest charged; debt only flows during
-//   operations. Implementing P-015 would (a) draw equity first, then debt
-//   for the balance of TPC over the construction window, (b) capitalize
-//   interest during construction into the opening debt balance at end of
-//   construction, and (c) revise the sculpting horizon decision. Without
-//   IDC the engine systematically under-sizes debt vs institutional PF
-//   models on long-construction projects (Madaba benchmark gap ≈ 5.5M JOD).
+// P-015 (implemented): A — equity-first construction drawdown; C — IDC
+//   accrued on the drawn construction balance and capitalized into the
+//   COD balance (simulateConstructionFunding / solveConstructionDebt);
+//   D — COD conversion to the term loan with an engine-emitted
+//   debt_schedule. Note: the earlier claim that IDC explains the Madaba
+//   debt gap was disproven on tracing the benchmark workbook — see
+//   XCEPTA_GATE1_FINDINGS.md §9.
 //
 // P-016 (deferred): quarterly periodicity. Engine is currently annual.
 //   Quarterly resolution would improve construction interest accrual,
@@ -362,6 +360,72 @@ function sculptSupportableDebt(ebitda, taxRate, target, rate, repayYears) {
   return (lo + hi) / 2
 }
 
+// ── Construction funding with IDC (P-015A + P-015C) ────────────────────────
+// Simulates the equity-first construction waterfall for a given total of
+// PRINCIPAL debt draws and returns the per-year funding rows plus the
+// capitalized interest and the COD balance.
+//
+// Conventions (annual model — see XCEPTA_GATE1_FINDINGS.md §9.3):
+//   • Base capex (TPC) is spread evenly across construction years.
+//   • Equity first: each year draws equity up to the remaining equity
+//     budget (TPC − principal), then debt principal for the balance.
+//   • Draws are assumed to occur evenly through the year, so a year's new
+//     draw accrues on average half a year of interest:
+//         idc_t = constrRate × (opening_t + ½ × draw_t)
+//     opening_t already contains prior years' capitalized IDC, so IDC
+//     compounds annually.
+//   • IDC is capitalized (added to the loan balance), not paid in cash and
+//     not charged to equity:  closing_t = opening_t + draw_t + idc_t.
+//   • COD balance = Σ principal draws + Σ IDC = operations opening balance.
+function simulateConstructionFunding(tpc, constrYears, principalTotal, constrRate) {
+  var capex     = tpc / constrYears
+  var eqLeft    = Math.max(0, tpc - principalTotal)
+  var opening   = 0
+  var idcTotal  = 0
+  var rows      = []
+  for (var y = 0; y < constrYears; y++) {
+    var eqDraw   = Math.min(capex, eqLeft)
+    var debtDraw = capex - eqDraw
+    eqLeft      -= eqDraw
+    var idc      = constrRate * (opening + 0.5 * debtDraw)
+    var closing  = opening + debtDraw + idc
+    rows.push({ capex: capex, equity_draw: eqDraw, debt_draw: debtDraw,
+                opening: opening, idc: idc, closing: closing })
+    idcTotal += idc
+    opening   = closing
+  }
+  return { rows: rows, idcTotal: idcTotal, codBalance: opening }
+}
+
+// Solves the principal draw total P such that the COD balance P + IDC(P)
+// respects every debt-capacity constraint (P-015C):
+//   (a) COD balance ≤ supportable (DSCR-sculpted capacity at COD — this is
+//       independent of IDC because it depends only on operating CFADS,
+//       rate, tenor and target DSCR);
+//   (b) COD balance ≤ Debt % × total funding requirement (TPC + IDC);
+//   (c) P ≤ TPC (principal cannot fund more than the base project cost).
+// IDC(P) is increasing in P, so headroom(P) = cap(P) − (P + IDC(P)) is
+// strictly decreasing and the largest feasible P is found by bisection.
+// No circular reference or plug: IDC is recomputed from the draws at each
+// candidate P. With constrRate = 0 this reduces exactly to the pre-IDC
+// sizing min(supportable, Debt % × TPC, TPC).
+function solveConstructionDebt(tpc, constrYears, constrRate, debtPct, supportable) {
+  function headroom(P) {
+    var sim = simulateConstructionFunding(tpc, constrYears, P, constrRate)
+    var cap = Math.min(supportable, debtPct * (tpc + sim.idcTotal))
+    return cap - sim.codBalance
+  }
+  if (tpc <= 0 || supportable <= 0 || debtPct <= 0) return 0
+  if (headroom(tpc) >= 0) return tpc
+  var lo = 0, hi = tpc
+  for (var i = 0; i < 200 && hi - lo > 1e-4; i++) {
+    var mid = (lo + hi) / 2
+    if (headroom(mid) >= 0) lo = mid
+    else hi = mid
+  }
+  return lo
+}
+
 function runPPPEngine(assumptions) {
   // ── F02 (Batch 2A, 2026-05-16): explicit-zero respect on PPP inputs ──
   // Replaces the legacy `(pppVal(...) || X)` falsy-fallback pattern.
@@ -384,6 +448,10 @@ function runPPPEngine(assumptions) {
   // diagnostic. Default 1.20 mirrors the institutional DSCR floor used by the
   // bankability gate and the computeRequiredPayment solver.
   var targetDSCR      = safeNum(pppVal(assumptions, 'Target DSCR'), 1.20)
+  // P-015C: construction-period (IDC) rate. Optional engine input; when
+  // absent the contractual operating rate applies to construction too
+  // (single-facility assumption). Explicit 0 is respected.
+  var constrRate      = safePct(pppVal(assumptions, 'Construction Interest Rate'), interestRate * 100)
 
   // ── F02 validation: Concession Period and Construction Period must be ≥ 1 ──
   // The old `|| 25` / `|| 24` falsy fallbacks combined with downstream
@@ -443,7 +511,11 @@ function runPPPEngine(assumptions) {
   // targetDSCR ≤ 0 (per F03 semantics, "no DSCR constraint") falls back to
   // the legacy requested-debt sizing. Non-viable economics (EBITDA ≤ 0 or
   // repayYears = 0) yield zero supportable debt.
-  var requestedDebt = tpc * debtPct
+  //
+  // P-015C (IDC) amends steps 3–4: the DSCR-supportable amount is the
+  // maximum COD balance (principal draws + capitalized IDC), Debt % applies
+  // to the total funding requirement (TPC + IDC), and equity funds
+  // TPC − principal draws. See solveConstructionDebt().
   var repayYears    = Math.max(0, loanTenorYrs - gracePeriodYrs)
 
   var sizingRevenue = annualPayment
@@ -456,48 +528,63 @@ function runPPPEngine(assumptions) {
       sizingEbitda, taxRate, targetDSCR, interestRate, repayYears
     )
   } else if (targetDSCR <= 0) {
-    // F03-style "no DSCR constraint" → debt capacity is unbounded; use requested
-    supportableDebt = requestedDebt
+    // F03-style "no DSCR constraint" → DSCR capacity is unbounded; Debt %
+    // (applied to TPC + IDC inside the solver) is the only debt cap.
+    supportableDebt = Infinity
   } else {
     // Non-viable economics → zero debt capacity
     supportableDebt = 0
   }
 
-  var debt   = Math.max(0, Math.min(requestedDebt, supportableDebt, tpc))
-  var equity = Math.max(0, tpc - debt)
+  // P-015C: solve principal draws so that COD balance (principal + IDC)
+  // respects DSCR capacity, gearing on total funding, and TPC.
+  var principalDrawn = solveConstructionDebt(tpc, constrYears, constrRate, debtPct, supportableDebt)
+  var construction   = simulateConstructionFunding(tpc, constrYears, principalDrawn, constrRate)
+  var idcTotal       = construction.idcTotal
+  var totalFunding   = tpc + idcTotal                     // total uses (Convention A + IDC)
+  var debt           = construction.codBalance            // COD term-loan balance (P-015D)
+  var equity         = Math.max(0, tpc - principalDrawn)
+  var requestedDebt  = totalFunding * debtPct
+  if (supportableDebt === Infinity) supportableDebt = requestedDebt   // report a finite figure
 
   // Debt-capacity diagnostics (per the P-009/P-013 spec)
   var debtShortfall    = Math.max(0, requestedDebt - supportableDebt)
-  var userEquityNominal = tpc * equityPct                    // what user wanted to contribute
+  var userEquityNominal = totalFunding * equityPct           // what user wanted to contribute
   var additionalEquity = Math.max(0, equity - userEquityNominal)
+  var bindingConstraint =
+    debt <= 0.01                                  ? 'none'
+    : principalDrawn >= tpc - 0.01                ? 'project_cost'
+    : supportableDebt < requestedDebt - 1         ? 'dscr'
+    : 'gearing'
 
-  var cfs = [], cfTable = [], dscrSeries = []
+  var cfs = [], cfTable = [], dscrSeries = [], debtSchedule = []
 
-  // ── Construction phase: equity-first funding waterfall (P-015A) ──
-  // Each construction year draws equity first (up to equityRemaining),
-  // then debt for the balance of that year's capex. By COD the
-  // cumulative debt drawn equals `debt` exactly; cumulative equity
-  // drawn equals `equity` exactly. IDC (P-015C) is NOT applied here —
-  // construction interest is still zero in this pass.
-  //
-  // Replaces P-009's even equity split; equity_cf timing changes
-  // intentionally, which may shift IRR slightly.
-  var capexPerConstrYr = tpc / constrYears
-  var equityRemaining  = equity
+  // ── Construction phase: equity-first funding waterfall (P-015A) + IDC (P-015C) ──
+  // Each construction year draws equity first (up to the equity budget),
+  // then debt principal for the balance of that year's capex. Interest
+  // during construction accrues on the drawn balance and is capitalized
+  // into the loan (row field `idc`); it is not a cash cost to equity and
+  // `interest` (cash interest paid) stays 0 in construction rows.
+  // By COD: Σ equity_draw = equity, Σ debt_draw = principalDrawn,
+  // Σ debt_draw + Σ idc = debt (COD balance).
   for (var cy = 0; cy < constrYears; cy++) {
-    var equityDrawThisYear = Math.min(capexPerConstrYr, equityRemaining)
-    var debtDrawThisYear   = capexPerConstrYr - equityDrawThisYear
-    equityRemaining       -= equityDrawThisYear
-    var eqCF = -equityDrawThisYear
+    var cRow = construction.rows[cy]
+    var eqCF = -cRow.equity_draw
     cfs.push(eqCF)
     cfTable.push({
       year: cy, phase: 'Construction',
       revenue: 0, opex: 0, ebitda: 0,
       interest: 0, pbt: 0, tax: 0, net_income: 0,
-      principal: 0, capex: r2(capexPerConstrYr),
-      equity_draw: r2(equityDrawThisYear),
-      debt_draw:   r2(debtDrawThisYear),
+      principal: 0, capex: r2(cRow.capex),
+      equity_draw: r2(cRow.equity_draw),
+      debt_draw:   r2(cRow.debt_draw),
+      idc:         r2(cRow.idc),
       equity_cf: r2(eqCF), dscr: null,
+    })
+    debtSchedule.push({
+      year: cy, phase: 'Construction',
+      opening: r2(cRow.opening), draw: r2(cRow.debt_draw), idc: r2(cRow.idc),
+      interest: 0, principal: 0, closing: r2(cRow.closing),
     })
   }
 
@@ -507,12 +594,23 @@ function runPPPEngine(assumptions) {
   // and principal_t = DS_t − interest_t. For flat CFADS this resolves to
   // ~flat DS / rising principal / falling interest. Outside the repayment
   // window (post-grace, post-amortization), principal stays at zero.
+  //
+  // P-015D: COD conversion. The construction facility converts into the
+  // term loan at COD with no adjustment: operations open at exactly the
+  // construction closing balance (principal + capitalized IDC). Loan tenor
+  // is measured FROM COD (construction years are not part of the tenor);
+  // the first `gracePeriodYrs` operating years are interest-only, then the
+  // loan amortizes over repayYears = tenor − grace by DSCR sculpting.
+  // Each operating row is also written to debtSchedule from the SAME
+  // variables used in the P&L / cash-flow rows, so the schedule cannot
+  // disagree with the engine.
   var outDebt = debt
   for (var op = 1; op <= opsYears; op++) {
     var yr       = constrYears + op - 1
     var isGrace  = op <= gracePeriodYrs
     var inRepay  = !isGrace && op <= (gracePeriodYrs + repayYears)
     var hasDebt  = outDebt > 0.01
+    var openingDebt = outDebt
 
     var revenue  = annualPayment
     var opex     = useFixedOpex ? r2(opexFixed) : r2(revenue * opexPct)
@@ -554,8 +652,13 @@ function runPPPEngine(assumptions) {
       revenue: r2(revenue), opex: opex, ebitda: ebitda,
       interest: interest, pbt: pbt, tax: tax, net_income: netInc,
       principal: principal, capex: 0,
-      equity_draw: 0, debt_draw: 0,
+      equity_draw: 0, debt_draw: 0, idc: 0,
       equity_cf: eqCF, dscr: dscr,
+    })
+    debtSchedule.push({
+      year: yr, phase: 'Operations',
+      opening: r2(openingDebt), draw: 0, idc: 0,
+      interest: interest, principal: principal, closing: r2(outDebt),
     })
   }
 
@@ -580,6 +683,13 @@ function runPPPEngine(assumptions) {
     tdc: r2(tpc), debt_amount: r2(debt), equity_amount: r2(equity),
     dscr_series: dscrSeries, cash_flows: cfTable,
     construction_years: constrYears, operations_years: opsYears,
+    // ── P-015C / P-015D ──
+    // tdc stays the BASE project cost input (Convention A: excludes IDC).
+    // total_funding_requirement = tdc + idc_capitalized = total sources.
+    // debt_amount = COD term-loan balance = principal_drawn + idc_capitalized.
+    idc_capitalized:           r2(idcTotal),
+    total_funding_requirement: r2(totalFunding),
+    debt_schedule:             debtSchedule,
     // ── Debt-capacity diagnostics (P-009 / P-013) ──
     // Surfaces the DSCR-driven sizing decision to the UI/PDF so reviewers
     // can see (a) what the user requested, (b) what CFADS+DSCR could support,
@@ -594,6 +704,16 @@ function runPPPEngine(assumptions) {
       avg_dscr:                   avgDSCR !== null ? r2(avgDSCR) : null,
       target_dscr:                targetDSCR,
       actual_debt:                r2(debt),
+      // P-015C / P-015D additions
+      principal_drawn:            r2(principalDrawn),
+      idc_capitalized:            r2(idcTotal),
+      total_funding_requirement:  r2(totalFunding),
+      cod_debt_balance:           r2(debt),
+      construction_interest_rate: constrRate,
+      binding_constraint:         bindingConstraint,   // 'dscr' | 'gearing' | 'project_cost' | 'none'
+      loan_tenor_years:           loanTenorYrs,        // measured from COD
+      grace_years:                gracePeriodYrs,      // interest-only operating years
+      repayment_years:            repayYears,          // tenor − grace
     },
   }
 }

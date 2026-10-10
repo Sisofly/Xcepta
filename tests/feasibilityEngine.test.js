@@ -1432,32 +1432,53 @@ describe('B34 — PPP base scenario sanity', () => {
   //   the requested 80,000,000 because AP=12M cannot service 80M at 1.20 DSCR.
   //   debt   = min(requested, supportable, tpc) = supportable = 47,507,319.59
   //   equity = TPC − debt                       = 52,492,680.41
-  test('B34.1: TDC/debt/equity sizing sculpted to default Target DSCR 1.20', () => {
-    expect(out.tdc).toBeCloseTo(100_000_000, CURR_DP)
-    // Per user spec point (1): requested debt = TPC × Debt% (informational ceiling)
-    expect(out.debt_sizing.requested_debt).toBeCloseTo(80_000_000, CURR_DP)
-    // Per user spec point (2): actual debt = min(requested, supportable)
+  // ── P-015C re-baseline (IDC capitalization, 2026-10-10) ─────────────────
+  // The DSCR-supportable COD balance is unchanged (47,507,319.59 — it depends
+  // only on operating CFADS, rate, tenor and target). With IDC, that COD
+  // balance = principal draws P + capitalized IDC, so IDC consumes debt
+  // capacity and equity funds TPC − P. Closed form for this fixture:
+  //   capex/yr = 50,000,000; equity (≈54.1M) > 50M covers all of year 0,
+  //   so all principal is drawn in year 1 with mid-year accrual:
+  //     IDC = 7% × ½ × P = 0.035 P   (opening balance in year 1 is 0)
+  //     P + 0.035 P = 47,507,319.59  →  P = 45,900,791.87
+  //     IDC = 47,507,319.59 − 45,900,791.87 = 1,606,527.72
+  //     equity = 100,000,000 − 45,900,791.87 = 54,099,208.13
+  //     total funding = TPC + IDC = 101,606,527.72
+  //     requested = 80% × 101,606,527.72 = 81,285,222.18
+  const P_EXPECTED   = 47_507_319.59 / 1.035
+  const IDC_EXPECTED = 47_507_319.59 - P_EXPECTED
+  test('B34.1: TDC/debt/equity sizing sculpted to default Target DSCR 1.20 (with IDC)', () => {
+    expect(out.tdc).toBeCloseTo(100_000_000, CURR_DP)      // base TPC, excludes IDC
+    expect(P_EXPECTED).toBeCloseTo(45_900_791.87, CURR_DP) // arithmetic sanity
+    // Requested debt = Debt% × total funding requirement (TPC + IDC)
+    expect(out.debt_sizing.requested_debt).toBeCloseTo(0.8 * (100_000_000 + IDC_EXPECTED), 1)
+    // COD debt = min(requested, supportable): supportable binds, unchanged by IDC
     expect(out.debt_amount).toBeCloseTo(47_507_319.59, CURR_DP)
     expect(out.debt_amount).toBe(out.debt_sizing.actual_debt)
     expect(out.debt_amount).toBeLessThan(out.debt_sizing.requested_debt) // supportable binds
-    // Per user spec point (3): equity = TPC − actual debt
-    expect(out.equity_amount).toBeCloseTo(52_492_680.41, CURR_DP)
-    expect(out.equity_amount).toBeCloseTo(out.tdc - out.debt_amount, CURR_DP)
+    expect(out.idc_capitalized).toBeCloseTo(IDC_EXPECTED, 1)
+    expect(out.debt_sizing.principal_drawn).toBeCloseTo(P_EXPECTED, 1)
+    // equity = TPC − principal draws = TPC + IDC − COD debt
+    expect(out.equity_amount).toBeCloseTo(100_000_000 - P_EXPECTED, 1)
+    expect(out.equity_amount).toBeCloseTo(out.tdc + out.idc_capitalized - out.debt_amount, 1)
   })
 
   // Per user spec point (8): assert the full debt_sizing diagnostic block.
   // Each field traced to the engine's reported values; arithmetic above.
   test('B34.1b: debt_sizing diagnostic block surfaces the sizing decision', () => {
     const ds = out.debt_sizing
-    expect(ds.requested_debt).toBeCloseTo(80_000_000, CURR_DP)
+    // P-015C re-baseline — see B34.1 for the closed-form P / IDC derivation.
+    const totalFunding = 100_000_000 + IDC_EXPECTED              // 101,606,527.72
+    expect(ds.requested_debt).toBeCloseTo(0.8 * totalFunding, 1)  // 81,285,222.18
     expect(ds.supportable_debt).toBeCloseTo(47_507_319.59, CURR_DP)
     expect(ds.actual_debt).toBeCloseTo(47_507_319.59, CURR_DP)
-    // shortfall = requested − supportable = 80M − 47.507M = 32,492,680.41
-    expect(ds.debt_shortfall).toBeCloseTo(32_492_680.41, CURR_DP)
-    // additional equity = resulting equity − nominal user equity (20% × 100M = 20M)
-    //                   = 52,492,680.41 − 20,000,000 = 32,492,680.41
-    expect(ds.additional_equity_required).toBeCloseTo(32_492_680.41, CURR_DP)
-    expect(ds.resulting_equity).toBeCloseTo(52_492_680.41, CURR_DP)
+    // shortfall = requested − supportable = 81,285,222.18 − 47,507,319.59
+    expect(ds.debt_shortfall).toBeCloseTo(0.8 * totalFunding - 47_507_319.59, 1)
+    // additional equity = resulting equity − nominal user equity (20% × total funding)
+    //                   = 54,099,208.13 − 20,321,305.54 = 33,777,902.59
+    expect(ds.additional_equity_required).toBeCloseTo((100_000_000 - P_EXPECTED) - 0.2 * totalFunding, 1)
+    expect(ds.resulting_equity).toBeCloseTo(100_000_000 - P_EXPECTED, 1)
+    expect(ds.binding_constraint).toBe('dscr')
     // Per user spec point (4): repay-year DSCRs sit at the target (1.20).
     // Min DSCR = 1.20 exactly (not a loose ≥). Engine sculpts so each repay
     // year produces DSCR = target within rounding.
@@ -1562,11 +1583,17 @@ describe('B34 — PPP base scenario sanity', () => {
     })
 
     // Construction-funding reconciliation invariants
+    // P-015C re-baseline: COD debt = Σ principal draws + Σ capitalized IDC.
+    // Year 0 is all equity (no debt drawn → no IDC); year 1 IDC accrues on
+    // ½ of that year's draw at 7% (see B34.1 closed form).
     const totalEquityDraw = constrRows.reduce((s, r) => s + r.equity_draw, 0)
     const totalDebtDraw   = constrRows.reduce((s, r) => s + r.debt_draw,   0)
-    expect(totalEquityDraw).toBeCloseTo(out.equity_amount, 0)            // Σ equity_draw ≈ equity
-    expect(totalDebtDraw  ).toBeCloseTo(out.debt_amount,   0)            // Σ debt_draw   ≈ actual debt
-    expect(totalEquityDraw + totalDebtDraw).toBeCloseTo(tpc, 0)          // Σ funds = TPC
+    const totalIdc        = constrRows.reduce((s, r) => s + r.idc,         0)
+    expect(constrRows[0].idc).toBe(0)
+    expect(constrRows[1].idc).toBeCloseTo(0.07 * 0.5 * constrRows[1].debt_draw, 1)
+    expect(totalEquityDraw).toBeCloseTo(out.equity_amount, 0)                // Σ equity_draw ≈ equity
+    expect(totalDebtDraw + totalIdc).toBeCloseTo(out.debt_amount, 0)         // principal + IDC = COD debt
+    expect(totalEquityDraw + totalDebtDraw).toBeCloseTo(tpc, 0)              // base capex funded
   })
 
   test('B34.5: irr, npv, equity_multiple are populated finite numbers', () => {

@@ -340,8 +340,14 @@ Items logged but not yet implemented. Do not implement these without explicit in
 | Future | Clickable confidence badges | Medium |
 | Future | `computePPPBankability()` color returns to UI layer | Medium |
 | Future | Recommendation version delta / history | Phase E |
-| P-010 | PPP debt schedule / auditability (opening/interest/principal/closing/debt service) | High — after P-015 |
-| P-015 | PPP construction debt draw + IDC capitalization + equity-first drawdown | P0 — next |
+| P-010 | PPP debt schedule / auditability — built; renders engine `debt_schedule` (2026-10-10) | Done |
+| P-015 | PPP construction debt draw + IDC capitalization + equity-first drawdown — A/B/C/D complete, Gate 1 CONDITIONAL PASS pending authorization | Done — awaiting sign-off |
+| P-022 | Approved-baseline integrity after engine changes (stale outputs presented as current) | High — next package, after authorization |
+| P-023 | Input/output sanity validation (blocking errors + reasonableness warnings) | High — next package, after authorization |
+| P-024 | Loan tenor > concession leaves debt unpaid with no error | High — policy decision required |
+| P-025 | Fractional loan tenor silently floored | Medium |
+| P-026 | IRR equity-timing convention under equity-first funding | Medium |
+| P-027 | Construction cost profile input / partial-year IDC | Low–Medium |
 | P-016 | PPP quarterly periodicity (currently annual) | Medium |
 | P-017 | `computeRequiredPayment` remediation redundancy under DSCR sizing | Low |
 | P-018 | PPP DSCR default duplicated across 3 literals; should reference `PPP_DSCR_FLOOR`. Dead `?? 1.30` + stale docblocks in `recommend.js` | Low |
