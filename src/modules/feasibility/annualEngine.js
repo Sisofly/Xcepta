@@ -572,7 +572,10 @@ function readPPPInputs(assumptions) {
     wacc:           safePct(pppVal(assumptions, 'WACC'), 10),
     // P-009 / P-013: Target DSCR is the sizing constraint. Default 1.20
     // mirrors the institutional DSCR floor (PPP_DSCR_FLOOR).
-    targetDSCR:     safeNum(pppVal(assumptions, 'Target DSCR'), 1.20),
+    targetDSCR:     safeNum(pppVal(assumptions, 'Target DSCR'), PPP_DSCR_FLOOR),
+    // P-018: the underwriting (lender acceptance) threshold is distinct from
+    // the sculpting target. Default = PPP_DSCR_FLOOR (1.20×).
+    underwritingDSCR: safeNum(pppVal(assumptions, 'Lender Minimum DSCR'), PPP_DSCR_FLOOR),
     debtPctGiven:   pppVal(assumptions, 'Debt %') !== null,
     equityPctGiven: pppVal(assumptions, 'Equity %') !== null,
   }
@@ -651,6 +654,11 @@ function validatePPPInputs(inp) {
   if (!(inp.wacc > -1 && inp.wacc <= 1)) {
     throw pppInputError('DISCOUNT_RATE_INVALID',
       'WACC must be greater than −100% and at most 100%; received ' + r2(inp.wacc * 100) + '%.', { value: inp.wacc * 100 })
+  }
+  if (!(inp.underwritingDSCR >= 1)) {
+    throw pppInputError('UNDERWRITING_DSCR_INVALID',
+      'Lender Minimum DSCR must be at least 1.00× (below 1.00× debt service exceeds available cash flow); received ' +
+      inp.underwritingDSCR + '.', { value: inp.underwritingDSCR })
   }
   if (!(inp.targetDSCR >= 0)) {
     throw pppInputError('TARGET_DSCR_INVALID',
@@ -875,6 +883,17 @@ function computePPPWarnings(result, inp) {
   if (invested > 0 && ops.length && ops[0].equity_cf >= invested) {
     add('PAYBACK_UNDER_ONE_YEAR', 'warning',
       'Equity is paid back within the first operating year, which is implausible for a PPP. Check input scaling.', null)
+  }
+  // P-018: sculpting target vs underwriting threshold
+  var uw = inp.underwritingDSCR
+  if (inp.targetDSCR > 0 && inp.targetDSCR < uw) {
+    add('SCULPT_TARGET_BELOW_UNDERWRITING', 'warning',
+      'Debt is sculpted to a ' + inp.targetDSCR + '× DSCR target, below the ' + uw + '× lender minimum (underwriting) ' +
+      'threshold: the project will not meet underwriting coverage at this debt size.', inp.targetDSCR)
+  }
+  if (ds.min_dscr !== null && ds.min_dscr < uw) {
+    add('DSCR_BELOW_UNDERWRITING', 'warning',
+      'Minimum ' + ds.dscr_basis + ' DSCR ' + ds.min_dscr + '× is below the ' + uw + '× lender minimum (underwriting) threshold.', ds.min_dscr)
   }
   if (inp.targetDSCR === 0) {
     add('NO_DSCR_CONSTRAINT', 'warning',
@@ -1245,6 +1264,9 @@ function runPPPEngine(assumptions) {
       repayment_years:            repayYears,          // tenor − grace
       // P-016 / Phase 3 additions
       dscr_basis:                 p === 1 ? 'annual' : 'quarterly',
+      // P-018: underwriting (acceptance) threshold vs sculpting target
+      underwriting_dscr:          inp.underwritingDSCR,
+      meets_underwriting:         minDSCR === null ? null : r2(minDSCR) >= inp.underwritingDSCR,
       min_dscr_annual:            annualDSCR.length ? Math.min.apply(null, annualDSCR) : null,
       sizing_method:              sizingMethod,
       repayment_profile:          profile,
@@ -1325,7 +1347,7 @@ function computeRequiredPayment(assumptions, targetDSCR) {
   // F03 (Batch 2B, 2026-05-16): explicit `targetDSCR = 0` respected — means
   // "accept any non-negative DSCR" (converge at currentPayment). Null/
   // undefined still falls back to the institutional default of 1.20.
-  var target = safeNum(targetDSCR, 1.20)
+  var target = safeNum(targetDSCR, PPP_DSCR_FLOOR)
   var step = 10000
   var maxIterations = 2000
   var testPayment = currentPayment
@@ -1406,6 +1428,11 @@ function computePPPBankability(modelOutput, dscrFloor) {
   // Min DSCR across all debt-service years
   var dscrVals = dscrSeries.filter(function(d) { return d.dscr !== null }).map(function(d) { return d.dscr })
   var minDSCR  = dscrVals.length ? Math.min.apply(null, dscrVals) : null
+  // P-018: gate on the covenant-frequency minimum (quarterly for quarterly
+  // models) when the result carries it; never on a less strict figure.
+  var periodMin = modelOutput.debt_sizing && Number.isFinite(modelOutput.debt_sizing.min_dscr)
+    ? modelOutput.debt_sizing.min_dscr : null
+  if (periodMin !== null) minDSCR = minDSCR === null ? periodMin : Math.min(minDSCR, periodMin)
 
   // Cash-trap years — all ops years where DSCR < floor
   var cashTrapYears = dscrSeries

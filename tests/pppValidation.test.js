@@ -2,7 +2,7 @@
  * pppValidation.test.js — PPP financing-term and sanity controls
  *   P-024: debt maturity must fall within the concession (blocking)
  */
-import { runPPPEngine } from '../src/modules/feasibility/annualEngine.js'
+import { runPPPEngine, computePPPBankability, PPP_DSCR_FLOOR } from '../src/modules/feasibility/annualEngine.js'
 
 const A = obj => Object.entries(obj).map(([name, value]) => ({ name, value }))
 const BASE = {
@@ -141,13 +141,22 @@ describe('P-023 — output reasonableness warnings (never block)', () => {
     expect(codes(run({ 'Target DSCR': 0.9 }))).toContain('TARGET_DSCR_BELOW_ONE')
   })
 
-  test('W7: a clean benchmark-aligned case raises no warnings', () => {
-    const out = runPPPEngine(A({
-      'Total Project Cost': 50_788_939, 'Debt %': 84.899, 'Equity %': 15.101, 'Annual Availability Payment': 8_800_000,
-      'Concession Period': 10, 'Construction Period': 36, 'OPEX Amount (JOD)': 59_190, 'Interest Rate': 8.25,
-      'Loan Tenor': 9, 'Grace Period': 0, 'Tax Rate': 0, 'WACC': 10, 'Target DSCR': 1.0,
-    }))
-    expect(out.warnings).toEqual([])
+  // P-018 (2026-10-10): Madaba sculpts at 1.00×, below the 1.20× default
+  // underwriting threshold — the benchmark is a marginal deal (Gate 1 §2), so
+  // exactly the two underwriting warnings are expected; with a 1.00× lender
+  // minimum the same case is clean.
+  const MADABA_ALIGNED = {
+    'Total Project Cost': 50_788_939, 'Debt %': 84.899, 'Equity %': 15.101, 'Annual Availability Payment': 8_800_000,
+    'Concession Period': 10, 'Construction Period': 36, 'OPEX Amount (JOD)': 59_190, 'Interest Rate': 8.25,
+    'Loan Tenor': 9, 'Grace Period': 0, 'Tax Rate': 0, 'WACC': 10, 'Target DSCR': 1.0,
+  }
+  test('W7: benchmark-aligned case — only the underwriting warnings; clean at a 1.00× lender minimum', () => {
+    const out = runPPPEngine(A(MADABA_ALIGNED))
+    expect(out.warnings.map(w => w.code).sort()).toEqual(['DSCR_BELOW_UNDERWRITING', 'SCULPT_TARGET_BELOW_UNDERWRITING'])
+    expect(out.debt_sizing.meets_underwriting).toBe(false)
+    const ok = runPPPEngine(A({ ...MADABA_ALIGNED, 'Lender Minimum DSCR': 1.0 }))
+    expect(ok.warnings).toEqual([])
+    expect(ok.debt_sizing.meets_underwriting).toBe(true)
   })
 
   test('W8: integrity block is reported and passes', () => {
@@ -155,5 +164,42 @@ describe('P-023 — output reasonableness warnings (never block)', () => {
     expect(out.integrity.passed).toBe(true)
     expect(Math.abs(out.integrity.sources_uses_diff)).toBeLessThanOrEqual(out.integrity.tolerance)
     expect(Math.abs(out.integrity.final_balance)).toBeLessThanOrEqual(2)
+  })
+})
+
+describe('P-018 — sculpting target vs underwriting threshold', () => {
+  test('U1: default underwriting threshold is PPP_DSCR_FLOOR (1.20×) and is reported separately from the target', () => {
+    const out = run({ 'Target DSCR': 1.35 })
+    expect(out.debt_sizing.target_dscr).toBe(1.35)
+    expect(out.debt_sizing.underwriting_dscr).toBe(PPP_DSCR_FLOOR)
+    expect(out.debt_sizing.meets_underwriting).toBe(true)
+    expect(out.warnings.map(w => w.code)).not.toContain('SCULPT_TARGET_BELOW_UNDERWRITING')
+  })
+  test('U2: target 0 (no sculpting constraint) cannot pass underwriting silently', () => {
+    const out = run({ 'Target DSCR': 0, 'Debt %': 95, 'Equity %': 5 })
+    expect(out.debt_sizing.min_dscr).toBeLessThan(PPP_DSCR_FLOOR)
+    expect(out.debt_sizing.meets_underwriting).toBe(false)
+    expect(out.warnings.map(w => w.code)).toEqual(expect.arrayContaining(['NO_DSCR_CONSTRAINT', 'DSCR_BELOW_UNDERWRITING']))
+  })
+  test('U3: a custom lender minimum is respected and validated (≥ 1.00×)', () => {
+    expect(run({ 'Lender Minimum DSCR': 1.4 }).debt_sizing.meets_underwriting).toBe(false)   // sculpted at 1.20
+    expect(run({ 'Lender Minimum DSCR': 1.4, 'Target DSCR': 1.4 }).debt_sizing.meets_underwriting).toBe(true)
+    expect(codeOf(() => run({ 'Lender Minimum DSCR': 0.9 }))).toBe('UNDERWRITING_DSCR_INVALID')
+  })
+  test('U4: the bankability gate applied to the underwriting threshold fails a 1.00×-sculpted project', () => {
+    const out = run({ 'Target DSCR': 1.0 })
+    expect(computePPPBankability(out, out.debt_sizing.underwriting_dscr).dscrOk).toBe(false)
+    // (the pre-P-018 UI passed the sculpting target as the floor, which passed it)
+    expect(computePPPBankability(out, out.debt_sizing.target_dscr).dscrOk).toBe(true)
+  })
+})
+
+describe('P-018 — quarterly covenant-frequency gate', () => {
+  test('U5: bankability uses the quarterly minimum DSCR when it is lower than the annual series', () => {
+    const out = runPPPEngine(A({ ...BASE, 'Target DSCR': 1.25, 'Model Periodicity': null }).map(a =>
+      a.name === 'Model Periodicity' ? { ...a, unit: 'Quarterly' } : a).concat([{ name: 'Model Periodicity', value: null, unit: 'Quarterly' }]))
+    const annualMin = Math.min(...out.dscr_series.map(d => d.dscr))
+    const b = computePPPBankability(out, out.debt_sizing.underwriting_dscr)
+    expect(b.minDSCR).toBe(Math.min(annualMin, out.debt_sizing.min_dscr))
   })
 })

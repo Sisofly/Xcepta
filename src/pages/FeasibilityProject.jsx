@@ -83,6 +83,8 @@ const PPP_DISPLAY_LABELS = {
   'Revenue Basis':                     'Revenue Basis (contractual vs demand estimate)',
   'Quarterly Revenue Weights':         'Quarterly Revenue Weights (4 values, quarterly models)',
   'Repayment Profile':                 'Debt Repayment Profile',
+  'Target DSCR':                       'Target DSCR (debt sculpting / sizing)',
+  'Lender Minimum DSCR':               'Lender Minimum DSCR (underwriting acceptance threshold)',
 }
 
 // P-016 / Phase 3 optional PPP inputs. Existing projects do not have these
@@ -93,6 +95,7 @@ const PPP_OPTIONAL_INPUTS = [
   { name: 'Construction Cost Profile',         category: 'ppp_structure', unit: '' },
   { name: 'Construction Interest Rate',        category: 'ppp_financing', unit: 'percent', valueFrom: 'Interest Rate' },
   { name: 'Repayment Profile',                 category: 'ppp_financing', unit: 'Sculpted' },
+  { name: 'Lender Minimum DSCR',               category: 'ppp_financing', unit: 'ratio', value: PPP_DSCR_FLOOR },
   { name: 'Availability Payment Escalation %', category: 'ppp_revenue',   unit: 'percent', value: 0 },
   { name: 'OPEX Amount (JOD)',                 category: 'ppp_revenue',   unit: 'JOD', valueFrom: 'fixedOpexEquivalent' },
   { name: 'OPEX Escalation %',                 category: 'ppp_revenue',   unit: 'percent', value: 0 },
@@ -763,7 +766,7 @@ export default function FeasibilityProject() {
             dscrBreachYear: extraKPIs.dscrBreachYear,
             isPPP:          pppAP,
             irrHurdle:      pppAP ? PPP_IRR_HURDLE : IRR_HURDLE,
-            pppDscrFloor:   PPP_DSCR_FLOOR,
+            pppDscrFloor:   underwritingDSCR,
           })
         : null
 
@@ -1751,11 +1754,24 @@ export default function FeasibilityProject() {
   // ── Project-type branch — drives engine selection and all conditional UI ──
   const pppAP = isPPPAvailabilityPayment(project, assumptions)
 
-  // ── Target DSCR — user-defined or default 1.20 ──
-  const targetDSCR = pppAP ? (pppVal(assumptions, 'Target DSCR') || 1.20) : null
+  // ── P-018: two distinct DSCR concepts ──
+  // targetDSCR       — debt-SCULPTING target (sizing input; explicit 0 = no
+  //                    sculpting constraint, consistent with the engine).
+  // underwritingDSCR — lender minimum / underwriting ACCEPTANCE threshold used
+  //                    by every pass/fail gate (bankability, KPI, verdict).
+  //                    The saved result's threshold applies to an approved
+  //                    result; otherwise the 'Lender Minimum DSCR' input, else
+  //                    PPP_DSCR_FLOOR (1.20×).
+  const targetInput = pppAP ? pppVal(assumptions, 'Target DSCR') : null
+  const targetDSCR = pppAP ? (targetInput === null ? PPP_DSCR_FLOOR : targetInput) : null
+  const shownOutput = modelOutput || latestApprovedOutput
+  const underwritingDSCR = !pppAP ? null
+    : (shownOutput && shownOutput.debt_sizing && Number.isFinite(shownOutput.debt_sizing.underwriting_dscr))
+      ? shownOutput.debt_sizing.underwriting_dscr
+      : (pppVal(assumptions, 'Lender Minimum DSCR') ?? PPP_DSCR_FLOOR)
 
-  // ── PPP bankability — uses user-defined target DSCR as floor ──
-  const pppBankability = pppAP ? computePPPBankability(modelOutput || latestApprovedOutput, targetDSCR) : null
+  // ── PPP bankability — gated on the underwriting threshold, never the sculpting target ──
+  const pppBankability = pppAP ? computePPPBankability(shownOutput, underwritingDSCR) : null
 
   // ── P-023: live input check — one engine run on the current assumptions.
   // Blocking input errors are shown instead of crashing the page; the
@@ -1764,19 +1780,33 @@ export default function FeasibilityProject() {
   if (pppAP && assumptions.length) {
     try {
       const live = runPPPEngine(assumptions)
-      pppLiveCheck = { error: null, warnings: live.warnings || [], hasDebt: live.debt_amount > 0.01 }
+      pppLiveCheck = { error: null, warnings: live.warnings || [], hasDebt: live.debt_amount > 0.01, output: live }
     } catch (err) {
       pppLiveCheck = { error: err, warnings: [] }
     }
   }
 
-  // ── Required payment solver ──
+  // ── Underwriting remediation (live analysis on current inputs) ──
+  // With DSCR-sculpted debt, the minimum DSCR equals the sculpting target
+  // whatever the payment, so a payment solver cannot lift coverage above a
+  // target set below the underwriting threshold (it would run 2,000 times
+  // without converging). In that case the analysis instead re-sizes debt at
+  // the underwriting threshold. Otherwise the payment solver targets the
+  // underwriting threshold. Skipped when there is no debt.
   let requiredPaymentResult = null
-  // Skipped when there is no debt: the solver cannot converge without a
-  // DSCR series and would run its full 2,000 iterations on every render.
+  let underwritingAlternative = null
   if (pppLiveCheck && !pppLiveCheck.error && pppLiveCheck.hasDebt) {
-    try { requiredPaymentResult = computeRequiredPayment(assumptions, targetDSCR) }
-    catch { requiredPaymentResult = null }
+    if (targetDSCR > 0 && targetDSCR < underwritingDSCR) {
+      try {
+        const alt = runPPPEngine(assumptions.map(a => a.name === 'Target DSCR' ? { ...a, value: underwritingDSCR } : a)
+          .concat(assumptions.some(a => a.name === 'Target DSCR') ? [] : [{ name: 'Target DSCR', value: underwritingDSCR }]))
+        underwritingAlternative = { debt: alt.debt_amount, equity: alt.equity_amount, irr: alt.irr, npv: alt.npv,
+          currentDebt: pppLiveCheck.output.debt_amount, currentEquity: pppLiveCheck.output.equity_amount }
+      } catch { underwritingAlternative = null }
+    } else if (targetDSCR > 0) {
+      try { requiredPaymentResult = computeRequiredPayment(assumptions, underwritingDSCR) }
+      catch { requiredPaymentResult = null }
+    }
   }
 
   // Stale output: detect stored DSCR values from old engine runs (threshold was 0.01, not 1)
@@ -1815,8 +1845,12 @@ export default function FeasibilityProject() {
 
     // Fix 3&4: exclude null DSCR from min and breach detection
     const dscrVals   = (modelOutput.dscr_series || []).filter(d => d.dscr !== null)
-    const minDSCR    = dscrVals.length > 0 ? Math.min(...dscrVals.map(d => d.dscr)) : null
-    const dscrFloor  = pppAP ? PPP_DSCR_FLOOR : 1.0
+    const seriesMin  = dscrVals.length > 0 ? Math.min(...dscrVals.map(d => d.dscr)) : null
+    // P-018: gate on the covenant-frequency minimum (quarterly for quarterly
+    // models) when the saved result carries it.
+    const periodMin  = modelOutput.debt_sizing && Number.isFinite(modelOutput.debt_sizing.min_dscr) ? modelOutput.debt_sizing.min_dscr : null
+    const minDSCR    = seriesMin === null ? periodMin : periodMin === null ? seriesMin : Math.min(seriesMin, periodMin)
+    const dscrFloor  = pppAP ? underwritingDSCR : 1.0
     const breachEntry = dscrVals.find(d => d.dscr < dscrFloor)
 
     extraKPIs = {
@@ -1834,7 +1868,7 @@ export default function FeasibilityProject() {
     : (modelOutput !== null && modelOutput !== undefined && Number(modelOutput.irr) >= IRR_HURDLE)
   const npvPass = modelOutput !== null && modelOutput !== undefined && Number(modelOutput.npv) >= 0
   const dscrPass = pppAP
-    ? (extraKPIs !== null && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= PPP_DSCR_FLOOR)
+    ? (extraKPIs !== null && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= underwritingDSCR)
     : (extraKPIs !== null && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= 1.0)
 
   return (
@@ -2666,7 +2700,7 @@ export default function FeasibilityProject() {
                             value: pppBankability.npvOk ? 'PASS' : 'FAIL',
                           },
                           {
-                            label: 'Min DSCR ≥ ' + pppBankability.PPP_DSCR_FLOOR + 'x',
+                            label: 'Min DSCR ≥ ' + pppBankability.PPP_DSCR_FLOOR + 'x (underwriting)',
                             pass: pppBankability.dscrOk,
                             value: pppBankability.dscrOk
                               ? 'PASS'
@@ -2751,6 +2785,35 @@ export default function FeasibilityProject() {
                         )
                       })()}
 
+                      {/* P-018: sculpting target below the underwriting minimum —
+                           show the project re-sized at the underwriting threshold. */}
+                      {underwritingAlternative && (
+                        <div style={{
+                          background: colors.surfaceElevated, border: `1px solid ${colors.warning}`,
+                          borderRadius: '6px', padding: '0.85rem 1rem', marginTop: '0.75rem',
+                        }}>
+                          <p style={{fontSize:'0.7rem',color:colors.textSecondary,marginBottom:'0.4rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
+                            Underwriting check — sculpting target {fmtDSCR(targetDSCR)} vs lender minimum {fmtDSCR(underwritingDSCR)}
+                          </p>
+                          <p style={{fontSize:'0.72rem',color:colors.textMuted,marginBottom:'0.6rem',lineHeight:1.5}}>
+                            Debt is sculpted below the underwriting threshold, so minimum DSCR stays at the target whatever the
+                            payment. Re-sizing the debt at {fmtDSCR(underwritingDSCR)} on the current inputs gives (live analysis — not
+                            part of the approved result):
+                          </p>
+                          {[
+                            ['Senior debt at COD', fmtNumber(underwritingAlternative.currentDebt) + ' → ' + fmtNumber(underwritingAlternative.debt)],
+                            ['Equity', fmtNumber(underwritingAlternative.currentEquity) + ' → ' + fmtNumber(underwritingAlternative.equity)],
+                            ['Equity IRR at ' + fmtDSCR(underwritingDSCR), fmtIRR(underwritingAlternative.irr)],
+                            ['Equity NPV at ' + fmtDSCR(underwritingDSCR), fmtNumber(underwritingAlternative.npv)],
+                          ].map(([k, v]) => (
+                            <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:'0.8rem',marginBottom:'0.25rem'}}>
+                              <span style={{color:colors.textSecondary}}>{k}</span>
+                              <span style={{color:colors.textPrimary,fontWeight:'600'}}>{v}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
                       {/* Required Availability Payment / DSCR Remediation */}
                       {requiredPaymentResult && (
                         <div style={{
@@ -2758,14 +2821,14 @@ export default function FeasibilityProject() {
                           borderRadius: '6px', padding: '0.85rem 1rem', marginTop: '0.75rem',
                         }}>
                           <p style={{fontSize:'0.7rem',color:colors.textSecondary,marginBottom:'0.6rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
-                            DSCR Remediation — Target {targetDSCR.toFixed(2)}x
+                            DSCR Remediation — Underwriting minimum {fmtDSCR(underwritingDSCR)}
                           </p>
                           <p style={{fontSize:'0.7rem',color:colors.textMuted,marginBottom:'0.6rem',fontStyle:'italic'}}>
                             Live analysis on the current Assumptions tab inputs — not part of the approved, saved result.
                           </p>
                           <div style={{display:'flex',flexDirection:'column',gap:'0.35rem'}}>
                             <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.8rem'}}>
-                              <span style={{color:colors.textSecondary}}>Required Availability Payment (Target DSCR {targetDSCR.toFixed(2)}x)</span>
+                              <span style={{color:colors.textSecondary}}>Required Availability Payment (DSCR {fmtDSCR(underwritingDSCR)})</span>
                               <span style={{color:colors.textPrimary,fontWeight:'600'}}>
                                 {Math.round(requiredPaymentResult.required_payment).toLocaleString('en-US')} JOD/yr
                               </span>
@@ -2804,7 +2867,7 @@ export default function FeasibilityProject() {
                       dscrBreachYear: extraKPIs ? extraKPIs.dscrBreachYear : null,
                       isPPP:          pppAP,
                       irrHurdle:      pppAP ? PPP_IRR_HURDLE : IRR_HURDLE,
-                      pppDscrFloor:   PPP_DSCR_FLOOR,
+                      pppDscrFloor:   underwritingDSCR,
                     })
 
                     const verdictColor =
@@ -2997,7 +3060,7 @@ export default function FeasibilityProject() {
                       ))}
                       {(() => {
                         const dscrPassFinal = pppAP
-                          ? (extraKPIs && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= PPP_DSCR_FLOOR)
+                          ? (extraKPIs && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= underwritingDSCR)
                           : dscrPass
                         const dscrVerdict = dscrPassFinal
                           ? 'SERVICEABLE'
