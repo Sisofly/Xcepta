@@ -64,6 +64,14 @@ const QFIX = {
   'quarterly seasonal revenue':   { ...BASE, ...Q, 'Quarterly Revenue Weights': '40,20,20,20' },
   'quarterly escalating + fixed': { ...BASE, ...Q, 'Availability Payment Escalation %': 2.5, 'OPEX Amount (JOD)': 900_000, 'OPEX Escalation %': 4 },
   'quarterly annuity':            { ...BASE, ...Q, 'Repayment Profile': 'Annuity' },
+  // Madaba inputs traced from the Etihad workbook (FINDINGS §9/§11): its own
+  // quarterly construction-cost timing (k JOD per quarter) and SPV opex.
+  'madaba quarterly (benchmark timing)': {
+    ...Q, 'Total Project Cost': 50_788_939, 'Debt %': 84.899, 'Equity %': 15.101,
+    'Annual Availability Payment': 8_800_000, 'Concession Period': 10, 'Construction Period': 36,
+    'Construction Cost Profile': '6232.8,3008.4,6434.0,6443.8,3654.5,3554.5,3554.5,3554.5,3654.5,3554.5,3554.5,3588.4',
+    'OPEX Amount (JOD)': 54_020, 'OPEX Escalation %': 2.015, 'Interest Rate': 8.25, 'Loan Tenor': 9.5,
+    'Grace Period': 0, 'Tax Rate': 0, 'WACC': 10, 'Target DSCR': 1.0 },
 }
 
 describe.each(Object.entries(QFIX))('P-016 quarterly identities — %s', (_l, fx) => {

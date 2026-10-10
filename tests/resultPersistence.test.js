@@ -116,3 +116,18 @@ describe('P-022 — currency and legacy disclosure', () => {
     expect(isMissingP022Columns(null)).toBe(false)
   })
 })
+
+describe('P-022 — quarterly result persistence', () => {
+  test('P6: a quarterly result round-trips with its periodic detail and periodicity label', () => {
+    const assumptions = [...rows(BASE), { name: 'Model Periodicity', value: null, unit: 'Quarterly', category: 'ppp_structure' }]
+    const out = runPPPEngine(assumptions)
+    const rec = buildPPPOutputRecord(out, { ...META, assumptions })
+    expect(rec.periodicity).toBe('quarterly')
+    const shown = hydrateModelOutput(dbRoundTrip(rec))
+    expect(shown.debt_schedule_periodic).toEqual(JSON.parse(JSON.stringify(out.debt_schedule_periodic)))
+    expect(shown.cash_flows).toEqual(JSON.parse(JSON.stringify(out.cash_flows)))       // annual rows for FP&A / PDF
+    expect(rec.cash_flows.length).toBe(out.construction_years + 25)                     // legacy column stays annual
+    expect(buildDebtScheduleRows(shown)).toEqual(shown.debt_schedule)
+  })
+})
+
