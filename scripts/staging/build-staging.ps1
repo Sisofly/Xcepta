@@ -24,7 +24,7 @@
   project $StagingRef; the production source must be project $ProdRef.
 #>
 param(
-  [ValidateSet('Build', 'Inspect', 'Resume', 'SeedUsers')][string]$Mode = 'Build',
+  [ValidateSet('Build', 'Inspect', 'Resume', 'SeedUsers', 'SetTestPassword')][string]$Mode = 'Build',
   [switch]$ResetStaging,
   [string]$StagingRef = 'ldhsckzvfuwpxywqloag'
 )
@@ -136,6 +136,20 @@ if ($Mode -ne 'Build') {
       }
       & psql $script:stg -At -c "select u.email || ' -> tenant ' || t.name || ' (' || u.role || ')' from public.users u join public.tenants t using (tenant_id) order by t.name"
       Write-Host 'Staging test users linked to synthetic tenants.' -ForegroundColor Green
+    }
+    elseif ($Mode -eq 'SetTestPassword') {
+      # One synthetic .test user; id, email and tenant link unchanged. The new
+      # password goes to psql via a process-only environment variable.
+      $email = Read-Host 'Staging test user email to update (must end in .test)'
+      if ($email -notmatch '@[^@]+\.test$') { throw 'Only synthetic .test staging users can be changed.' }
+      $p1 = ReadSecret 'New password (hidden, min 12 characters)'
+      $p2 = ReadSecret 'Repeat new password (hidden)'
+      if ($p1 -ne $p2) { throw 'Passwords do not match. Nothing was changed.' }
+      if ($p1.Length -lt 12) { throw 'Password must be at least 12 characters. Nothing was changed.' }
+      $env:XCEPTA_NEW_TEST_PASSWORD = $p1
+      try { PsqlStaging @('-q', '-At', '-v', ('email=' + $email), '-f', 'db/staging/set_test_user_password.sql') }
+      finally { Remove-Item Env:XCEPTA_NEW_TEST_PASSWORD -ErrorAction SilentlyContinue; $p1 = $null; $p2 = $null }
+      Write-Host 'Done. Update STAGING_TEST_PASSWORD_2 (or _PASSWORD) in .env.local, then run: npm run staging:check-env' -ForegroundColor Green
     }
   } finally { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue }
   return
