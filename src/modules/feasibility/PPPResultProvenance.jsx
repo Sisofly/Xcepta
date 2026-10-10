@@ -1,17 +1,11 @@
 import colors from '../../theme/colors.js'
-import { fmtNumber, fmtDSCR, fmtIRR } from '../../utils/format.js'
 import { assessResultCurrency } from './resultPersistence.js'
+import { pppFundingSummaryRows, PPP_MODEL_SCOPE_NOTES } from './pppReporting.js'
 
 // P-022 / Phase 6: provenance of a saved PPP result plus the funding & debt
 // summary read from the SAVED record (never recalculated here). Makes it
 // impossible to mistake a historical or outdated approval for a current
 // calculation.
-const BINDING_LABEL = {
-  dscr: 'DSCR capacity (cash-flow constrained)',
-  gearing: 'Requested gearing (Debt %)',
-  project_cost: 'Project cost (debt funds all capex)',
-  none: 'No debt',
-}
 
 function Banner({ tone, title, children, action }) {
   const border = tone === 'warn' ? colors.warning : colors.border
@@ -40,23 +34,8 @@ export default function PPPResultProvenance({ modelOutput, assumptions, engineVe
       {creatingDraft ? 'Creating…' : 'New draft to recalculate'}
     </button>
   )
-  const ds = modelOutput.debt_sizing
   const periodicity = modelOutput.periodicity || 'annual'
-  const rows = ds ? [
-    ['Base project cost (input, excl. IDC)', fmtNumber(modelOutput.tdc)],
-    ['Capitalised interest during construction (IDC)', fmtNumber(modelOutput.idc_capitalized)],
-    ['Total funding requirement', fmtNumber(modelOutput.total_funding_requirement)],
-    ['Equity', fmtNumber(modelOutput.equity_amount)],
-    ['Senior debt — principal drawn', fmtNumber(ds.principal_drawn)],
-    ['Senior debt — balance at COD (principal + IDC)', fmtNumber(modelOutput.debt_amount)],
-    ['Debt amount limited by', BINDING_LABEL[ds.binding_constraint] || ds.binding_constraint || '—'],
-    ['DSCR — sculpting target / underwriting minimum', fmtDSCR(ds.target_dscr) + ' / ' + (ds.underwriting_dscr === undefined ? '— (not stored)' : fmtDSCR(ds.underwriting_dscr))],
-    ['DSCR — achieved minimum / average (' + (ds.dscr_basis || 'annual') + ')', fmtDSCR(ds.min_dscr) + ' / ' + fmtDSCR(ds.avg_dscr)],
-    ['Meets underwriting minimum', ds.meets_underwriting === undefined || ds.meets_underwriting === null ? '—' : ds.meets_underwriting ? 'Yes' : 'No'],
-    ['Loan tenor from COD / grace / repayment (years)', [ds.loan_tenor_years, ds.grace_years, ds.repayment_years].join(' / ')],
-    ['Project IRR (unlevered, post-tax, before financing)', fmtIRR(modelOutput.project_irr)],
-    ['Equity IRR (levered)', fmtIRR(modelOutput.irr)],
-  ] : null
+  const rows = pppFundingSummaryRows(modelOutput)
 
   return (
     <div style={{ marginBottom: '1.5rem' }}>
@@ -103,6 +82,12 @@ export default function PPPResultProvenance({ modelOutput, assumptions, engineVe
           </table>
         </div>
       )}
+      <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: colors.textMuted, lineHeight: 1.5 }}>
+        <p style={{ fontWeight: 600, marginBottom: '0.2rem' }}>Model scope — not modelled:</p>
+        <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+          {PPP_MODEL_SCOPE_NOTES.map(n => <li key={n}>{n}</li>)}
+        </ul>
+      </div>
     </div>
   )
 }

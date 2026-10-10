@@ -11,9 +11,8 @@ import {
 import { buildDebtScheduleRows } from '../modules/feasibility/debtSchedule'
 import PPPMessages from '../modules/feasibility/PPPMessages'
 import PPPResultProvenance from '../modules/feasibility/PPPResultProvenance'
-import {
-  buildPPPOutputRecord, hydrateModelOutput, isMissingP022Columns,
-} from '../modules/feasibility/resultPersistence'
+import { savePPPApproval, loadLatestModelOutput } from '../modules/feasibility/pppResultStore'
+import { pppResultBasis, isUnsupportedProjectFinance } from '../modules/feasibility/pppReporting'
 import colors from '../theme/colors.js'
 import {
   fmtCurrency, fmtPct, fmtDSCR, fmtMultiple,
@@ -241,9 +240,8 @@ export default function FeasibilityProject() {
       const { data: vars } = await supabase.from('variances').select('*').eq('project_id', projectId).order('period', { ascending: false })
       setVariances(vars || [])
       if (versionData && versionData.status === 'approved') {
-        const { data: outputs } = await supabase.from('model_outputs').select('*')
-          .eq('version_id', versionData.version_id).order('computed_at', { ascending: false }).limit(1)
-        if (outputs && outputs.length) setModelOutput(hydrateModelOutput(outputs[0]))
+        const outputs = await loadLatestModelOutput(supabase, versionData.version_id)
+        if (outputs) setModelOutput(outputs)
       }
       // Always load latest approved output for PDF (works even when current version is draft)
       if (scenarios && scenarios.length) {
@@ -252,9 +250,8 @@ export default function FeasibilityProject() {
           .order('approved_at', { ascending: false }).limit(1)
         if (approvedVers && approvedVers.length) {
           setLatestApprovedVersion(approvedVers[0])
-          const { data: approvedOutputs } = await supabase.from('model_outputs').select('*')
-            .eq('version_id', approvedVers[0].version_id).order('computed_at', { ascending: false }).limit(1)
-          if (approvedOutputs && approvedOutputs.length) setLatestApprovedOutput(hydrateModelOutput(approvedOutputs[0]))
+          const approvedOutputs = await loadLatestModelOutput(supabase, approvedVers[0].version_id)
+          if (approvedOutputs) setLatestApprovedOutput(approvedOutputs)
         }
       }
       // Prepared By
@@ -354,9 +351,7 @@ export default function FeasibilityProject() {
       const latestVer = vers && vers.length ? vers[0] : null
       let output = null
       if (latestVer && latestVer.status === 'approved') {
-        const { data: outs } = await supabase.from('model_outputs').select('*')
-          .eq('version_id', latestVer.version_id).order('computed_at', { ascending: false }).limit(1)
-        output = outs && outs.length ? hydrateModelOutput(outs[0]) : null
+        output = await loadLatestModelOutput(supabase, latestVer.version_id)
       }
       const { data: scAssump } = await supabase.from('assumptions').select('*')
         .eq('project_id', projectId).eq('scenario_id', s.scenario_id)
@@ -498,6 +493,10 @@ export default function FeasibilityProject() {
   // ── Approve and run a scenario (uses scenario-level drivers) ──
   async function handleApproveScenario(sc) {
     if (!sc.latestVersion) return
+    if (isUnsupportedProjectFinance(project, sc.assumptions || assumptions)) {
+      alert('This contract model is not supported by a validated XCEPTA engine; approval is disabled.')
+      return
+    }
     // ── B2: Capital structure validation (RE / non-PPP only) ──
     if (!isPPPAvailabilityPayment(project, sc.assumptions || assumptions)) {
       const eqRaw   = getVal(sc.assumptions || assumptions, 'Equity %')
@@ -624,18 +623,16 @@ export default function FeasibilityProject() {
     const latestVer = versions && versions.length ? versions[0] : null
     if (latestVer) setVersion(latestVer)
     if (latestVer && latestVer.status === 'approved') {
-      const { data: outputs } = await supabase.from('model_outputs').select('*')
-        .eq('version_id', latestVer.version_id).order('computed_at', { ascending: false }).limit(1)
-      if (outputs && outputs.length) setModelOutput(hydrateModelOutput(outputs[0]))
+      const outputs = await loadLatestModelOutput(supabase, latestVer.version_id)
+      if (outputs) setModelOutput(outputs)
     }
     const { data: approvedVers } = await supabase.from('versions').select('*')
       .eq('scenario_id', scenarioId).eq('status', 'approved')
       .order('approved_at', { ascending: false }).limit(1)
     if (approvedVers && approvedVers.length) {
       setLatestApprovedVersion(approvedVers[0])
-      const { data: approvedOutputs } = await supabase.from('model_outputs').select('*')
-        .eq('version_id', approvedVers[0].version_id).order('computed_at', { ascending: false }).limit(1)
-      if (approvedOutputs && approvedOutputs.length) setLatestApprovedOutput(hydrateModelOutput(approvedOutputs[0]))
+      const approvedOutputs = await loadLatestModelOutput(supabase, approvedVers[0].version_id)
+      if (approvedOutputs) setLatestApprovedOutput(approvedOutputs)
     }
   }
 
@@ -648,32 +645,18 @@ export default function FeasibilityProject() {
   async function persistApprovedPPP(output, assumptionRows, versionId, approvedLabel) {
     const { data: { user } } = await supabase.auth.getUser()
     const { data: userData } = await supabase.from('users').select('tenant_id').eq('user_id', user.id).single()
-    const record = buildPPPOutputRecord(output, {
-      assumptions: assumptionRows, engineVersion: PPP_ENGINE_VERSION,
-      versionId, projectId, tenantId: userData.tenant_id, userId: user.id,
+    await savePPPApproval(supabase, {
+      output, assumptions: assumptionRows, engineVersion: PPP_ENGINE_VERSION,
+      versionId, projectId, tenantId: userData.tenant_id, userId: user.id, approvedLabel,
     })
-    const { data: inserted, error: insertError } = await supabase.from('model_outputs').insert(record).select()
-    if (insertError) {
-      if (isMissingP022Columns(insertError)) {
-        throw new Error('The database has not been upgraded for versioned results (P-022 migration). ' +
-          'Approval cancelled — nothing was saved. Please ask an administrator to apply ' +
-          'db/migrations/2026-10-10_p022_versioned_model_outputs.sql.')
-      }
-      throw insertError
-    }
-    const { error: approveError } = await supabase.from('versions').update({
-      status: 'approved', approved_at: new Date().toISOString(), label: approvedLabel,
-    }).eq('version_id', versionId)
-    if (approveError) {
-      const row = Array.isArray(inserted) ? inserted[0] : inserted
-      const pk = row && ['output_id', 'model_output_id', 'id'].find(k => row[k] != null)
-      if (pk) await supabase.from('model_outputs').delete().eq(pk, row[pk])
-      throw approveError
-    }
   }
 
   async function handleApprove() {
     if (!version) return
+    if (isUnsupportedProjectFinance(project, assumptions)) {
+      alert('This contract model is not supported by a validated XCEPTA engine; approval is disabled.')
+      return
+    }
     // ── B2: Capital structure validation (RE / non-PPP only) ──
     if (!isPPPAvailabilityPayment(project, assumptions)) {
       const eqRaw   = getVal(assumptions, 'Equity %')
@@ -1240,12 +1223,12 @@ export default function FeasibilityProject() {
         // P-022 / Phase 6: provenance of the PPP result in the export, so a
         // historical or outdated approval is not mistaken for a current one.
         ...(pppAP && modelOutput && modelOutput._persistence ? [
-          { label: 'Result basis', color: [92, 127, 146], value: modelOutput._persistence.legacy
-              ? 'Historical (saved before versioned results; not recalculated)'
-              : (PPP_ENGINE_COMPATIBLE_VERSIONS.includes(modelOutput._persistence.engine_version)
-                  ? 'Saved result, engine v' + modelOutput._persistence.engine_version
-                  : 'Outdated engine v' + modelOutput._persistence.engine_version + ' (current v' + PPP_ENGINE_VERSION + ')')
-                + ' · ' + (modelOutput.periodicity || 'annual') + ' model' },
+          { label: 'Result basis', color: [92, 127, 146],
+            value: pppResultBasis(modelOutput, { engineVersion: PPP_ENGINE_VERSION, compatibleVersions: PPP_ENGINE_COMPATIBLE_VERSIONS }) },
+          ...(modelOutput.debt_sizing && modelOutput.debt_sizing.underwriting_dscr !== undefined ? [
+            { label: 'Underwriting DSCR minimum / met', color: modelOutput.debt_sizing.meets_underwriting ? [21, 128, 61] : [185, 28, 28],
+              value: Number(modelOutput.debt_sizing.underwriting_dscr).toFixed(2) + 'x / ' + (modelOutput.debt_sizing.meets_underwriting ? 'Yes' : 'No') },
+          ] : []),
           ...(modelOutput.project_irr !== undefined ? [
             { label: 'Project IRR (unlevered, post-tax)', color: [92, 127, 146],
               value: modelOutput.project_irr === null ? '---' : Number(modelOutput.project_irr).toFixed(1) + '%' },
@@ -1753,6 +1736,8 @@ export default function FeasibilityProject() {
 
   // ── Project-type branch — drives engine selection and all conditional UI ──
   const pppAP = isPPPAvailabilityPayment(project, assumptions)
+  // Item 4: project-finance contract models without a validated engine
+  const unsupportedPF = isUnsupportedProjectFinance(project, assumptions)
 
   // ── P-018: two distinct DSCR concepts ──
   // targetDSCR       — debt-SCULPTING target (sizing input; explicit 0 = no
@@ -1942,6 +1927,19 @@ export default function FeasibilityProject() {
       </div>
 
       {/* ══════════════════ ASSUMPTIONS TAB ══════════════════ */}
+      {unsupportedPF && (tab === 'Assumptions' || tab === 'Results') && (
+        <div style={{background:colors.dangerSoft,border:`1px solid ${colors.danger}`,borderRadius:'8px',padding:'0.85rem 1.25rem',marginBottom:'1.5rem'}}>
+          <p style={{fontSize:'0.82rem',color:colors.danger,fontWeight:'600',marginBottom:'0.25rem'}}>
+            Contract model not supported: {project.revenue_model || 'non-availability-payment project finance'}
+          </p>
+          <p style={{fontSize:'0.76rem',color:colors.textSecondary,lineHeight:1.5}}>
+            XCEPTA has a validated engine for availability-payment project finance only. Calculation and approval are disabled
+            for this project, and any earlier result shown for it was not produced by a validated project-finance engine.
+            For demand-based revenue, create an Availability Payment project and enter a Revenue Profile with
+            Revenue Basis = Demand Estimate.
+          </p>
+        </div>
+      )}
       {tab === 'Assumptions' && (
         <div>
           {pppLiveCheck && (
@@ -2593,7 +2591,7 @@ export default function FeasibilityProject() {
                 <PPPMessages error={pppLiveCheck.error} warnings={pppLiveCheck.warnings}
                   title="Checks on the current inputs" />
               )}
-              <button onClick={handleApprove} disabled={approving || !!(pppLiveCheck && pppLiveCheck.error)}
+              <button onClick={handleApprove} disabled={approving || unsupportedPF || !!(pppLiveCheck && pppLiveCheck.error)}
                 style={{padding:'0.55rem 1.4rem',background:colors.success,color:'white',border:`1px solid ${colors.success}`,
                   borderRadius:'6px',cursor:approving?'not-allowed':'pointer',fontSize:'0.875rem',fontWeight:'500',opacity:approving?0.6:1}}>
                 {approving ? 'Approving & running model...' : 'Approve Version'}
