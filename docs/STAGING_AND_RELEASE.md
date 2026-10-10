@@ -47,7 +47,7 @@ Local dev ───────────────────────�
 You use your own accounts throughout. Never paste passwords or keys into chat.
 
 1. **Exposed-key check: done (no action needed).** The committed `OPENAI_API_KEY` was a placeholder; the history scan is clean. Still recommended:
-   - Recommended: GitHub → Sisofly/Xcepta → Settings → General → *Change repository visibility* → **Private**. The key also remains in git history; revoking it neutralises it, and a history rewrite is optional.
+   - Recommended: GitHub → Sisofly/Xcepta → Settings → General → *Change repository visibility* → **Private**. An institutional product's source and schema are better kept private.
 2. **Create the staging Supabase project.**
    - Supabase dashboard → *New project* → name `xcepta-staging`, the same region as production, a strong database password saved in your password manager.
    - Note its **Project URL** and **anon public key** (Project Settings → API).
