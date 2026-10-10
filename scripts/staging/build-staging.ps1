@@ -61,7 +61,7 @@ $stg  = StripPassword (Read-Host 'STAGING session pooler URI')
 # Each URI must name exactly its expected project (pooler user "postgres.<ref>"
 # or direct host "db.<ref>.supabase.co").
 function RefOf($uri) {
-  if ($uri -match '^postgres(ql)?://postgres\.([a-z0-9]{20})@[^/]+\.pooler\.supabase\.com:\d+/') { return $Matches[2] }
+  if ($uri -match '^postgres(ql)?://postgres\.([a-z0-9]{20})@[^/]+\.pooler\.supabase\.com:5432/') { return $Matches[2] }   # session pooler only (6543 = transaction pooler, unsuitable for pg_dump)
   if ($uri -match '^postgres(ql)?://postgres@db\.([a-z0-9]{20})\.supabase\.co:\d+/') { return $Matches[2] }
   return $null
 }
