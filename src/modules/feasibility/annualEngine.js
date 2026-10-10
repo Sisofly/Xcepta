@@ -70,6 +70,51 @@ function irrCalc(cfs) {
   if (rate <= -0.999 || rate > 50) return null
   return rate
 }
+// P-016: IRR for sub-annual periods. irrCalc (unchanged, used for annual
+// models) starts Newton at 15% per PERIOD, which is ~75% p.a. for quarters
+// and fails to converge on long quarterly series. This variant starts at
+// the periodic equivalent of 15% p.a. and, if Newton fails, brackets the
+// root by scanning for an NPV sign change and bisecting. Same acceptance
+// test as irrCalc (|NPV| ≤ 10,000 at the solution). Returns the PERIODIC
+// rate (caller annualises).
+function irrCalcPeriodic(cfs, periodsPerYear) {
+  var hasNeg = cfs.some(function(c) { return c < 0 })
+  var hasPos = cfs.some(function(c) { return c > 0 })
+  if (!hasNeg || !hasPos) return null
+  var rate = Math.pow(1.15, 1 / periodsPerYear) - 1
+  for (var i = 0; i < 200; i++) {
+    var npv = 0, dnpv = 0
+    for (var t = 0; t < cfs.length; t++) {
+      var disc = Math.pow(1 + rate, t)
+      npv += cfs[t] / disc
+      dnpv -= t * cfs[t] / (disc * (1 + rate))
+    }
+    if (Math.abs(dnpv) < 1e-12) break
+    var next = rate - npv / dnpv
+    if (!(next > -0.999 && next < 10)) break
+    if (Math.abs(next - rate) < 1e-12) { rate = next; break }
+    rate = next
+  }
+  if (rate > -0.999 && rate < 10 && Math.abs(npvCalc(rate, cfs)) <= 10000) return rate
+  // Bracket and bisect (annual −99% … +1000% expressed per period)
+  var lo = Math.pow(0.01, 1 / periodsPerYear) - 1, hi = Math.pow(11, 1 / periodsPerYear) - 1
+  var steps = 400, prevR = lo, prevV = npvCalc(lo, cfs)
+  for (var k = 1; k <= steps; k++) {
+    var r = lo + (hi - lo) * k / steps, v = npvCalc(r, cfs)
+    if ((prevV <= 0 && v >= 0) || (prevV >= 0 && v <= 0)) {
+      var a = prevR, b = r, fa = prevV
+      for (var j = 0; j < 200; j++) {
+        var m = (a + b) / 2, fm = npvCalc(m, cfs)
+        if ((fa <= 0 && fm <= 0) || (fa >= 0 && fm >= 0)) { a = m; fa = fm } else { b = m }
+      }
+      var root = (a + b) / 2
+      return Math.abs(npvCalc(root, cfs)) <= 10000 ? root : null
+    }
+    prevR = r; prevV = v
+  }
+  return null
+}
+
 function r2(n) { return Math.round(n * 100) / 100 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -360,30 +405,95 @@ function sculptSupportableDebt(ebitda, taxRate, target, rate, repayYears) {
   return (lo + hi) / 2
 }
 
+// ── Generic DSCR-constrained debt capacity (P-016 / Phase 3) ───────────────
+// Used when operating EBITDA varies across the loan life (escalation,
+// revenue profile, seasonality) or when the repayment profile is not
+// sculpted. `ebitda[t]` covers the loan life from COD, t = 0 … tenor−1
+// (in model periods). Debt D (the COD balance) is feasible when, at the
+// target DSCR in EVERY period of the loan life:
+//   grace periods       interest_t ≤ CFADS_t / target        (interest only)
+//   'sculpted'          principal_t = CFADS_t / target − interest_t ≥ 0 and
+//                       the balance is fully repaid by the end of the tenor
+//   'annuity'           level debt service (set on the balance at the start
+//                       of repayment) ≤ CFADS_t / target
+//   'equal_principal'   interest_t + D / repayPeriods ≤ CFADS_t / target
+// CFADS_t = EBITDA_t − max(0, (EBITDA_t − interest_t) × tax) depends on D
+// through the interest tax shield, so there is no closed form. Feasibility
+// is monotone in D (more debt → more interest → less headroom), so the
+// largest feasible D is found by bisection. Where CFADS cannot cover the
+// required debt service in some period, capacity falls (to zero if need
+// be) — the engine never produces a schedule below the target DSCR.
+function debtFeasible(D, ebitda, taxRate, target, rate, gracePeriods, repayPeriods, profile) {
+  var bal = D, level = 0, eqPrin = 0
+  for (var t = 0; t < gracePeriods + repayPeriods; t++) {
+    if (bal <= 1e-9) return true
+    var interest = bal * rate
+    var cfads    = ebitda[t] - Math.max(0, (ebitda[t] - interest) * taxRate)
+    var allowed  = cfads / target
+    var tol      = 1e-9 * Math.max(1, Math.abs(allowed))
+    if (t < gracePeriods) {
+      if (interest > allowed + tol) return false
+      continue
+    }
+    if (t === gracePeriods) {
+      level  = annuity(bal, rate, repayPeriods)
+      eqPrin = bal / repayPeriods
+    }
+    var principal
+    if (profile === 'annuity') {
+      if (level > allowed + tol) return false
+      principal = level - interest
+    } else if (profile === 'equal_principal') {
+      if (interest + eqPrin > allowed + tol) return false
+      principal = eqPrin
+    } else {
+      principal = allowed - interest
+      if (principal < -tol) return false
+    }
+    bal -= Math.min(Math.max(0, principal), bal)
+  }
+  return bal <= 0.005
+}
+
+function solveSupportableDebtGeneric(ebitda, taxRate, target, rate, gracePeriods, repayPeriods, profile) {
+  if (repayPeriods <= 0 || target <= 0) return 0
+  var hi = 1
+  for (var t = 0; t < gracePeriods + repayPeriods; t++) hi += Math.max(0, ebitda[t]) / target
+  if (!debtFeasible(0.01, ebitda, taxRate, target, rate, gracePeriods, repayPeriods, profile)) return 0
+  var lo = 0
+  for (var i = 0; i < 200 && hi - lo > 0.005; i++) {
+    var mid = (lo + hi) / 2
+    if (debtFeasible(mid, ebitda, taxRate, target, rate, gracePeriods, repayPeriods, profile)) lo = mid
+    else hi = mid
+  }
+  return lo
+}
+
 // ── Construction funding with IDC (P-015A + P-015C) ────────────────────────
 // Simulates the equity-first construction waterfall for a given total of
 // PRINCIPAL debt draws and returns the per-year funding rows plus the
 // capitalized interest and the COD balance.
 //
-// Conventions (annual model — see XCEPTA_GATE1_FINDINGS.md §9.3):
-//   • Base capex (TPC) is spread evenly across construction years.
-//   • Equity first: each year draws equity up to the remaining equity
+// Conventions (per model period — year or quarter; FINDINGS §9.3, §11):
+//   • Base capex (TPC) follows capexByPeriod: even across construction
+//     periods by default, or the user's Construction Cost Profile.
+//   • Equity first: each period draws equity up to the remaining equity
 //     budget (TPC − principal), then debt principal for the balance.
-//   • Draws are assumed to occur evenly through the year, so a year's new
-//     draw accrues on average half a year of interest:
-//         idc_t = constrRate × (opening_t + ½ × draw_t)
-//     opening_t already contains prior years' capitalized IDC, so IDC
-//     compounds annually.
+//   • Draws are assumed to occur evenly through the period, so a period's
+//     new draw accrues on average half a period of interest:
+//         idc_t = periodRate × (opening_t + ½ × draw_t)
+//     opening_t already contains prior periods' capitalized IDC, so IDC
+//     compounds once per period.
 //   • IDC is capitalized (added to the loan balance), not paid in cash and
 //     not charged to equity:  closing_t = opening_t + draw_t + idc_t.
 //   • COD balance = Σ principal draws + Σ IDC = operations opening balance.
-function simulateConstructionFunding(tpc, constrYears, principalTotal, constrRate) {
-  var capex     = tpc / constrYears
+function simulateConstructionFunding(capexByPeriod, tpc, principalTotal, constrRate) {
   var eqLeft    = Math.max(0, tpc - principalTotal)
   var opening   = 0
   var idcTotal  = 0
   var rows      = []
-  for (var y = 0; y < constrYears; y++) {
+  for (var y = 0; y < capexByPeriod.length; y++) {
+    var capex    = capexByPeriod[y]
     var eqDraw   = Math.min(capex, eqLeft)
     var debtDraw = capex - eqDraw
     eqLeft      -= eqDraw
@@ -409,9 +519,9 @@ function simulateConstructionFunding(tpc, constrYears, principalTotal, constrRat
 // No circular reference or plug: IDC is recomputed from the draws at each
 // candidate P. With constrRate = 0 this reduces exactly to the pre-IDC
 // sizing min(supportable, Debt % × TPC, TPC).
-function solveConstructionDebt(tpc, constrYears, constrRate, debtPct, supportable) {
+function solveConstructionDebt(capexByPeriod, tpc, constrRate, debtPct, supportable) {
   function headroom(P) {
-    var sim = simulateConstructionFunding(tpc, constrYears, P, constrRate)
+    var sim = simulateConstructionFunding(capexByPeriod, tpc, P, constrRate)
     var cap = Math.min(supportable, debtPct * (tpc + sim.idcTotal))
     return cap - sim.codBalance
   }
@@ -471,7 +581,42 @@ function readPPPInputs(assumptions) {
   inp.constrRate = safePct(pppVal(assumptions, 'Construction Interest Rate'), inp.interestRate * 100)
   // F09: OPEX Amount = 0 means fixed zero opex; null falls through to %.
   inp.useFixedOpex = inp.opexFixed !== null
+
+  // ── P-016 / Phase 3 optional inputs. All default to the pre-existing
+  // behaviour (annual, flat revenue and opex, even capex, sculpted debt),
+  // so existing projects calculate exactly as before.
+  var periodicity = (pppText(assumptions, 'Model Periodicity') || 'Annual').toLowerCase()
+  inp.periodicityRaw  = periodicity
+  inp.periodsPerYear  = periodicity === 'quarterly' ? 4 : periodicity === 'annual' ? 1 : NaN
+  inp.apEscalation    = safePct(pppVal(assumptions, 'Availability Payment Escalation %'), 0)
+  inp.opexEscalation  = safePct(pppVal(assumptions, 'OPEX Escalation %'), 0)
+  inp.revenueProfile  = parseNumberList(pppText(assumptions, 'Revenue Profile'))
+  inp.revenueBasis    = pppText(assumptions, 'Revenue Basis') || 'Contractual'
+  inp.constrProfile   = parseNumberList(pppText(assumptions, 'Construction Cost Profile'))
+  inp.quarterWeights  = parseNumberList(pppText(assumptions, 'Quarterly Revenue Weights'))
+  var rp = (pppText(assumptions, 'Repayment Profile') || 'Sculpted').toLowerCase().replace(/\s+/g, '_')
+  inp.repaymentProfile = rp
   return inp
+}
+
+// Text-valued assumptions are stored in `unit` with value null (the app's
+// convention for Contract Model, Revenue Model, …); a string `value` is
+// also accepted.
+function pppText(assumptions, name) {
+  var a = assumptions.find(function(x) { return x.name === name })
+  if (!a) return null
+  if (typeof a.value === 'string' && a.value.trim() !== '') return a.value.trim()
+  if (typeof a.unit === 'string' && a.unit.trim() !== '') return a.unit.trim()
+  return null
+}
+
+// "10, 20, 30" → [10, 20, 30]; null when absent; NaN entries kept so that
+// validation can reject them explicitly.
+function parseNumberList(text) {
+  if (text === null || text === undefined) return null
+  var parts = String(text).split(/[,;\s]+/).filter(function(s) { return s !== '' })
+  if (!parts.length) return null
+  return parts.map(function(s) { return Number(s.replace(/%$/, '')) })
 }
 
 function validatePPPInputs(inp) {
@@ -520,16 +665,69 @@ function validatePPPInputs(inp) {
     throw pppInputError('CONSTRUCTION_PERIOD_INVALID',
       'Construction Period must be >= 1 month; received ' + inp.constrMonths + '.', { value: inp.constrMonths })
   }
-  // ── P-025: the annual engine has whole-year periods. A fractional
-  // concession/tenor/grace was previously floored silently (e.g. 9.5 → 9).
+  // ── P-016 / Phase 3 inputs ──
+  if (!(inp.periodsPerYear === 1 || inp.periodsPerYear === 4)) {
+    throw pppInputError('MODEL_PERIODICITY_INVALID',
+      'Model Periodicity must be Annual or Quarterly; received "' + inp.periodicityRaw + '".')
+  }
+  ;[['Availability Payment Escalation %', inp.apEscalation], ['OPEX Escalation %', inp.opexEscalation]]
+    .forEach(function(e) {
+      if (!(e[1] > -1 && e[1] <= 1)) {
+        throw pppInputError('ESCALATION_INVALID',
+          e[0] + ' must be greater than −100% and at most 100% per year; received ' + r2(e[1] * 100) + '%.',
+          { field: e[0], value: e[1] * 100 })
+      }
+    })
+  if (['sculpted', 'annuity', 'equal_principal'].indexOf(inp.repaymentProfile) < 0) {
+    throw pppInputError('REPAYMENT_PROFILE_INVALID',
+      'Repayment Profile must be Sculpted, Annuity or Equal Principal; received "' + inp.repaymentProfile + '".')
+  }
+  if (['contractual', 'demand estimate'].indexOf(String(inp.revenueBasis).toLowerCase()) < 0) {
+    throw pppInputError('REVENUE_BASIS_INVALID',
+      'Revenue Basis must be Contractual or Demand Estimate; received "' + inp.revenueBasis + '".')
+  }
+  // ── P-025: whole model periods. A fractional concession/tenor/grace was
+  // previously floored silently (e.g. 9.5 → 9). Annual models need whole
+  // years; quarterly models need whole quarters (multiples of 0.25 yrs).
+  var ppy = inp.periodsPerYear
   function whole(name, v) {
-    if (Math.abs(v - Math.round(v)) > 1e-9) {
-      throw pppInputError('PERIOD_NOT_WHOLE_YEARS',
-        name + ' must be a whole number of years in an annual model; received ' + v +
-        '. Use whole years (or quarterly periodicity for quarter-year terms).', { field: name, value: v })
+    if (Math.abs(v * ppy - Math.round(v * ppy)) > 1e-9) {
+      throw pppInputError(ppy === 1 ? 'PERIOD_NOT_WHOLE_YEARS' : 'PERIOD_NOT_WHOLE_QUARTERS',
+        name + (ppy === 1
+          ? ' must be a whole number of years in an annual model; received ' + v + '. Use whole years (or quarterly periodicity for quarter-year terms).'
+          : ' must be a whole number of quarters (a multiple of 0.25 years) in a quarterly model; received ' + v + '.'),
+        { field: name, value: v })
     }
   }
   whole('Concession Period', inp.concessionYrs)
+  function listOk(list) {
+    return list.every(function(x) { return Number.isFinite(x) && x >= 0 }) &&
+           list.reduce(function(s, x) { return s + x }, 0) > 0
+  }
+  if (inp.revenueProfile) {
+    if (Math.abs(inp.concessionYrs - Math.round(inp.concessionYrs)) > 1e-9 ||
+        inp.revenueProfile.length !== Math.round(inp.concessionYrs) ||
+        !inp.revenueProfile.every(function(x) { return Number.isFinite(x) && x >= 0 })) {
+      throw pppInputError('REVENUE_PROFILE_INVALID',
+        'Revenue Profile must list one non-negative annual revenue per operating year (' + inp.concessionYrs +
+        ' values for the concession); received ' + inp.revenueProfile.length + ' value(s).',
+        { expected: inp.concessionYrs, received: inp.revenueProfile.length })
+    }
+  }
+  if (inp.constrProfile) {
+    var nC = Math.max(1, Math.ceil(inp.constrMonths / (12 / ppy)))
+    if (inp.constrProfile.length !== nC || !listOk(inp.constrProfile)) {
+      throw pppInputError('CONSTRUCTION_PROFILE_INVALID',
+        'Construction Cost Profile must list ' + nC + ' non-negative weights (one per construction ' +
+        (ppy === 1 ? 'year' : 'quarter') + ') with a positive total; received ' + inp.constrProfile.length + '.',
+        { expected: nC, received: inp.constrProfile.length })
+    }
+  }
+  if (inp.quarterWeights && ppy === 4 && (inp.quarterWeights.length !== 4 || !listOk(inp.quarterWeights))) {
+    throw pppInputError('QUARTERLY_WEIGHTS_INVALID',
+      'Quarterly Revenue Weights must list 4 non-negative weights with a positive total; received ' +
+      inp.quarterWeights.length + '.')
+  }
   // ── P-024: debt maturity must fall within the concession ──
   // Tenor is measured from COD (P-015D), grace years are part of the tenor,
   // and the concession (operations period) also starts at COD. So:
@@ -578,11 +776,16 @@ function checkPPPIntegrity(result, inp) {
   var sourcesUses = sumC('equity_draw') + sumC('debt_draw') + sumC('idc') - (inp.tpc + result.idc_capitalized)
   var codDiff     = result.debt_amount - (result.debt_sizing.principal_drawn + result.idc_capitalized)
   var maxGap = 0
-  for (var i = 0; i < sched.length; i++) {
-    var s = sched[i]
-    maxGap = Math.max(maxGap, Math.abs(s.closing - (s.opening + s.draw + s.idc - s.principal)))
-    if (i > 0) maxGap = Math.max(maxGap, Math.abs(s.opening - sched[i - 1].closing))
-  }
+  ;[sched, result.debt_schedule_periodic || []].forEach(function(sc) {
+    for (var i = 0; i < sc.length; i++) {
+      var s = sc[i]
+      maxGap = Math.max(maxGap, Math.abs(s.closing - (s.opening + s.draw + s.idc - s.principal)))
+      if (i > 0) maxGap = Math.max(maxGap, Math.abs(s.opening - sc[i - 1].closing))
+    }
+  })
+  // Annual rows of a quarterly model are sums of 2-dp rows: widen the
+  // tolerance by the number of periods aggregated.
+  if (result.periods_per_year > 1) tol = Math.max(tol, 0.01 * (result.debt_schedule_periodic || []).length)
   var finalBalance = sched.length ? sched[sched.length - 1].closing : 0
   var finalTol     = Math.max(2, tol)
   var failures = []
@@ -621,10 +824,20 @@ function computePPPWarnings(result, inp) {
   var ds    = result.debt_sizing
   var fmt   = function(n) { return Math.round(n).toLocaleString('en-US') }
 
-  if (inp.annualPayment > inp.tpc) {
+  var peakRevenue = ops.reduce(function(m, r) { return Math.max(m, r.revenue) }, 0)
+  if (peakRevenue > inp.tpc) {
     add('POSSIBLE_INPUT_SCALE_ERROR', 'warning',
-      'Annual Availability Payment (' + fmt(inp.annualPayment) + ') exceeds Total Project Cost (' + fmt(inp.tpc) +
-      '). Check both are entered in the same units (e.g. missing zeros).', inp.annualPayment / inp.tpc)
+      'Annual revenue (peak ' + fmt(peakRevenue) + ') exceeds Total Project Cost (' + fmt(inp.tpc) +
+      '). Check both are entered in the same units (e.g. missing zeros).', peakRevenue / inp.tpc)
+  }
+  if (result.revenue_basis === 'demand_estimate') {
+    add('DEMAND_REVENUE_ESTIMATE', 'info',
+      'Revenue is an estimate of demand, not a contractual payment: debt capacity and returns depend on traffic/usage ' +
+      'forecasts. Lenders typically require higher DSCRs and downside sensitivities for demand risk.', null)
+  }
+  if (inp.quarterWeights && inp.periodsPerYear === 1) {
+    add('QUARTERLY_WEIGHTS_IGNORED', 'info',
+      'Quarterly Revenue Weights are ignored in an annual model.', null)
   }
   var ebitda0 = ops.length ? ops[0].ebitda : 0
   if (ops.length && ops.every(function(r) { return r.ebitda <= 0 })) {
@@ -687,9 +900,40 @@ function computePPPWarnings(result, inp) {
   return w
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// runPPPEngine — period-based PPP availability-payment engine
+// ─────────────────────────────────────────────────────────────────────────────
+// Periodicity (P-016): every calculation runs on model periods — years
+// (p = 1, default) or quarters (p = 4). Annual inputs are applied as
+// follows (FINDINGS §11.2):
+//   • Interest rates (operating, construction) are NOMINAL annual rates:
+//     periodic rate = annual / p, applied to the opening balance.
+//   • WACC is an EFFECTIVE annual rate: periodic = (1 + WACC)^(1/p) − 1.
+//   • Equity IRR is solved on the periodic equity cash flows and reported
+//     as an effective annual rate: (1 + periodic IRR)^p − 1.
+//   • Escalation (AP, OPEX) is an annual step: operating year k (k = 1 at
+//     COD) carries (1 + g)^(k − 1); it is not compounded within a year.
+//   • Revenue within a year follows Quarterly Revenue Weights when given
+//     (contractual timing / seasonality), otherwise equal instalments.
+//     Fixed OPEX is spread evenly; % OPEX follows revenue.
+//   • Construction capex follows the Construction Cost Profile per period
+//     when given, otherwise it is spread evenly.
+//   • Tax is charged per period on period profit (no loss carry-forward,
+//     unchanged from the annual engine).
+// Annual reporting (cash_flows, debt_schedule, dscr_series) for a quarterly
+// model aggregates the quarters: flows are summed; balances (stocks) take
+// the opening of the first and the closing of the last quarter; the annual
+// DSCR is Σ CFADS / Σ debt service. Construction years are counted from
+// financial close and operating years from COD; a partial final
+// construction year is its own row. Quarterly detail is returned in
+// cash_flows_periodic / debt_schedule_periodic.
+//
+// With p = 1 and no optional inputs, every arithmetic step (including the
+// 2-dp rounding sequence) is the same as the pre-P-016 annual engine.
 function runPPPEngine(assumptions) {
   var inp = readPPPInputs(assumptions)
   validatePPPInputs(inp)
+  var p               = inp.periodsPerYear
   var tpc             = inp.tpc
   var debtPct         = inp.debtPct
   var equityPct       = inp.equityPct
@@ -704,67 +948,90 @@ function runPPPEngine(assumptions) {
   var wacc            = inp.wacc
   var targetDSCR      = inp.targetDSCR
   var constrRate      = inp.constrRate
+  var opexFixed       = inp.opexFixed
+  var useFixedOpex    = inp.useFixedOpex
+  var profile         = inp.repaymentProfile
 
-  var constrYears = Math.max(1, Math.ceil(constrMonths / 12))
-  var opsYears    = Math.max(1, concessionYrs)  // concession = service/operations period; total life = constrYears + opsYears
+  var constrYears   = Math.max(1, Math.ceil(constrMonths / 12))
+  var opsYears      = Math.max(1, concessionYrs)  // concession = service/operations period; total life = construction + operations
+  var nC            = p === 1 ? constrYears : Math.max(1, Math.ceil(constrMonths / 3))
+  var nO            = Math.round(opsYears * p)
+  var gracePeriods  = Math.round(gracePeriodYrs * p)
+  var repayPeriods  = Math.max(0, Math.round(loanTenorYrs * p) - gracePeriods)
+  var repayYears    = Math.max(0, loanTenorYrs - gracePeriodYrs)
+  var rateP         = p === 1 ? interestRate : interestRate / p
+  var constrRateP   = p === 1 ? constrRate : constrRate / p
+  var weights       = p === 1 ? [1] : normaliseWeights(inp.quarterWeights || [1, 1, 1, 1])
 
-  var opexFixed    = inp.opexFixed
-  var useFixedOpex = inp.useFixedOpex
+  // ── Operating EBITDA by period (independent of debt) ──
+  function annualRevenue(opYear) {
+    return inp.revenueProfile ? inp.revenueProfile[opYear - 1]
+      : annualPayment * Math.pow(1 + inp.apEscalation, opYear - 1)
+  }
+  function periodRevenue(q) {                         // q = 1 … nO
+    var opYear = Math.ceil(q / p)
+    return p === 1 ? annualRevenue(opYear) : annualRevenue(opYear) * weights[(q - 1) % p]
+  }
+  function periodOpexRaw(q, revenue) {
+    if (!useFixedOpex) return revenue * opexPct
+    var opYear = Math.ceil(q / p)
+    var fixed = opexFixed * Math.pow(1 + inp.opexEscalation, opYear - 1)
+    return p === 1 ? fixed : fixed / p
+  }
+  var ebitdaByPeriod = []
+  for (var q0 = 1; q0 <= nO; q0++) {
+    var rv = periodRevenue(q0)
+    ebitdaByPeriod.push(rv - periodOpexRaw(q0, rv))
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // DEBT SIZING (P-009 / P-013): sculpt to Target DSCR
   // ─────────────────────────────────────────────────────────────────────────
-  // Pre-fix behavior (broken): debt = TPC × Debt% regardless of CFADS. The
-  // engine then compressed a level annuity into (tenor − grace), producing
-  // back-loaded principal cliffs and DSCRs well below the user-specified
-  // target — see P-013. Target DSCR was never read by the engine — see P-009.
-  //
-  // Post-fix behavior: debt capacity flexes to fit the user-pinned
-  // Availability Payment and Target DSCR.
-  //
-  //   1. Compute sizing EBITDA from flat AP × (1 − opex%) or AP − fixed opex.
-  //   2. sculptSupportableDebt() binary-searches the starting balance that
-  //      fully amortizes a CFADS/target-sculpted DS stream over repayYears
-  //      = loanTenor − grace, at the loan interest rate. The tax shield on
-  //      interest is included; that's why a closed-form PV is insufficient.
-  //   3. Actual debt = min(requestedDebt, supportableDebt, tpc). User can
-  //      under-leverage via Debt%; user cannot over-leverage past DSCR.
-  //   4. Equity = TPC − actualDebt. The construction loop draws THIS equity
-  //      (the old code drew TPC × equityPct — stale once debt was sized).
-  //   5. The seven debt-capacity diagnostics are returned under `debt_sizing`.
-  //
-  // targetDSCR ≤ 0 (per F03 semantics, "no DSCR constraint") falls back to
-  // the legacy requested-debt sizing. Non-viable economics (EBITDA ≤ 0 or
-  // repayYears = 0) yield zero supportable debt.
-  //
-  // P-015C (IDC) amends steps 3–4: the DSCR-supportable amount is the
-  // maximum COD balance (principal draws + capitalized IDC), Debt % applies
-  // to the total funding requirement (TPC + IDC), and equity funds
-  // TPC − principal draws. See solveConstructionDebt().
-  var repayYears    = Math.max(0, loanTenorYrs - gracePeriodYrs)
-
-  var sizingRevenue = annualPayment
-  var sizingOpex    = useFixedOpex ? opexFixed : sizingRevenue * opexPct
-  var sizingEbitda  = sizingRevenue - sizingOpex
-
+  // Debt capacity flexes to fit the operating cash flows and Target DSCR:
+  //   1. Flat EBITDA over the loan life with sculpted repayment →
+  //      sculptSupportableDebt() (closed binary search, unchanged).
+  //   2. Varying EBITDA (escalation, revenue profile, seasonality) or an
+  //      annuity / equal-principal profile → solveSupportableDebtGeneric(),
+  //      which enforces the target DSCR in every period of the loan life.
+  //   3. COD debt = min(DSCR capacity, Debt % × (TPC + IDC)); principal
+  //      ≤ TPC (P-015C, solveConstructionDebt()).
+  //   4. Equity funds TPC − principal draws.
+  // targetDSCR = 0 ("no DSCR constraint", F03) → Debt % is the only cap.
+  // Non-viable economics (EBITDA ≤ 0, no repayment period) → zero capacity.
+  var loanPeriods = gracePeriods + repayPeriods
+  var loanEbitda  = ebitdaByPeriod.slice(0, loanPeriods)
+  var flat = loanEbitda.every(function(e) { return e === loanEbitda[0] })
+  var sizingEbitda = loanEbitda.length ? loanEbitda[0] : 0
+  var sizingMethod
   var supportableDebt
-  if (targetDSCR > 0 && sizingEbitda > 0 && repayYears > 0) {
-    supportableDebt = sculptSupportableDebt(
-      sizingEbitda, taxRate, targetDSCR, interestRate, repayYears
-    )
-  } else if (targetDSCR <= 0) {
+  if (targetDSCR <= 0) {
     // F03-style "no DSCR constraint" → DSCR capacity is unbounded; Debt %
     // (applied to TPC + IDC inside the solver) is the only debt cap.
     supportableDebt = Infinity
+    sizingMethod = 'none'
+  } else if (repayPeriods <= 0 || !loanEbitda.some(function(e) { return e > 0 })) {
+    supportableDebt = 0                                   // non-viable economics
+    sizingMethod = 'none'
+  } else if (flat && profile === 'sculpted') {
+    supportableDebt = sizingEbitda > 0
+      ? sculptSupportableDebt(sizingEbitda, taxRate, targetDSCR, rateP, repayPeriods)
+      : 0
+    sizingMethod = 'sculpted_flat'
   } else {
-    // Non-viable economics → zero debt capacity
-    supportableDebt = 0
+    supportableDebt = solveSupportableDebtGeneric(loanEbitda, taxRate, targetDSCR, rateP,
+      gracePeriods, repayPeriods, profile)
+    sizingMethod = 'per_period_' + profile
   }
+
+  // ── Construction capex by period ──
+  var capexByPeriod = []
+  var cw = inp.constrProfile ? normaliseWeights(inp.constrProfile) : null
+  for (var c = 0; c < nC; c++) capexByPeriod.push(cw ? tpc * cw[c] : tpc / nC)
 
   // P-015C: solve principal draws so that COD balance (principal + IDC)
   // respects DSCR capacity, gearing on total funding, and TPC.
-  var principalDrawn = solveConstructionDebt(tpc, constrYears, constrRate, debtPct, supportableDebt)
-  var construction   = simulateConstructionFunding(tpc, constrYears, principalDrawn, constrRate)
+  var principalDrawn = solveConstructionDebt(capexByPeriod, tpc, constrRateP, debtPct, supportableDebt)
+  var construction   = simulateConstructionFunding(capexByPeriod, tpc, principalDrawn, constrRateP)
   var idcTotal       = construction.idcTotal
   var totalFunding   = tpc + idcTotal                     // total uses (Convention A + IDC)
   var debt           = construction.codBalance            // COD term-loan balance (P-015D)
@@ -782,21 +1049,21 @@ function runPPPEngine(assumptions) {
     : supportableDebt < requestedDebt - 1         ? 'dscr'
     : 'gearing'
 
-  var cfs = [], cfTable = [], dscrSeries = [], debtSchedule = []
+  var cfs = [], rowsP = [], schedP = []
 
   // ── Construction phase: equity-first funding waterfall (P-015A) + IDC (P-015C) ──
-  // Each construction year draws equity first (up to the equity budget),
-  // then debt principal for the balance of that year's capex. Interest
+  // Each construction period draws equity first (up to the equity budget),
+  // then debt principal for the balance of that period's capex. Interest
   // during construction accrues on the drawn balance and is capitalized
   // into the loan (row field `idc`); it is not a cash cost to equity and
   // `interest` (cash interest paid) stays 0 in construction rows.
   // By COD: Σ equity_draw = equity, Σ debt_draw = principalDrawn,
   // Σ debt_draw + Σ idc = debt (COD balance).
-  for (var cy = 0; cy < constrYears; cy++) {
+  for (var cy = 0; cy < nC; cy++) {
     var cRow = construction.rows[cy]
     var eqCF = -cRow.equity_draw
     cfs.push(eqCF)
-    cfTable.push({
+    rowsP.push({
       year: cy, phase: 'Construction',
       revenue: 0, opex: 0, ebitda: 0,
       interest: 0, pbt: 0, tax: 0, net_income: 0,
@@ -806,60 +1073,64 @@ function runPPPEngine(assumptions) {
       idc:         r2(cRow.idc),
       equity_cf: r2(eqCF), dscr: null,
     })
-    debtSchedule.push({
+    schedP.push({
       year: cy, phase: 'Construction',
       opening: r2(cRow.opening), draw: r2(cRow.debt_draw), idc: r2(cRow.idc),
       interest: 0, principal: 0, closing: r2(cRow.closing),
     })
   }
 
-  // ── Operations phase: in-loop DSCR sculpting ──
-  // P-013 fix: principal is no longer a level annuity compressed into
-  // (tenor − grace). Each year's debt service is sized to CFADS / target,
-  // and principal_t = DS_t − interest_t. For flat CFADS this resolves to
-  // ~flat DS / rising principal / falling interest. Outside the repayment
-  // window (post-grace, post-amortization), principal stays at zero.
+  // ── Operations phase ──
+  // Sculpted (P-013): DS_t = CFADS_t / target, principal_t = DS_t − interest_t
+  // (flat CFADS → ~flat DS, rising principal). Annuity: level DS set on the
+  // balance at the start of repayment. Equal principal: balance / repayment
+  // periods. Grace periods are interest-only; no principal after the tenor.
   //
-  // P-015D: COD conversion. The construction facility converts into the
-  // term loan at COD with no adjustment: operations open at exactly the
-  // construction closing balance (principal + capitalized IDC). Loan tenor
-  // is measured FROM COD (construction years are not part of the tenor);
-  // the first `gracePeriodYrs` operating years are interest-only, then the
-  // loan amortizes over repayYears = tenor − grace by DSCR sculpting.
-  // Each operating row is also written to debtSchedule from the SAME
-  // variables used in the P&L / cash-flow rows, so the schedule cannot
-  // disagree with the engine.
+  // P-015D: COD conversion. Operations open at exactly the construction
+  // closing balance (principal + capitalized IDC). Loan tenor is measured
+  // FROM COD; each operating row is also written to the debt schedule from
+  // the SAME variables used in the P&L / cash-flow rows.
   var outDebt = debt
-  for (var op = 1; op <= opsYears; op++) {
-    var yr       = constrYears + op - 1
-    var isGrace  = op <= gracePeriodYrs
-    var inRepay  = !isGrace && op <= (gracePeriodYrs + repayYears)
+  var levelDS = 0, eqPrincipal = 0
+  for (var op = 1; op <= nO; op++) {
+    var yr       = nC + op - 1
+    var isGrace  = op <= gracePeriods
+    var inRepay  = !isGrace && op <= (gracePeriods + repayPeriods)
+    var lastRepay = op === gracePeriods + repayPeriods
     var hasDebt  = outDebt > 0.01
     var openingDebt = outDebt
+    if (op === gracePeriods + 1) {
+      levelDS     = annuity(outDebt, rateP, repayPeriods)
+      eqPrincipal = repayPeriods > 0 ? outDebt / repayPeriods : 0
+    }
 
-    var revenue  = annualPayment
-    var opex     = useFixedOpex ? r2(opexFixed) : r2(revenue * opexPct)
+    var revenue  = periodRevenue(op)
+    var opex     = r2(periodOpexRaw(op, revenue))
     var ebitda   = r2(revenue - opex)
-    var interest = hasDebt ? r2(outDebt * interestRate) : 0
+    var interest = hasDebt ? r2(outDebt * rateP) : 0
 
-    // Sculpted principal: DS_t = CFADS_t / targetDSCR, principal_t = DS_t − interest_t.
-    // CFADS uses the actual tax shield on this year's interest (consistent with
-    // the binary-search sizing). Clamped to [0, outDebt] to handle final-period
-    // rounding and any edge case where DS < interest.
+    // CFADS uses the actual tax shield on this period's interest (consistent
+    // with the sizing). Principal is clamped to [0, outDebt].
     var principal = 0
     if (inRepay && hasDebt) {
-      var pbtPre  = ebitda - interest
-      var taxPre  = Math.max(0, pbtPre * taxRate)
-      var cfadsT  = ebitda - taxPre
-      var sculptedDS = cfadsT / targetDSCR
-      principal = r2(Math.min(outDebt, Math.max(0, sculptedDS - interest)))
+      if (profile === 'annuity') {
+        principal = r2(lastRepay ? outDebt : Math.min(outDebt, Math.max(0, levelDS - interest)))
+      } else if (profile === 'equal_principal') {
+        principal = r2(lastRepay ? outDebt : Math.min(outDebt, eqPrincipal))
+      } else {
+        var pbtPre  = ebitda - interest
+        var taxPre  = Math.max(0, pbtPre * taxRate)
+        var cfadsT  = ebitda - taxPre
+        var sculptedDS = cfadsT / targetDSCR
+        principal = r2(Math.min(outDebt, Math.max(0, sculptedDS - interest)))
+      }
     }
     outDebt = r2(Math.max(0, outDebt - principal))
 
     var pbt    = r2(ebitda - interest)
     var tax    = r2(Math.max(0, pbt * taxRate))
     var netInc = r2(pbt - tax)
-    var eqCF   = r2(netInc - principal)
+    var eqCFo  = r2(netInc - principal)
 
     // CFADS = ebitda minus tax (pre-debt-service, post-tax)
     var cfads   = r2(ebitda - tax)
@@ -868,46 +1139,62 @@ function runPPPEngine(assumptions) {
     // in grace years and post-repayment free-cash years
     var dscr = totalDS > 1 ? r2(cfads / totalDS) : null
 
-    cfs.push(eqCF)
-    // Only include years with a valid DSCR ratio in the series
-    if (dscr !== null) dscrSeries.push({ year: op, dscr: dscr })
-
-    cfTable.push({
+    cfs.push(eqCFo)
+    rowsP.push({
       year: yr, phase: 'Operations',
       revenue: r2(revenue), opex: opex, ebitda: ebitda,
       interest: interest, pbt: pbt, tax: tax, net_income: netInc,
       principal: principal, capex: 0,
       equity_draw: 0, debt_draw: 0, idc: 0,
-      equity_cf: eqCF, dscr: dscr,
+      equity_cf: eqCFo, dscr: dscr,
     })
-    debtSchedule.push({
+    schedP.push({
       year: yr, phase: 'Operations',
       opening: r2(openingDebt), draw: 0, idc: 0,
       interest: interest, principal: principal, closing: r2(outDebt),
     })
   }
 
-  var rawIrr = irrCalc(cfs)
-  var irr    = rawIrr !== null ? r2(rawIrr * 100) : null
-  var npv    = r2(npvCalc(wacc, cfs))
-  var totalIn  = Math.abs(cfs.filter(function(c) { return c < 0 }).reduce(function(a, b) { return a + b }, 0))
-  var totalOut = cfs.filter(function(c) { return c > 0 }).reduce(function(a, b) { return a + b }, 0)
+  // ── Returns on the periodic equity cash flows ──
+  var rawIrr = p === 1 ? irrCalc(cfs) : irrCalcPeriodic(cfs, p)
+  var irr    = rawIrr !== null ? r2((p === 1 ? rawIrr : Math.pow(1 + rawIrr, p) - 1) * 100) : null
+  var npv    = r2(npvCalc(p === 1 ? wacc : Math.pow(1 + wacc, 1 / p) - 1, cfs))
+  var totalIn  = Math.abs(cfs.filter(function(v) { return v < 0 }).reduce(function(a, b) { return a + b }, 0))
+  var totalOut = cfs.filter(function(v) { return v > 0 }).reduce(function(a, b) { return a + b }, 0)
   var em = totalIn > 0 ? r2(totalOut / totalIn) : null
 
-  // DSCR aggregates for the debt_sizing report
-  var dscrAggVals = dscrSeries
-    .map(function(d) { return d.dscr })
-    .filter(function(v) { return v !== null && Number.isFinite(v) })
-  var minDSCR = dscrAggVals.length ? Math.min.apply(null, dscrAggVals) : null
-  var avgDSCR = dscrAggVals.length
-    ? dscrAggVals.reduce(function(a, b) { return a + b }, 0) / dscrAggVals.length
+  // ── Annual reporting ──
+  var cfTable, debtSchedule, dscrSeries = []
+  if (p === 1) {
+    cfTable = rowsP
+    debtSchedule = schedP
+    rowsP.forEach(function(r, i) {
+      if (r.phase === 'Operations' && r.dscr !== null) dscrSeries.push({ year: i - nC + 1, dscr: r.dscr })
+    })
+  } else {
+    var agg = aggregateToYears(rowsP, schedP, nC, p)
+    cfTable = agg.cash_flows
+    debtSchedule = agg.debt_schedule
+    dscrSeries = agg.dscr_series
+  }
+
+  // DSCR aggregates for the debt_sizing report — on the model periods
+  // (the covenant-test frequency): annual for annual models, quarterly for
+  // quarterly models. The annual series is reported alongside.
+  var periodDSCR = rowsP
+    .filter(function(r) { return r.phase === 'Operations' && r.dscr !== null && Number.isFinite(r.dscr) })
+    .map(function(r) { return r.dscr })
+  var minDSCR = periodDSCR.length ? Math.min.apply(null, periodDSCR) : null
+  var avgDSCR = periodDSCR.length
+    ? periodDSCR.reduce(function(a, b) { return a + b }, 0) / periodDSCR.length
     : null
+  var annualDSCR = dscrSeries.map(function(d) { return d.dscr })
 
   var result = {
     irr, npv, equity_multiple: em,
     tdc: r2(tpc), debt_amount: r2(debt), equity_amount: r2(equity),
     dscr_series: dscrSeries, cash_flows: cfTable,
-    construction_years: constrYears, operations_years: opsYears,
+    construction_years: p === 1 ? constrYears : Math.ceil(nC / p), operations_years: opsYears,
     // ── P-015C / P-015D ──
     // tdc stays the BASE project cost input (Convention A: excludes IDC).
     // total_funding_requirement = tdc + idc_capitalized = total sources.
@@ -915,10 +1202,17 @@ function runPPPEngine(assumptions) {
     idc_capitalized:           r2(idcTotal),
     total_funding_requirement: r2(totalFunding),
     debt_schedule:             debtSchedule,
+    // ── P-016 ──
+    periodicity:               p === 1 ? 'annual' : 'quarterly',
+    periods_per_year:          p,
+    construction_periods:      nC,
+    operations_periods:        nO,
+    cash_flows_periodic:       p === 1 ? null : rowsP,
+    debt_schedule_periodic:    p === 1 ? null : schedP,
+    // ── Phase 3: revenue / repayment basis (labelled for the reader) ──
+    revenue_basis:             /demand/i.test(inp.revenueBasis) ? 'demand_estimate' : 'contractual',
+    repayment_profile:         profile,
     // ── Debt-capacity diagnostics (P-009 / P-013) ──
-    // Surfaces the DSCR-driven sizing decision to the UI/PDF so reviewers
-    // can see (a) what the user requested, (b) what CFADS+DSCR could support,
-    // and (c) how much additional equity flows from the gap.
     debt_sizing: {
       requested_debt:             r2(requestedDebt),
       supportable_debt:           r2(supportableDebt),
@@ -939,6 +1233,11 @@ function runPPPEngine(assumptions) {
       loan_tenor_years:           loanTenorYrs,        // measured from COD
       grace_years:                gracePeriodYrs,      // interest-only operating years
       repayment_years:            repayYears,          // tenor − grace
+      // P-016 / Phase 3 additions
+      dscr_basis:                 p === 1 ? 'annual' : 'quarterly',
+      min_dscr_annual:            annualDSCR.length ? Math.min.apply(null, annualDSCR) : null,
+      sizing_method:              sizingMethod,
+      repayment_profile:          profile,
     },
   }
   // P-023: reconciliation gate (throws if the outputs do not reconcile) and
@@ -948,6 +1247,50 @@ function runPPPEngine(assumptions) {
   result.engine_version = PPP_ENGINE_VERSION
   return result
 }
+
+function normaliseWeights(list) {
+  var s = list.reduce(function(a, b) { return a + b }, 0)
+  return list.map(function(x) { return x / s })
+}
+
+// Quarterly → annual reporting rows (see runPPPEngine header).
+function aggregateToYears(rowsP, schedP, nC, p) {
+  var FLOW = ['revenue', 'opex', 'ebitda', 'interest', 'pbt', 'tax', 'net_income', 'principal',
+              'capex', 'equity_draw', 'debt_draw', 'idc', 'equity_cf']
+  var cash_flows = [], debt_schedule = [], dscr_series = []
+  function groups(start, end) {
+    var g = []
+    for (var i = start; i < end; i += p) g.push([i, Math.min(i + p, end)])
+    return g
+  }
+  var spans = groups(0, nC).map(function(g) { return g.concat('Construction') })
+    .concat(groups(nC, rowsP.length).map(function(g) { return g.concat('Operations') }))
+  spans.forEach(function(span, k) {
+    var a = span[0], b = span[1], phase = span[2]
+    var row = { year: k, phase: phase, periods: b - a }
+    FLOW.forEach(function(f) {
+      var s = 0
+      for (var i = a; i < b; i++) s += rowsP[i][f] || 0
+      row[f] = r2(s)
+    })
+    var cfads = 0, ds = 0
+    for (var i2 = a; i2 < b; i2++) { cfads += rowsP[i2].ebitda - rowsP[i2].tax; ds += rowsP[i2].interest + rowsP[i2].principal }
+    row.dscr = phase === 'Operations' && ds > 1 ? r2(cfads / ds) : null
+    cash_flows.push(row)
+    if (row.dscr !== null) {
+      var opsYear = k - Math.ceil(nC / p) + 1
+      dscr_series.push({ year: opsYear, dscr: row.dscr })
+    }
+    debt_schedule.push({
+      year: k, phase: phase,
+      opening: schedP[a].opening,
+      draw: row.debt_draw, idc: row.idc, interest: row.interest, principal: row.principal,
+      closing: schedP[b - 1].closing,
+    })
+  })
+  return { cash_flows: cash_flows, debt_schedule: debt_schedule, dscr_series: dscr_series }
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PPP HELPERS — extracted verbatim from src/pages/FeasibilityProject.jsx
