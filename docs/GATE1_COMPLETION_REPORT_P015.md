@@ -94,7 +94,7 @@ P + IDC(P) ≤ Debt % × (TPC + IDC(P))  (gearing on total funding)
 P ≤ TPC
 ```
 
-`IDC(P)` increases with P, so headroom is strictly decreasing. Bisection on P recomputes IDC from the draws at every step. There is no circular reference and no plug. At construction rate 0 this collapses exactly to the old `min(supportable, Debt% × TPC, TPC)`. Test R1 proves this field-by-field against the frozen baseline.
+`IDC(P)` increases with P, so headroom is strictly decreasing. Bisection on P recomputes IDC from the draws at every step. There is no circular reference and no plug. At construction rate 0 this collapses to the old `min(supportable, Debt% × TPC, TPC)`. Test R1 proves this field-by-field against the frozen baseline. *(Precision note, added at pre-merge validation: identical for every fixture in the test suite. In a 503-scenario random differential, 4 cases differ by 0.01 JOD from bisection-vs-`min()` rounding of the last cent. Immaterial; see §15.)*
 
 **This overturns the §5d qualitative expectation.** §5d said "COD debt rises above 44.42M; equity falls". That cannot happen when debt is already at DSCR capacity. In that case IDC *consumes* capacity: COD debt stays 44.42M, principal falls by the IDC amount, and **equity rises by the IDC amount** (test R2). IDC is debt-financed on top of principal only when gearing binds (R3). Adding IDC on top of a fully-used DSCR capacity would have produced unserviceable debt. The mandate explicitly prohibits that.
 
@@ -319,3 +319,40 @@ Re-baselined tests (Governance §13): only B34.1, B34.1b, B34.4. All three were 
 3. Should the benchmark replica script and extracted benchmark series be committed (e.g. `docs/benchmark/`)? They are proprietary Etihad workbook data, so I have kept them out of the repo for now.
 4. Authorize the next package (P-023, then P-022). Note: §5d shows P-022 already caused stale numbers to be recorded as validated.
 5. Pushing to `origin/master` and deployment are **not** done. Approved baselines in production are untouched and will show pre-IDC outputs until re-approved (P-022).
+
+---
+
+## 15. Pre-merge validation (2026-10-10, PR #1 head `944dc93` + this commit)
+
+Product-owner decisions recorded: **Convention A for TPC approved**. **P-024 approved as a blocking validation** (implemented after merge, not in this PR).
+
+Method: an independent harness recomputes every quantity from the inputs with its own arithmetic (no engine helpers). It runs on 3 named cases (Madaba aligned, Madaba June, base 100M) plus **500 seeded random PPP scenarios** covering:
+- TPC 20–500M and Debt % 0–100
+- builds of 6–48 months and concessions of 8–30 years
+- rates 0–14% and tax 0–25%
+- grace 0–3 years and tenor ≤ concession
+- target DSCR 0 / 1.0–1.5
+
+It then diffs against the pre-IDC engine (`5b9cacc`).
+
+| # | Requirement | Evidence (max abs error over 503 scenarios; tolerance) | Result |
+|---|---|---|---|
+| 1 | Sources = uses | Σ(equity + principal + IDC) − (TPC + IDC): 0.02 JOD (1). TFR − (TPC + IDC): 4e-9 | **PASS** |
+| 2 | Equity and debt drawdowns reconcile | Independent equity-first waterfall vs engine rows: 0.007 JOD. Σ equity_draw − equity: 0.01 | **PASS** |
+| 3 | IDC calculated correctly | Row IDC vs r × (opening + ½ draw): 0.005 JOD. Σ IDC: 0.006. Capacity never exceeded; a constraint binds whenever principal < TPC: 0.01 | **PASS** |
+| 4 | COD debt = construction principal + capitalized IDC | COD − (P + IDC): 0.01. COD − construction closing: 0.01. Ops opening − construction closing: 0 | **PASS** |
+| 5 | Operating debt service & amortization reconcile | Interest − opening × rate: 0.005. Schedule = cash flows: 0. Balance ≥ 0. Σ principal − COD: ≤ 1.00 JOD (the sculpting search's own ±1 JOD convergence tolerance, pre-existing) | **PASS** |
+| 6 | Sculpting maintains target DSCR | DSCR-bound: amortizing years − target = 0.00. Gearing-bound: DSCR ≥ target everywhere. DSCR = CFADS/DS: 0.005 (2-dp rounding). Tax identity: 0.005 | **PASS** |
+| 7 | Equity IRR and NPV correct | Independent bisection IRR on the reported equity series: 0.005pp. NPV: 0.014 JOD | **PASS** |
+| 8 | Madaba differences explained, not eliminated | Workbook replicated to the unit (§8). Every variance attributed (§9). No benchmark value is used anywhere in engine code or tests as a target | **PASS** |
+| 9 | Automated regression tests | 559 / 559 pass. `vite build` passes | **PASS** |
+| 10 | No validated functionality broken | Real-estate `runEngine`: **0 / 200** random scenarios differ. Bankability gate, payment solver, and all other exported helpers: **source byte-identical** to `5b9cacc`. PPP at construction rate 0: 499 / 503 identical, 4 differ by **0.01 JOD** (last-cent rounding) | **PASS** |
+
+**Unresolved material issues inside PR #1's scope: none.**
+
+Known items outside this PR, already logged:
+- **P-024** (approved, next): tenor longer than the concession leaves debt unpaid.
+- **P-022**: stored approved baselines remain pre-IDC until re-approved. On merge, production PPP projects with construction debt will show pre-IDC results until recalculated.
+- P-025 / P-026 / P-027, and annual periodicity (P-016).
+
+**Recommendation: PR #1 is ready to merge, subject to your final sign-off.**
