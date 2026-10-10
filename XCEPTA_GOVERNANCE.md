@@ -348,9 +348,11 @@ Items logged but not yet implemented. Do not implement these without explicit in
 | P-025 | Fractional tenor — blocked annually, supported quarterly — done in rc1 | Done — awaiting release |
 | P-026 | IRR equity-timing convention (residual +0.175pp quarterly) | Low — documented |
 | P-027 | Construction cost profile — done in rc1 | Done — awaiting release |
+| P-028 | Tax depreciation / loss carry-forward (methodology decision; disclosed meanwhile) | High — decision pending |
+| P-029 | Non-AP project-finance contract models blocked (no validated engine) | Done — awaiting release |
 | P-016 | PPP quarterly periodicity — done in rc1 (annual default unchanged) | Done — awaiting release |
 | P-017 | `computeRequiredPayment` remediation redundancy under DSCR sizing | Low |
-| P-018 | PPP DSCR default duplicated across 3 literals; should reference `PPP_DSCR_FLOOR`. Dead `?? 1.30` + stale docblocks in `recommend.js` | Low |
+| P-018 | DSCR: sculpting target vs underwriting threshold (Lender Minimum DSCR, default PPP_DSCR_FLOOR) — done in rc1.1 | Done — awaiting release |
 | P-019 | Two-tier DSCR model (size 1.20 / approve 1.30) — deferred underwriting option | Option |
 
 ---

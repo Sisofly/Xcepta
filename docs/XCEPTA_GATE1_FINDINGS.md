@@ -398,7 +398,7 @@ is documentation/confirmation rather than new code, allowing a jump to 015C.
 | **P-010** | PPP debt schedule (opening/draw/IDC/interest/principal/closing) exposed in Results | ✅ **Built** (`31ebde4`, `c142310`). **Updated `f8c4a2c`:** renders the engine's `debt_schedule` verbatim, including IDC. The legacy reconstruction is kept only for outputs that predate `debt_schedule`. |
 | **P-016** | Annual periodicity only; benchmark is quarterly | ✅ **Done in rc1** (`d7a9b50`): annual / quarterly engine. Annual outputs byte-identical to production; quarterly Madaba IRR gap reduced to +0.39pp, fully attributed (§11). |
 | **P-017** | `computeRequiredPayment` remediation now largely redundant — DSCR sizing already solves coverage, so the solver returns ~zero gap for any self-sized project. Reassess its UI role. | 🟡 Backlog |
-| **P-018** | PPP DSCR default duplicated across three literals (sizing target `annualEngine.js:386`, solver `:609`, floor `:664`) instead of referencing the single `PPP_DSCR_FLOOR` constant. Section 5 "no duplicated thresholds" violation. Also: dead `?? 1.30` fallback + stale 1.30 docblocks in `recommend.js`. Fix when next touching the debt module. | 🟡 Backlog — Low |
+| **P-018** | DSCR default duplicated across literals; UI used the sculpting target as the bankability floor (a 1.00×-sculpted project passed) while KPI / recommendation used 1.20×; UI collapsed Target DSCR 0 to 1.20. | ✅ **Done in rc1.1** (`b1d9889`): Target DSCR (sculpting) is separate from Lender Minimum DSCR (underwriting, default PPP_DSCR_FLOOR 1.20×). All gates use the underwriting threshold at covenant frequency. Defaults reference the constant. |
 | **P-019** | Two-tier DSCR model (size to lender-minimum 1.20, approve to institutional 1.30) — deferred underwriting-stance option, not adopted. | 🟡 Backlog — option |
 | **P-020** | Project insert failed `projects_project_type_check` for PF sectors (Healthcare/Energy/Industrial) added in E-0.3a — wizard sent raw sector, not in the CHECK whitelist. | ✅ **Fixed** (`652de13`). `getLegacyProjectType` maps all PF projects to constraint-legal `'Infrastructure / PPP'`; true sector stays in `projects.sector`. FPA display paths made sector-first. No DB migration. |
 | **P-021** | No runnable test invocation in main tree — `"type":"module"` + jest 30, no `test` script; raw `npx jest` failed on ESM. 304-test suite only ran inside Claude Code worktrees. | ✅ **Fixed** (`bdc3951`). Added `test` script (`node --experimental-vm-modules`); `npm test` → 304/304 from main tree. `.claude/` gitignored; stale worktrees removed. |
@@ -408,6 +408,8 @@ is documentation/confirmation rather than new code, allowing a jump to 015C.
 | **P-025** | Fractional tenor silently floored. | ✅ **Done in rc1** (`856d59d`): blocked in annual models; quarter-year terms supported in quarterly models. |
 | **P-026** | IRR equity-timing convention (period-end dating of equity-first equity). | 🟡 Residual, reduced: +0.79pp (annual) → +0.175pp (quarterly) on Madaba. Convention, documented. |
 | **P-027** | No construction-cost profile; partial-year builds. | ✅ **Done in rc1** (`d7a9b50`): Construction Cost Profile input; quarterly models resolve 30-month builds to 10 quarters. |
+| **P-028** | Tax depreciation / loss carry-forward not modelled. Tax overstated for taxable projects; equity IRR understated by +1.3pp to +6.3pp on tested cases. | 🟠 **Open — product-owner decision** (methodology change). Disclosed on every taxable result (`TAX_DEPRECIATION_NOT_MODELLED`, `0e15bc3`). |
+| **P-029** | Non-AP project-finance contract models (Demand-based, Hybrid, PPA, …) fell through to the real-estate engine with no inputs. | ✅ **Blocked in rc1.1** (`fa62550`): "not supported" banner, approval disabled. Demand revenue is supported inside AP projects via Revenue Profile. |
 | ~~P-005~~ | "OPEX 570" percentage bug | ⛔ **Struck** — input was 0%; 570 is correct. No Madaba evidence. |
 | ~~P-012~~ | Operating rate 8.25% vs 7.0% | ⛔ **Struck** — engine reads 7% correctly; 8.25% was a service ratio, not the coupon. |
 
@@ -603,3 +605,17 @@ Madaba, quarterly, with the workbook's own construction timing, against the benc
 Variable-CFADS sizing matches closed-form growing-annuity capacity within 1 JOD.
 
 New observation (not changed, P-018): the page uses `Target DSCR || 1.20` as the bankability floor, so an explicit 0 is floored to 1.20 for the verdict while the engine applies no DSCR constraint. This is conservative and left as is pending a P-018 decision.
+
+
+---
+
+## 12. Release-risk closure — rc1.1 (2026-10-10)
+
+- **P-018 resolved:** sculpting target vs underwriting threshold.
+- **Database-backed lifecycle tests:** 32 tests on embedded Postgres using the real P-022 migration; rollback verified by mutation.
+- **Unsupported contract models blocked:** P-029.
+- **Tax-depreciation omission (P-028):** quantified and disclosed; escalated for decision.
+- **Madaba reconciliation:** re-run on the final engine; unchanged and fully attributed.
+- **Tests:** 725/725.
+
+The deployment sequence, the read-only pre-migration check and the smoke-test checklist are in `docs/PPP_COMPLETION_REPORT_RC1.md` §8.
