@@ -22,7 +22,7 @@
     - Refuses to write to any database whose connection string contains the
       production project reference.
 #>
-param([switch]$Force)
+param([switch]$Force, [string]$StagingRef = 'ldhsckzvfuwpxywqloag')
 $ErrorActionPreference = 'Stop'
 $ProdRef = 'acaqynigacgpswobiasb'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -58,8 +58,22 @@ Write-Host 'Supabase dashboard -> project -> Connect -> "Session pooler" -> copy
 Write-Host 'The password part is removed automatically; you will be asked for it separately (hidden).' -ForegroundColor Cyan
 $prod = StripPassword (Read-Host 'PRODUCTION session pooler URI')
 $stg  = StripPassword (Read-Host 'STAGING session pooler URI')
-if ($prod -notmatch $ProdRef) { throw 'The production URI does not contain the production project reference.' }
-if ($stg -match $ProdRef)     { throw 'REFUSED: the STAGING URI points at the production project.' }
+# Each URI must name exactly its expected project (pooler user "postgres.<ref>"
+# or direct host "db.<ref>.supabase.co").
+function RefOf($uri) {
+  if ($uri -match '^postgres(ql)?://postgres\.([a-z0-9]{20})@[^/]+\.pooler\.supabase\.com:\d+/') { return $Matches[2] }
+  if ($uri -match '^postgres(ql)?://postgres@db\.([a-z0-9]{20})\.supabase\.co:\d+/') { return $Matches[2] }
+  return $null
+}
+$prodRefSeen = RefOf $prod; $stgRefSeen = RefOf $stg
+if ($stg -match $ProdRef -or $stgRefSeen -eq $ProdRef) { throw 'REFUSED: the STAGING URI points at the production project.' }
+if ($prodRefSeen -ne $ProdRef)    { throw "The PRODUCTION URI is not for project $ProdRef (found '$prodRefSeen'). Copy it from the production project's Connect dialog." }
+if ($stgRefSeen -ne $StagingRef)  { throw "The STAGING URI is not for project $StagingRef (found '$stgRefSeen'). Copy it from the xcepta-staging project's Connect dialog." }
+$hostOf = { param($u) ($u -replace '^[^@]+@', '' -replace '/.*$', '') }
+Write-Host ''
+Write-Host ('  READ (schema-only export) : project ' + $prodRefSeen + ' at ' + (& $hostOf $prod)) -ForegroundColor Yellow
+Write-Host ('  WRITE (all changes)       : project ' + $stgRefSeen + ' at ' + (& $hostOf $stg)) -ForegroundColor Yellow
+if ((Read-Host 'Type YES to continue') -ne 'YES') { throw 'Cancelled by user. Nothing was read or written.' }
 
 # ── 1-2. Export from production (read-only) ────────────────────────────────
 $env:PGPASSWORD = ReadSecret 'PRODUCTION database password (hidden; used only for the read-only export)'
