@@ -1,5 +1,5 @@
 import colors from '../../theme/colors.js'
-import { fmtNumber, fmtDSCR } from '../../utils/format.js'
+import { fmtNumber, fmtDSCR, fmtIRR } from '../../utils/format.js'
 import { assessResultCurrency } from './resultPersistence.js'
 
 // P-022 / Phase 6: provenance of a saved PPP result plus the funding & debt
@@ -52,6 +52,8 @@ export default function PPPResultProvenance({ modelOutput, assumptions, engineVe
     ['Debt amount limited by', BINDING_LABEL[ds.binding_constraint] || ds.binding_constraint || '—'],
     ['Target / minimum / average DSCR', [ds.target_dscr, ds.min_dscr, ds.avg_dscr].map(v => (v === null || v === undefined ? '—' : fmtDSCR(v))).join(' / ')],
     ['Loan tenor from COD / grace / repayment (years)', [ds.loan_tenor_years, ds.grace_years, ds.repayment_years].join(' / ')],
+    ['Project IRR (unlevered, post-tax, before financing)', fmtIRR(modelOutput.project_irr)],
+    ['Equity IRR (levered)', fmtIRR(modelOutput.irr)],
   ] : null
 
   return (

@@ -1157,6 +1157,15 @@ function runPPPEngine(assumptions) {
 
   // ── Returns on the periodic equity cash flows ──
   var rawIrr = p === 1 ? irrCalc(cfs) : irrCalcPeriodic(cfs, p)
+  // Project IRR (Phase 4): unlevered, post-tax, before financing — base
+  // capex out during construction (no IDC, no debt), EBITDA less tax on
+  // EBITDA (no interest shield) during operations. With zero debt it equals
+  // the equity IRR by construction.
+  var projCfs = rowsP.map(function(r) {
+    return r.phase === 'Construction' ? -r.capex : r.ebitda - Math.max(0, r.ebitda * taxRate)
+  })
+  var rawProjIrr = p === 1 ? irrCalc(projCfs) : irrCalcPeriodic(projCfs, p)
+  var projectIrr = rawProjIrr !== null ? r2((p === 1 ? rawProjIrr : Math.pow(1 + rawProjIrr, p) - 1) * 100) : null
   var irr    = rawIrr !== null ? r2((p === 1 ? rawIrr : Math.pow(1 + rawIrr, p) - 1) * 100) : null
   var npv    = r2(npvCalc(p === 1 ? wacc : Math.pow(1 + wacc, 1 / p) - 1, cfs))
   var totalIn  = Math.abs(cfs.filter(function(v) { return v < 0 }).reduce(function(a, b) { return a + b }, 0))
@@ -1193,6 +1202,7 @@ function runPPPEngine(assumptions) {
   var result = {
     irr, npv, equity_multiple: em,
     tdc: r2(tpc), debt_amount: r2(debt), equity_amount: r2(equity),
+    project_irr: projectIrr,
     dscr_series: dscrSeries, cash_flows: cfTable,
     construction_years: p === 1 ? constrYears : Math.ceil(nC / p), operations_years: opsYears,
     // ── P-015C / P-015D ──

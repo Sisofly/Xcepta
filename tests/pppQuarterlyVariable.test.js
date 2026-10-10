@@ -351,3 +351,36 @@ describe('Phase 3 — variable CFADS structures', () => {
     expect(ran).toBe(150)
   })
 })
+
+// ═════════════════════════════════════════════════════════════════════════
+// Phase 4 — project IRR (unlevered, post-tax, before financing)
+// ═════════════════════════════════════════════════════════════════════════
+describe('Phase 4 — project IRR', () => {
+  const irrBisect = (cfs, p) => {
+    const npv = r => cfs.reduce((s, c, t) => s + c / (1 + r) ** t, 0)
+    let lo = -0.5, hi = 1
+    for (let i = 0; i < 300; i++) { const m = (lo + hi) / 2; npv(m) > 0 ? lo = m : hi = m }
+    return ((1 + lo) ** p - 1) * 100
+  }
+  test.each([['annual', {}], ['quarterly', Q], ['quarterly escalating', { ...Q, 'Availability Payment Escalation %': 2 }]])(
+    'PI1: %s — matches an independent IRR on (−capex, EBITDA − tax on EBITDA)', (_l, o) => {
+      const out = run(o), p = out.periods_per_year
+      const rows = out.cash_flows_periodic || out.cash_flows
+      const cfs = rows.map(r => r.phase === 'Construction' ? -r.capex : r.ebitda - Math.max(0, r.ebitda * 0.2))
+      expect(Math.abs(out.project_irr - irrBisect(cfs, p))).toBeLessThanOrEqual(0.011)
+    })
+
+  test('PI2: with no debt, project IRR equals equity IRR (identity)', () => {
+    ;[{ 'Debt %': 0, 'Equity %': 100 }, { ...Q, 'Debt %': 0, 'Equity %': 100 }].forEach(o => {
+      const out = run(o)
+      expect(out.debt_amount).toBe(0)
+      expect(out.project_irr).toBeCloseTo(out.irr, 2)
+    })
+  })
+
+  test('PI3: project IRR ignores financing — invariant to Debt %, target DSCR and interest rate', () => {
+    const ref = run({}).project_irr
+    ;[{ 'Debt %': 30, 'Equity %': 70 }, { 'Target DSCR': 1.5 }, { 'Interest Rate': 11 }]
+      .forEach(o => expect(run(o).project_irr).toBe(ref))
+  })
+})

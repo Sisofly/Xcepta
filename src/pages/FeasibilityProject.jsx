@@ -1234,6 +1234,22 @@ export default function FeasibilityProject() {
         { label: 'Equity Multiple',                       value: feasEMVal,  color: feasEMColor  },
         { label: 'NPV (Feasibility Baseline)',            value: feasNPVVal, color: feasNPVColor },
         { label: 'Payback Period',                        value: feasPBVal,  color: feasPBColor  },
+        // P-022 / Phase 6: provenance of the PPP result in the export, so a
+        // historical or outdated approval is not mistaken for a current one.
+        ...(pppAP && modelOutput && modelOutput._persistence ? [
+          { label: 'Result basis', color: [92, 127, 146], value: modelOutput._persistence.legacy
+              ? 'Historical (saved before versioned results; not recalculated)'
+              : (PPP_ENGINE_COMPATIBLE_VERSIONS.includes(modelOutput._persistence.engine_version)
+                  ? 'Saved result, engine v' + modelOutput._persistence.engine_version
+                  : 'Outdated engine v' + modelOutput._persistence.engine_version + ' (current v' + PPP_ENGINE_VERSION + ')')
+                + ' · ' + (modelOutput.periodicity || 'annual') + ' model' },
+          ...(modelOutput.project_irr !== undefined ? [
+            { label: 'Project IRR (unlevered, post-tax)', color: [92, 127, 146],
+              value: modelOutput.project_irr === null ? '---' : Number(modelOutput.project_irr).toFixed(1) + '%' },
+            { label: 'Capitalised IDC / Senior debt at COD', color: [92, 127, 146],
+              value: fmtJOD(modelOutput.idc_capitalized) + ' / ' + fmtJOD(modelOutput.debt_amount) },
+          ] : []),
+        ] : []),
         ...(hasDevEngine ? [
           { label: 'Total Development Cost (Dev Engine)',   value: fmtJOD(totalDevCost), color: [92, 127, 146] },
           { label: 'Gross Development Value (Dev Engine)',  value: fmtJOD(totalGDV),     color: [92, 127, 146] },
@@ -3078,7 +3094,7 @@ export default function FeasibilityProject() {
                   {modelOutput.dscr_series && modelOutput.dscr_series.length > 0 && (
                     <div style={{marginBottom:'2rem'}}>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem',flexWrap:'wrap',gap:'0.5rem'}}>
-                        <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,textTransform:'uppercase',letterSpacing:'0.05em'}}>DSCR — Annual Series{modelOutput.periodicity === 'quarterly' ? ' (Σ CFADS ÷ Σ debt service per year; quarterly minimum ' + (modelOutput.debt_sizing && modelOutput.debt_sizing.min_dscr != null ? modelOutput.debt_sizing.min_dscr.toFixed(2) + 'x' : '—') + ')' : ''}</h3>
+                        <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,textTransform:'uppercase',letterSpacing:'0.05em'}}>DSCR — Annual Series{modelOutput.periodicity === 'quarterly' ? ' (Σ CFADS ÷ Σ debt service per year; quarterly minimum ' + fmtDSCR(modelOutput.debt_sizing && modelOutput.debt_sizing.min_dscr) + ')' : ''}</h3>
                         {extraKPIs && extraKPIs.dscrBreachYear && (
                           <span style={{fontSize:'0.75rem',padding:'3px 10px',borderRadius:'20px',
                             background:colors.dangerSoft,color:colors.danger,border:`1px solid ${colors.danger}`}}>
