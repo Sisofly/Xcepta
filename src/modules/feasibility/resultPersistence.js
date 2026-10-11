@@ -111,20 +111,65 @@ export function diffInputs(snapshot, assumptions) {
   return changed
 }
 
+// ── Demonstrated compatibility (P-028) ──
+// A result from an engine version not listed as compatible is still current
+// when re-running the CURRENT engine on its own saved inputs reproduces every
+// value it stored, exactly (numbers bit-for-bit, same types, same array
+// lengths). Only `warnings` and `engine_version` are ignored, and keys the old
+// result never had (new reporting fields) are not compared. Nothing stored is
+// changed. Eligible ONLY for tax-exempt results (saved inputs record Tax Rate
+// = 0), per the P-028 approval rule; taxable results from another engine
+// version are always outdated.
+const COMPAT_IGNORED = ['warnings', 'engine_version']
+export function storedValuesReproduced(stored, fresh) {
+  const same = (a, b) => {
+    if (a === null || typeof a !== 'object') return Object.is(a, b)
+    if (b === null || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return false
+    if (Array.isArray(a)) return a.length === b.length && a.every((x, i) => same(x, b[i]))
+    return Object.keys(a).every(k => Object.prototype.hasOwnProperty.call(b, k) && same(a[k], b[k]))
+  }
+  if (!stored || typeof stored !== 'object' || !fresh || typeof fresh !== 'object') return false
+  return Object.keys(stored).filter(k => !COMPAT_IGNORED.includes(k))
+    .every(k => Object.prototype.hasOwnProperty.call(fresh, k) && same(stored[k], fresh[k]))
+}
+const compatCache = new WeakMap()
+function demonstrateCompatibility(modelOutput, rerun) {
+  const snap = modelOutput._persistence.inputs_snapshot
+  if (!rerun || !snap) return false
+  const taxRow = snap.find(r => r && r.name === 'Tax Rate')
+  if (!taxRow || taxRow.value === null || Number(taxRow.value) !== 0) return false
+  if (compatCache.has(modelOutput)) return compatCache.get(modelOutput)
+  let ok
+  try {
+    const stored = { ...modelOutput }
+    delete stored._persistence
+    ok = storedValuesReproduced(stored, JSON.parse(JSON.stringify(rerun(modelOutput._persistence.inputs_snapshot))))
+  } catch {
+    ok = false
+  }
+  compatCache.set(modelOutput, ok)
+  return ok
+}
+
 // Classifies a hydrated PPP result against the running engine.
 //   status 'current'      — produced by an engine whose outputs are identical
+//                           (listed compatible, or demonstrated: `rerun` given)
 //   status 'stale_engine' — produced by an engine with different outputs
 //   status 'legacy'       — stored before P-022 (engine/inputs unknown)
-export function assessResultCurrency(modelOutput, { engineVersion, compatibleVersions, assumptions }) {
+// `rerun(inputRows)` (optional) runs the current engine; without it, only the
+// listed compatible versions are current.
+export function assessResultCurrency(modelOutput, { engineVersion, compatibleVersions, assumptions, rerun }) {
   if (!modelOutput || !modelOutput._persistence) return null
   const p = modelOutput._persistence
   if (p.legacy) {
     return { status: 'legacy', engine_version: null, inferred_generation: p.inferred_generation,
              current_engine: engineVersion, inputs_changed: null }
   }
-  const compatible = (compatibleVersions || [engineVersion]).includes(p.engine_version)
+  const listed = (compatibleVersions || [engineVersion]).includes(p.engine_version)
+  const demonstrated = !listed && demonstrateCompatibility(modelOutput, rerun)
   return {
-    status: compatible ? 'current' : 'stale_engine',
+    status: listed || demonstrated ? 'current' : 'stale_engine',
+    compatibility: listed ? 'listed' : demonstrated ? 'demonstrated' : 'none',
     engine_version: p.engine_version,
     current_engine: engineVersion,
     inputs_changed: diffInputs(p.inputs_snapshot, assumptions),

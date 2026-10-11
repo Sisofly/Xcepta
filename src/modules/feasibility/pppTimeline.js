@@ -7,8 +7,9 @@
  *
  *   Construction Start / Financial Close Date
  *     stored as the existing assumption 'Construction Start Date' (unit =
- *     'YYYY-MM-DD'); no schema change. The engine ignores it, so results are
- *     identical with or without it.
+ *     'YYYY-MM-DD'); no schema change. For tax-exempt projects the engine
+ *     ignores it; for taxable projects it also sets the tax-year boundaries
+ *     (P-028, pppTax.js), so it is a calculation input.
  *
  * Operations start (COD) is DERIVED, never entered: start date + the
  * construction periods the engine models (ceil(months / period length)).
@@ -26,6 +27,7 @@
  * ---------------------------------------------------------------------------
  */
 import { hydrateModelOutput } from './resultPersistence.js'
+import { parseStartDate } from './pppTax.js'
 
 export const PPP_START_DATE = 'Construction Start Date'
 export const PPP_START_DATE_LABEL = 'Construction Start / Financial Close Date'
@@ -40,15 +42,8 @@ export const PPP_FPA_ACCOUNTS = [
   { code: 'COST_ADMIN',       name: 'Admin & Overheads',     field: null },
 ]
 
-// Strict 'YYYY-MM-DD' that is a real calendar date → { year, month, day } | null
-export function parseStartDate(s) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s == null ? '' : s).trim())
-  if (!m) return null
-  const year = Number(m[1]), month = Number(m[2]), day = Number(m[3])
-  const dt = new Date(Date.UTC(year, month - 1, day))
-  if (dt.getUTCFullYear() !== year || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) return null
-  return { year, month, day }
-}
+// Strict 'YYYY-MM-DD' date parser (shared with the tax calendar, pppTax.js)
+export { parseStartDate }
 
 const monthIndex = (year, month) => year * 12 + (month - 1)
 function monthLabel(idx) {

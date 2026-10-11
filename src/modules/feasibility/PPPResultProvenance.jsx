@@ -1,5 +1,6 @@
 import colors from '../../theme/colors.js'
 import { assessResultCurrency } from './resultPersistence.js'
+import { runPPPEngine } from './annualEngine.js'
 import { pppFundingSummaryRows, PPP_MODEL_SCOPE_NOTES } from './pppReporting.js'
 
 // P-022 / Phase 6: provenance of a saved PPP result plus the funding & debt
@@ -23,7 +24,7 @@ function Banner({ tone, title, children, action }) {
 }
 
 export default function PPPResultProvenance({ modelOutput, assumptions, engineVersion, compatibleVersions, onNewDraft, creatingDraft }) {
-  const cur = assessResultCurrency(modelOutput, { engineVersion, compatibleVersions, assumptions })
+  const cur = assessResultCurrency(modelOutput, { engineVersion, compatibleVersions, assumptions, rerun: runPPPEngine })
   if (!cur) return null
   const p = modelOutput._persistence
   const when = p.computed_at ? new Date(p.computed_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'unknown date'
@@ -56,6 +57,7 @@ export default function PPPResultProvenance({ modelOutput, assumptions, engineVe
       {cur.status === 'current' && (
         <Banner title={`Saved result · engine v${cur.engine_version} · ${periodicity} model · calculated ${when}`}>
           All figures on this tab are read from the approved, saved result.
+          {cur.compatibility === 'demonstrated' && ` Re-running the current engine (v${cur.current_engine}) on this result's saved inputs reproduces every stored value exactly, so it remains current; it has not been recalculated or changed.`}
         </Banner>
       )}
       {cur.inputs_changed && cur.inputs_changed.length > 0 && (

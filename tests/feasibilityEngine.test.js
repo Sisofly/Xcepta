@@ -1418,7 +1418,11 @@ function pppWith(overrides) {
 // concession scenario.
 // =====================================================================
 describe('B34 — PPP base scenario sanity', () => {
-  const out = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
+  // P-028: B34 locks the 2.0.0 base scenario, hand-computed with the 2.0.0 tax
+  // method (tax on EBITDA − interest, no depreciation or loss relief), now
+  // selected explicitly with Tax Depreciation = None. Assertions and expected
+  // values unchanged; the default P-028 method is tested in tests/pppTax.test.js.
+  const out = runPPPEngine([...P_PPP_BASE_ASSUMPTIONS, { name: 'Tax Depreciation', value: null, unit: 'None' }])
 
   // ── Post-fix sizing semantics (P-009 / P-013, 2026-05-24) ────────────────
   // Engine no longer sizes debt as TPC × Debt%. With no `Target DSCR` row in
@@ -1613,7 +1617,11 @@ describe('B34 — PPP base scenario sanity', () => {
 // Outstanding debt is unchanged through grace.
 // =====================================================================
 describe('B35 — grace-period principal behavior', () => {
-  const out = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
+  // P-028: B35 is hand-computed on the 2.0.0 base scenario, hand-computed with the 2.0.0 tax
+  // method (tax on EBITDA − interest, no depreciation or loss relief), now
+  // selected explicitly with Tax Depreciation = None. Assertions and expected
+  // values unchanged; the default P-028 method is tested in tests/pppTax.test.js.
+  const out = runPPPEngine([...P_PPP_BASE_ASSUMPTIONS, { name: 'Tax Depreciation', value: null, unit: 'None' }])
   const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
 
   test('B35.1: principal = 0 for ops years 1 and 2 (grace = 2); > 0 for year 3', () => {

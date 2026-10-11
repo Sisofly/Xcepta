@@ -740,7 +740,7 @@ export default function FPAProject() {
         } else if (b.status === 'date_added_after_approval') {
           text = 'A ' + PPP_START_DATE_LABEL + ' (' + b.liveDate + ') was added after this version was approved. ' +
             'Approved versions are never changed: approve a new version in Feasibility to use the date in FP&A ' +
-            '(the date does not change any financial result). Until then, enter budgets manually.'
+            '(for taxable projects the date also sets the tax years, so the new version may differ in tax). Until then, enter budgets manually.'
         } else if (b.status === 'legacy_result') {
           text = 'This PPP result was approved before inputs were recorded with results, so it has no ' + PPP_START_DATE_LABEL + '. ' +
             'Add the date in Feasibility → Assumptions and approve a new version to enable budget pre-fill.'

@@ -59,6 +59,8 @@ const CASES = {
     'Availability Payment Escalation %': 2.5, 'OPEX Amount (JOD)': 800_000, 'OPEX Escalation %': 3.5,
     'Revenue Profile': Array.from({ length: 25 }, (_, i) => 9e6 + 250_000 * i).join(','), 'Revenue Basis': 'Demand Estimate',
     'Repayment Profile': 'Annuity' },
+  'Taxable 21% — P-028 tax depreciation + loss carry-forward': { ...BASE, 'Tax Rate': 21, 'Depreciable Share %': 95,
+    'Tax Loss Carry-Forward (years)': 5, 'Tax Payment Lag (months)': 4 },
 }
 const CATEGORY = name => (/Rate|Tenor|Grace|Tax|WACC|DSCR|Repayment|Interest/.test(name) ? 'ppp_financing'
   : /Payment|OPEX|Revenue/.test(name) ? 'ppp_revenue' : 'ppp_structure')
@@ -140,6 +142,17 @@ async function main() {
       const est = basis.status === 'ok' ? pppMonthlyBudget(basis.result, basis.startDate, basis.bounds.operationsStart) : null
       const [ey, em] = basis.status === 'ok' ? basis.bounds.concessionEnd.split('-').map(Number) : [0, 0]
       const afterEnd = em === 12 ? (ey + 1) + '-01' : ey + '-' + String(em + 1).padStart(2, '0')
+      // P-028: taxable results carry a reconciled tax schedule; exempt results none
+      const taxable = inputs['Tax Rate'] > 0
+      const opsP = P.filter(r => r.phase === 'Operations')
+      const paidSum = opsP.reduce((a, r) => a + r.tax, 0)
+      const expSum = (shown.tax_schedule || []).reduce((a, s) => a + s.tax_expense, 0)
+      check(label + ' · tax basis (P-028)', taxable
+        ? !!shown.tax_schedule && Math.abs(paidSum - expSum) <= 0.01 && shown.tax_assumptions.confirmed === false &&
+          (shown.warnings || []).some(w => w.code === 'TAX_ASSUMPTIONS_UNCONFIRMED')
+        : !shown.tax_schedule && paidSum === 0,
+        taxable ? 'tax paid ' + Math.round(paidSum) + ' = tax expense ' + Math.round(expSum) + ' · basis ' + Math.round(shown.tax_assumptions.levered_basis) +
+          ' · ' + shown.tax_assumptions.tax_year_basis + ' tax years' : 'tax-exempt (no tax schedule)')
       check(label + ' · FP&A monthly estimate from approved date',
         basis.status === 'ok' && basis.startDate === inputs['Construction Start Date'] && est && est.status === 'ok' &&
         est.phase === 'Operations' && est.budget.REV_AVAILABILITY === Math.round(firstOps.revenue / mpp) &&

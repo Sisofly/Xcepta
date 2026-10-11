@@ -41,14 +41,29 @@ function allMonths(result, start) {
   }
 }
 
-describe('engine invariance — the start date never changes a financial result', () => {
-  test.each([['annual', BASE], ['quarterly', QUARTERLY], ['variable CFADS', { ...BASE, 'Availability Payment Escalation %': 2.5, 'Repayment Profile': 'Annuity' }]])(
+// P-028: for TAXABLE projects the start date also sets the tax-year boundaries,
+// so it is a calculation input (T1b). It never changes results of tax-exempt
+// projects or of the 2.0.0 tax method (T1).
+describe('engine invariance — the start date changes no result of exempt / 2.0.0-tax projects', () => {
+  test.each([['annual (tax-exempt)', { ...BASE, 'Tax Rate': 0 }], ['annual (2.0.0 tax method)', { ...BASE, 'Tax Depreciation': 'None' }],
+    ['quarterly (tax-exempt)', QUARTERLY], ['variable CFADS (2.0.0 tax method)', { ...BASE, 'Tax Depreciation': 'None', 'Availability Payment Escalation %': 2.5, 'Repayment Profile': 'Annuity' }]])(
     'T1 %s: output with the date is bit-identical to output without it', (_l, inputs) => {
       const without = clean(runPPPEngine(rows(inputs)))
       const withDate = clean(runPPPEngine(rows({ ...inputs, [PPP_START_DATE]: '2026-07-01' })))
       const d = exactDiff(without, withDate)
       expect(d.differences).toEqual([])
     })
+
+  test('T1b taxable (P-028): the date moves only tax timing — operating figures are unchanged', () => {
+    const without = clean(runPPPEngine(rows(BASE)))
+    const withDate = clean(runPPPEngine(rows({ ...BASE, [PPP_START_DATE]: '2026-07-01' })))
+    expect(without.tax_assumptions.tax_year_basis).toBe('cod_anniversary_fallback')
+    expect(withDate.tax_assumptions.tax_year_basis).toBe('calendar')
+    const pre = o => o.cash_flows.map(r => [r.revenue, r.opex, r.ebitda, r.capex])
+    expect(pre(withDate)).toEqual(pre(without))
+    expect(withDate.tax_schedule[0].months).toBe(6)                 // COD 2028-07 → partial FY2028
+    expect(without.tax_schedule[0].months).toBe(12)
+  })
 })
 
 describe('dates and model periods', () => {
@@ -192,8 +207,10 @@ describe('approved-version integrity (real Postgres jsonb, PGlite)', () => {
     const storedRow = async v => (await db.from('model_outputs').select('*').eq('version_id', v.version_id)
       .order('computed_at', { ascending: false }).limit(1)).data[0]
 
+    // 2.0.0 tax method, so the date is not a calculation input here (taxable
+    // variant of the integrity rule: T11b)
     // v1 approved without a date
-    const live0 = rows(BASE)
+    const live0 = rows({ ...BASE, 'Tax Depreciation': 'None' })
     const v1 = await newVersion('v1.0 Draft')
     await approve(v1, live0)
     const v1Before = clean(await storedRow(v1))
@@ -224,6 +241,26 @@ describe('approved-version integrity (real Postgres jsonb, PGlite)', () => {
     // A later live edit does not move FP&A: the approved date is kept and the difference flagged
     const live2 = live1.map(a => (a.name === PPP_START_DATE ? { ...a, unit: '2027-01-01' } : a))
     expect(resolvePPPFpaBasis(v2Row, live2)).toMatchObject({ status: 'ok', startDate: '2026-07-01', liveDate: '2027-01-01', liveDateDiffers: true })
+    await pg.close()
+  })
+
+  test('T11b: taxable (P-028) — adding the date and approving v2 changes tax timing; v1 is never changed', async () => {
+    const pg = await createTestDb(), db = supabaseLike(pg)
+    await applyP022Migration(pg)
+    const mk = async label => (await pg.query("insert into versions (label, status) values ($1, 'draft') returning *", [label])).rows[0]
+    const approve = async (v, a) => savePPPApproval(db, { output: runPPPEngine(a), assumptions: a, engineVersion: PPP_ENGINE_VERSION,
+      versionId: v.version_id, projectId: null, tenantId: null, userId: null, approvedLabel: v.label.replace('Draft', 'Approved') })
+    const stored = async v => clean((await db.from('model_outputs').select('*').eq('version_id', v.version_id).limit(1)).data[0])
+    const live0 = rows(BASE), live1 = [...live0, { name: PPP_START_DATE, value: null, unit: '2026-07-01', category: 'ppp_structure' }]
+    const v1 = await mk('v1.0 Draft'); await approve(v1, live0)
+    const v1Before = await stored(v1)
+    const v2 = await mk('v2.0 Draft'); await approve(v2, live1)
+    const v2Row = await stored(v2)
+    expect(v1Before.result_payload.tax_assumptions.tax_year_basis).toBe('cod_anniversary_fallback')
+    expect(v2Row.result_payload.tax_assumptions.tax_year_basis).toBe('calendar')
+    expect(exactDiff(v1Before.result_payload, v2Row.result_payload).differences.length).toBeGreaterThan(0)
+    expect(resolvePPPFpaBasis(v2Row, live1).status).toBe('ok')
+    expect(exactDiff(v1Before, await stored(v1)).differences).toEqual([])   // v1 untouched
     await pg.close()
   })
 

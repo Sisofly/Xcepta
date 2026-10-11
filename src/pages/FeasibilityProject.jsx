@@ -11,6 +11,7 @@ import {
 import { buildDebtScheduleRows } from '../modules/feasibility/debtSchedule'
 import PPPMessages from '../modules/feasibility/PPPMessages'
 import PPPResultProvenance from '../modules/feasibility/PPPResultProvenance'
+import PPPTaxSchedule from '../modules/feasibility/PPPTaxSchedule'
 import { savePPPApproval, loadLatestModelOutput } from '../modules/feasibility/pppResultStore'
 import { pppResultBasis, isUnsupportedProjectFinance } from '../modules/feasibility/pppReporting'
 import { PPP_START_DATE, PPP_START_DATE_LABEL, pppStartDateOf, derivePPPOperationsStart } from '../modules/feasibility/pppTimeline'
@@ -28,6 +29,9 @@ const DROPDOWN_OPTIONS = {
   'Model Periodicity': ['Annual', 'Quarterly'],
   'Revenue Basis': ['Contractual', 'Demand Estimate'],
   'Repayment Profile': ['Sculpted', 'Annuity', 'Equal Principal'],
+  // P-028 tax (modelling assumptions)
+  'Tax Depreciation': ['Straight-line', 'None'],
+  'Terminal Tax Write-off': ['No', 'Yes'],
 }
 const DATE_FIELDS = ['Construction Start Date', 'Operations Start Date']
 // Free-text list inputs (stored in `unit`), e.g. "10, 20, 30"
@@ -86,6 +90,16 @@ const PPP_DISPLAY_LABELS = {
   'Target DSCR':                       'Target DSCR (debt sculpting / sizing)',
   'Lender Minimum DSCR':               'Lender Minimum DSCR (underwriting acceptance threshold)',
   'Construction Start Date':           'Construction Start / Financial Close Date',
+  // P-028 tax inputs — modelling assumptions, not confirmed Jordanian tax treatment
+  'Tax Rate':                          'Tax Rate (combined: income tax + national contribution, %)',
+  'Tax Depreciation':                  'Tax Depreciation Method (Straight-line, or None = earlier method)',
+  'Tax Depreciation Life (years)':     'Tax Depreciation Life (years, preliminary — depends on asset classification)',
+  'Depreciable Share %':               'Depreciable Share of TPC + IDC (%, exclude land / non-depreciable cost)',
+  'Eligible IDC %':                    'Eligible Capitalised IDC for Depreciation (%)',
+  'Tax Loss Carry-Forward (years)':    'Tax Loss Carry-Forward (years; model clock, see disclosure)',
+  'Terminal Tax Write-off':            'Terminal Tax Write-off at Hand-back (only if supported)',
+  'Tax Year End Month':                'Tax Year End Month (1–12)',
+  'Tax Payment Lag (months)':          'Tax Payment Lag (months after tax-year end)',
 }
 
 // P-016 / Phase 3 optional PPP inputs. Existing projects do not have these
@@ -103,6 +117,16 @@ const PPP_OPTIONAL_INPUTS = [
   { name: 'Revenue Profile',                   category: 'ppp_revenue',   unit: '' },
   { name: 'Revenue Basis',                     category: 'ppp_revenue',   unit: 'Contractual' },
   { name: 'Quarterly Revenue Weights',         category: 'ppp_revenue',   unit: '' },
+  // P-028 tax inputs: each row is added with the value the engine already
+  // assumes when the row is absent, so adding it does not change results.
+  { name: 'Tax Depreciation',                  category: 'ppp_financing', unit: 'Straight-line' },
+  { name: 'Tax Depreciation Life (years)',     category: 'ppp_financing', unit: 'years', valueFrom: 'Concession Period' },
+  { name: 'Depreciable Share %',               category: 'ppp_financing', unit: 'percent', value: 100 },
+  { name: 'Eligible IDC %',                    category: 'ppp_financing', unit: 'percent', value: 100 },
+  { name: 'Tax Loss Carry-Forward (years)',    category: 'ppp_financing', unit: 'years', value: 5 },
+  { name: 'Terminal Tax Write-off',            category: 'ppp_financing', unit: 'No' },
+  { name: 'Tax Year End Month',                category: 'ppp_financing', unit: 'month', value: 12 },
+  { name: 'Tax Payment Lag (months)',          category: 'ppp_financing', unit: 'months', value: 4 },
 ]
 
 function fmtPPPAssumptionValue(a) {
@@ -292,6 +316,7 @@ export default function FeasibilityProject() {
     const { data: { user } } = await supabase.auth.getUser()
     let value = def.value === undefined ? null : def.value
     if (def.valueFrom === 'Interest Rate') value = pppVal(assumptions, 'Interest Rate') ?? 7
+    if (def.valueFrom === 'Concession Period') value = pppVal(assumptions, 'Concession Period') ?? 25
     if (def.valueFrom === 'fixedOpexEquivalent') {
       const ap = pppVal(assumptions, 'Annual Availability Payment') || 0
       const pct = pppVal(assumptions, 'OPEX % of Revenue') ?? 5
@@ -1227,6 +1252,12 @@ export default function FeasibilityProject() {
         ...(pppAP && modelOutput && modelOutput._persistence ? [
           { label: 'Result basis', color: [92, 127, 146],
             value: pppResultBasis(modelOutput, { engineVersion: PPP_ENGINE_VERSION, compatibleVersions: PPP_ENGINE_COMPATIBLE_VERSIONS }) },
+          // P-028: tax basis of the result — modelling assumptions, not confirmed tax treatment
+          ...(modelOutput.tax_assumptions ? [
+            { label: 'Tax basis (assumptions, unconfirmed)', color: [92, 127, 146],
+              value: (modelOutput.tax_assumptions.tax_rate * 100).toFixed(1) + '% combined; SL ' + modelOutput.tax_assumptions.depreciation_life_years +
+                ' yrs; losses ' + modelOutput.tax_assumptions.loss_carry_forward_years + ' yrs; paid +' + modelOutput.tax_assumptions.payment_lag_months + ' mo' },
+          ] : []),
           ...(modelOutput.debt_sizing && modelOutput.debt_sizing.underwriting_dscr !== undefined ? [
             { label: 'Underwriting DSCR minimum / met', color: modelOutput.debt_sizing.meets_underwriting ? [21, 128, 61] : [185, 28, 28],
               value: Number(modelOutput.debt_sizing.underwriting_dscr).toFixed(2) + 'x / ' + (modelOutput.debt_sizing.meets_underwriting ? 'Yes' : 'No') },
@@ -2128,7 +2159,7 @@ export default function FeasibilityProject() {
                     : 'Enter Construction Period and Operations / Revenue Period above to see the full timeline.'
                   }
                 </p>
-                {/* Calendar placement for FP&A (pppTimeline.js). The date does not change any result. */}
+                {/* Calendar placement for FP&A (pppTimeline.js); for taxable projects also the tax years (P-028). */}
                 {(() => {
                   const startDate = pppStartDateOf(assumptions)
                   const hasRow = assumptions.some(a => a.name === PPP_START_DATE)
@@ -2138,7 +2169,8 @@ export default function FeasibilityProject() {
                       <div style={{marginTop:'0.75rem',padding:'0.6rem 0.8rem',border:`1px solid ${colors.warning}`,borderRadius:'6px',
                         background:colors.warningSoft,fontSize:'0.75rem',color:colors.warning,lineHeight:1.5}}>
                         Required for FP&amp;A: {PPP_START_DATE_LABEL}. It places the model years on the calendar for monthly budgets;
-                        it does not change any financial result. {hasRow ? 'Enter the date in Project Structure above.' : ''}
+                        for tax-exempt projects it does not change any financial result; for taxable projects it also sets the
+                        tax-year boundaries. {hasRow ? 'Enter the date in Project Structure above.' : ''}
                         {!hasRow && (
                           <button onClick={() => handleAddPPPInput({ name: PPP_START_DATE, category: 'ppp_structure', unit: null })}
                             style={{marginLeft:'0.5rem',padding:'0.2rem 0.7rem',background:'none',border:`1px solid ${colors.warning}`,
@@ -2173,8 +2205,9 @@ export default function FeasibilityProject() {
                   Optional PPP inputs
                 </h3>
                 <p style={{fontSize:'0.75rem',color:colors.textMuted,marginBottom:'0.75rem',lineHeight:1.5}}>
-                  Quarterly calculation, escalation, revenue/demand profiles, construction timing and repayment profile.
-                  Each input is added with a neutral default, so results do not change until you edit its value.
+                  Quarterly calculation, escalation, revenue/demand profiles, construction timing, repayment profile and tax
+                  assumptions. Each input is added with the value already assumed, so results do not change until you edit it.
+                  Tax inputs are modelling assumptions, not confirmed Jordanian tax treatment — confirm them with a tax adviser.
                 </p>
                 <div style={{display:'flex',flexWrap:'wrap',gap:'0.5rem'}}>
                   {missing.map(d => (
@@ -3273,6 +3306,9 @@ export default function FeasibilityProject() {
                       </button>
                     )}
                   </div>
+
+                  {/* P-028 tax schedule (taxable results with tax depreciation) */}
+                  {pppAP && <PPPTaxSchedule modelOutput={modelOutput} />}
 
                   {/* Debt Schedule — PPP only (P-010 / P-015D). Built by
                        buildDebtScheduleRows() from the persisted engine

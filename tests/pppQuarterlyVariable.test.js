@@ -15,6 +15,11 @@ const BASE = {
 }
 const Q = { 'Model Periodicity': 'Quarterly' }
 const run = o => runPPPEngine(A({ ...BASE, ...o }))
+// P-028: tests marked LEGACY_TAX verify the 2.0.0 tax method (tax on EBITDA −
+// interest, no depreciation or loss relief), now selected explicitly with Tax
+// Depreciation = None. Their assertions and expected values are unchanged; the
+// default P-028 method is covered independently in tests/pppTax.test.js.
+const LEGACY_TAX = { 'Tax Depreciation': 'None' }
 const sum = (rows, k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0)
 const tolN = n => Math.max(1, 0.01 * n)
 const codeOf = fn => { try { fn(); return null } catch (e) { return e.code } }
@@ -101,6 +106,9 @@ describe.each(Object.entries(QFIX))('P-016 quarterly identities — %s', (_l, fx
   })
 
   test('Q3: debt roll-forward, COD handoff, quarterly interest on opening balance, full repayment', () => {
+    const out = runPPPEngine(A({ ...fx, ...LEGACY_TAX }))
+    const P = out.cash_flows_periodic, S = out.debt_schedule_periodic
+    const C = P.filter(r => r.phase === 'Construction'), O = P.filter(r => r.phase === 'Operations')
     S.forEach((s, i) => {
       expect(Math.abs(s.closing - (s.opening + s.draw + s.idc - s.principal))).toBeLessThanOrEqual(1)
       if (i > 0) expect(Math.abs(s.opening - S[i - 1].closing)).toBeLessThanOrEqual(1)
@@ -181,7 +189,7 @@ describe('P-016 — annual vs quarterly consistency', () => {
   })
 
   test('X5: seasonal weights keep annual revenue at the contractual AP and size debt per quarter', () => {
-    const q = run({ ...Q, 'Quarterly Revenue Weights': '40,20,20,20' })
+    const q = run({ ...Q, 'Quarterly Revenue Weights': '40,20,20,20', ...LEGACY_TAX })
     q.cash_flows.filter(r => r.phase === 'Operations').forEach(r => expect(r.revenue).toBeCloseTo(12_000_000, 0))
     const o = q.cash_flows_periodic.filter(r => r.phase === 'Operations')
     expect(o[0].revenue).toBeCloseTo(4_800_000, 0)
@@ -334,7 +342,7 @@ describe('Phase 3 — variable CFADS structures', () => {
     let ran = 0
     for (let i = 0; i < 150; i++) {
       const conc = pick([10, 15, 20]), quarterly = rnd() < 0.5
-      const fx = { ...BASE, 'Concession Period': conc, 'Loan Tenor': Math.min(pick([8, 10, 12]), conc), 'Grace Period': pick([0, 1, 2]),
+      const fx = { ...BASE, ...LEGACY_TAX, 'Concession Period': conc, 'Loan Tenor': Math.min(pick([8, 10, 12]), conc), 'Grace Period': pick([0, 1, 2]),
         'Availability Payment Escalation %': +(rnd() * 6 - 2).toFixed(2), 'Interest Rate': +(3 + rnd() * 8).toFixed(2),
         'Target DSCR': pick([1.1, 1.2, 1.35]), 'Repayment Profile': pick(['Sculpted', 'Annuity', 'Equal Principal']),
         'Construction Period': pick([12, 24, 30, 36]) }
@@ -364,7 +372,7 @@ describe('Phase 4 — project IRR', () => {
   }
   test.each([['annual', {}], ['quarterly', Q], ['quarterly escalating', { ...Q, 'Availability Payment Escalation %': 2 }]])(
     'PI1: %s — matches an independent IRR on (−capex, EBITDA − tax on EBITDA)', (_l, o) => {
-      const out = run(o), p = out.periods_per_year
+      const out = run({ ...o, ...LEGACY_TAX }), p = out.periods_per_year
       const rows = out.cash_flows_periodic || out.cash_flows
       const cfs = rows.map(r => r.phase === 'Construction' ? -r.capex : r.ebitda - Math.max(0, r.ebitda * 0.2))
       expect(Math.abs(out.project_irr - irrBisect(cfs, p))).toBeLessThanOrEqual(0.011)

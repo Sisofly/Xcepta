@@ -205,8 +205,10 @@ describe('P-018 — quarterly covenant-frequency gate', () => {
 })
 
 describe('Scope disclosure — tax depreciation not modelled', () => {
+  // P-028: the 'not modelled' disclosure now belongs to the 2.0.0 tax method
+  // (Tax Depreciation = None); assertions unchanged. P-028 disclosures: tests/pppTax.test.js.
   test('S1: every taxable result carries the disclosure; a zero-tax result does not', () => {
-    const w = run({}).warnings.find(x => x.code === 'TAX_DEPRECIATION_NOT_MODELLED')
+    const w = run({ 'Tax Depreciation': 'None' }).warnings.find(x => x.code === 'TAX_DEPRECIATION_NOT_MODELLED')
     expect(w.severity).toBe('warning')
     expect(w.message).toMatch(/understated \(conservative\)/)
     expect(run({ 'Tax Rate': 0 }).warnings.map(x => x.code)).not.toContain('TAX_DEPRECIATION_NOT_MODELLED')

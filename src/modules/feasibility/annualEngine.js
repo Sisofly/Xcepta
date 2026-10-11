@@ -27,6 +27,7 @@
  * ---------------------------------------------------------------------------
  * @module annualEngine
  */
+import { buildTaxCalendar, createTaxState, parseStartDate } from './pppTax.js'
 
 function getVal(assumptions, name) {
   var a = assumptions.find(function(a) { return a.name === name })
@@ -469,6 +470,81 @@ function solveSupportableDebtGeneric(ebitda, taxRate, target, rate, gracePeriods
   return lo
 }
 
+// ── P-028: DSCR-constrained debt capacity with the full tax state ──────────
+// Same feasibility rules as debtFeasible(), but CFADS_t = EBITDA_t − cash tax
+// paid in period t from a fresh pppTax state (depreciation, loss pool, tax
+// years, payment lag). Tax paid in t depends only on periods ≤ t, so each
+// trial is a forward simulation — no circular reference.
+function debtFeasibleTax(D, ebitda, makeTax, target, rate, gracePeriods, repayPeriods, profile) {
+  var tax = makeTax()
+  var bal = D, level = 0, eqPrin = 0
+  for (var t = 0; t < gracePeriods + repayPeriods; t++) {
+    if (bal <= 1e-9) return true
+    if (t >= ebitda.length) return false        // no operating period left to repay from
+    var interest = bal * rate
+    var cfads    = ebitda[t] - tax.step(t, ebitda[t], interest)
+    var allowed  = cfads / target
+    var tol      = 1e-9 * Math.max(1, Math.abs(allowed))
+    if (t < gracePeriods) {
+      if (interest > allowed + tol) return false
+      continue
+    }
+    if (t === gracePeriods) {
+      level  = annuity(bal, rate, repayPeriods)
+      eqPrin = bal / repayPeriods
+    }
+    var principal
+    if (profile === 'annuity') {
+      if (level > allowed + tol) return false
+      principal = level - interest
+    } else if (profile === 'equal_principal') {
+      if (interest + eqPrin > allowed + tol) return false
+      principal = eqPrin
+    } else {
+      principal = allowed - interest
+      if (principal < -tol) return false
+    }
+    bal -= Math.min(Math.max(0, principal), bal)
+  }
+  return bal <= 0.005
+}
+
+// The search range [0, 1 + Σ EBITDA / target] is a valid upper bound because
+// cash tax is never negative (no refunds), so CFADS ≤ EBITDA in every period.
+// Largest feasible debt by bisection, then VALIDATED across the debt range
+// rather than assuming monotone feasibility: the solution must be feasible,
+// D + δ infeasible, and no scanned debt above D feasible. Otherwise the
+// maximum is not established and the engine refuses to return a result.
+var TAX_DEBT_SCAN_POINTS = 64
+function solveSupportableDebtTax(ebitda, makeTax, target, rate, gracePeriods, repayPeriods, profile) {
+  if (repayPeriods <= 0 || target <= 0) return { debt: 0, scan_points: 0 }
+  var feas = function(D) { return debtFeasibleTax(D, ebitda, makeTax, target, rate, gracePeriods, repayPeriods, profile) }
+  var hi = 1
+  for (var t = 0; t < gracePeriods + repayPeriods; t++) hi += Math.max(0, ebitda[t]) / target
+  var lo = 0
+  if (feas(0.01)) {
+    var h = hi
+    for (var i = 0; i < 200 && h - lo > 0.005; i++) {
+      var mid = (lo + h) / 2
+      if (feas(mid)) lo = mid
+      else h = mid
+    }
+  }
+  var D = lo, delta = Math.max(1, D * 1e-6), problems = []
+  if (D > 0 && !feas(D)) problems.push('the bisection result is not feasible')
+  if (feas(D + delta)) problems.push('a larger debt (' + r2(D + delta) + ') is also feasible')
+  for (var s = 1; s <= TAX_DEBT_SCAN_POINTS && !problems.length; s++) {
+    var x = hi * s / TAX_DEBT_SCAN_POINTS
+    if (x > D + delta && feas(x)) problems.push('debt of ' + r2(x) + ' above the solution is feasible (non-monotone feasibility)')
+  }
+  if (problems.length) {
+    throw pppInputError('DEBT_SIZING_UNRESOLVED',
+      'a valid maximum debt could not be established with the tax calculation: ' + problems.join('; ') + '. Results withheld.',
+      { problems: problems })
+  }
+  return { debt: D, scan_points: TAX_DEBT_SCAN_POINTS, upper_bound: hi }
+}
+
 // ── Construction funding with IDC (P-015A + P-015C) ────────────────────────
 // Simulates the equity-first construction waterfall for a given total of
 // PRINCIPAL debt draws and returns the per-year funding rows plus the
@@ -599,6 +675,28 @@ function readPPPInputs(assumptions) {
   inp.quarterWeights  = parseNumberList(pppText(assumptions, 'Quarterly Revenue Weights'))
   var rp = (pppText(assumptions, 'Repayment Profile') || 'Sculpted').toLowerCase().replace(/\s+/g, '_')
   inp.repaymentProfile = rp
+
+  // ── P-028 tax inputs (pppTax.js). Modelling assumptions, not confirmed
+  // Jordanian tax treatment. Defaults apply when a row is absent.
+  inp.taxMethodRaw     = (pppText(assumptions, 'Tax Depreciation') || 'Straight-line').toLowerCase()
+  inp.taxMethod        = inp.taxMethodRaw === 'straight-line' || inp.taxMethodRaw === 'straight line' ? 'straight_line'
+    : inp.taxMethodRaw === 'none' ? 'none' : null
+  inp.taxLifeYrs       = safeNum(pppVal(assumptions, 'Tax Depreciation Life (years)'), inp.concessionYrs)
+  inp.taxLifeGiven     = pppVal(assumptions, 'Tax Depreciation Life (years)') !== null
+  inp.depShare         = safePct(pppVal(assumptions, 'Depreciable Share %'), 100)
+  inp.depShareGiven    = pppVal(assumptions, 'Depreciable Share %') !== null
+  inp.idcEligibleShare = safePct(pppVal(assumptions, 'Eligible IDC %'), 100)
+  var cfText = pppText(assumptions, 'Tax Loss Carry-Forward (years)')
+  inp.lossCarryYrs     = cfText && cfText.toLowerCase() === 'unlimited' ? Infinity
+    : safeNum(pppVal(assumptions, 'Tax Loss Carry-Forward (years)'), 5)
+  inp.taxWriteOffRaw   = (pppText(assumptions, 'Terminal Tax Write-off') || 'No').toLowerCase()
+  inp.taxYearEndMonth  = safeNum(pppVal(assumptions, 'Tax Year End Month'), 12)
+  inp.taxLagMonths     = safeNum(pppVal(assumptions, 'Tax Payment Lag (months)'), 4)
+  inp.startDateRaw     = pppText(assumptions, 'Construction Start Date')
+  inp.startDate        = inp.startDateRaw ? parseStartDate(inp.startDateRaw) : null
+  // P-028 applies to taxable projects using straight-line depreciation.
+  // Tax Rate 0% (exempt) and method 'None' run the unchanged 2.0.0 tax path.
+  inp.taxP028 = inp.taxRate > 0 && inp.taxMethod === 'straight_line'
   return inp
 }
 
@@ -689,6 +787,44 @@ function validatePPPInputs(inp) {
   if (['sculpted', 'annuity', 'equal_principal'].indexOf(inp.repaymentProfile) < 0) {
     throw pppInputError('REPAYMENT_PROFILE_INVALID',
       'Repayment Profile must be Sculpted, Annuity or Equal Principal; received "' + inp.repaymentProfile + '".')
+  }
+  // ── P-028 tax inputs ──
+  if (inp.taxMethod === null) {
+    throw pppInputError('TAX_METHOD_INVALID',
+      'Tax Depreciation must be Straight-line or None; received "' + inp.taxMethodRaw + '".')
+  }
+  if (inp.taxP028) {
+    if (!(Number.isFinite(inp.taxLifeYrs) && inp.taxLifeYrs > 0)) {
+      throw pppInputError('TAX_DEPRECIATION_LIFE_INVALID',
+        'Tax Depreciation Life must be a positive number of years; received ' + inp.taxLifeYrs + '.', { value: inp.taxLifeYrs })
+    }
+    ;[['DEPRECIABLE_SHARE_INVALID', 'Depreciable Share %', inp.depShare],
+      ['IDC_ELIGIBLE_SHARE_INVALID', 'Eligible IDC %', inp.idcEligibleShare]].forEach(function(c) {
+      if (!(c[2] >= 0 && c[2] <= 1)) {
+        throw pppInputError(c[0], c[1] + ' must be between 0% and 100%; received ' + r2(c[2] * 100) + '%.', { value: c[2] * 100 })
+      }
+    })
+    if (!(inp.lossCarryYrs === Infinity || (Number.isInteger(inp.lossCarryYrs) && inp.lossCarryYrs >= 0))) {
+      throw pppInputError('LOSS_CARRY_FORWARD_INVALID',
+        'Tax Loss Carry-Forward must be a whole number of years ≥ 0 (or Unlimited); received ' + inp.lossCarryYrs + '.', { value: inp.lossCarryYrs })
+    }
+    if (inp.taxWriteOffRaw !== 'yes' && inp.taxWriteOffRaw !== 'no') {
+      throw pppInputError('TAX_WRITE_OFF_INVALID',
+        'Terminal Tax Write-off must be Yes or No; received "' + inp.taxWriteOffRaw + '".')
+    }
+    if (!(Number.isInteger(inp.taxYearEndMonth) && inp.taxYearEndMonth >= 1 && inp.taxYearEndMonth <= 12)) {
+      throw pppInputError('TAX_YEAR_END_INVALID',
+        'Tax Year End Month must be a whole month 1–12; received ' + inp.taxYearEndMonth + '.', { value: inp.taxYearEndMonth })
+    }
+    if (!(Number.isInteger(inp.taxLagMonths) && inp.taxLagMonths >= 0 && inp.taxLagMonths <= 24)) {
+      throw pppInputError('TAX_PAYMENT_LAG_INVALID',
+        'Tax Payment Lag must be a whole number of months 0–24; received ' + inp.taxLagMonths + '.', { value: inp.taxLagMonths })
+    }
+    if (inp.startDateRaw && !inp.startDate) {
+      throw pppInputError('CONSTRUCTION_START_DATE_INVALID',
+        'Construction Start Date must be a valid date (YYYY-MM-DD); it sets the tax-year boundaries. Received "' +
+        inp.startDateRaw + '".')
+    }
   }
   if (['contractual', 'demand estimate'].indexOf(String(inp.revenueBasis).toLowerCase()) < 0) {
     throw pppInputError('REVENUE_BASIS_INVALID',
@@ -816,6 +952,50 @@ function checkPPPIntegrity(result, inp) {
   }
 }
 
+// ── P-028: tax reconciliation gate ─────────────────────────────────────────
+// Every identity must hold or the result is withheld:
+//   Σ cash tax paid = Σ tax-year tax expense = Σ period tax expense
+//   loss pool: closing = opening − expired − used + arising (each tax year)
+//   Σ depreciation ≤ basis (levered and unlevered)
+//   per operating period: equity CF = (EBITDA − tax paid) − (interest + principal)
+function checkPPPTaxIntegrity(rowsP, nC, lev, unlev) {
+  var failures = []
+  var sum = function(a, f) { return a.reduce(function(s, x) { return s + f(x) }, 0) }
+  ;[['levered', lev], ['unlevered', unlev]].forEach(function(pair) {
+    var name = pair[0], res = pair[1]
+    var exp  = sum(res.schedule, function(s) { return s.tax_expense })
+    var paid = sum(res.periods, function(x) { return x.taxPaid })
+    if (Math.abs(paid - exp) > 0.01) failures.push(name + ' tax paid ≠ tax expense by ' + r2(paid - exp))
+    if (name === 'levered') {
+      var alloc = sum(res.periods, function(x) { return x.taxExpense })
+      if (Math.abs(alloc - exp) > 0.01) failures.push('period tax expense ≠ tax-year expense by ' + r2(alloc - exp))
+    }
+    res.schedule.forEach(function(s) {
+      var r = s._raw
+      var gap = r.closing - (r.opening - r.expired - r.used + r.arising)
+      if (Math.abs(gap) > 1e-6 * Math.max(1, r.opening + r.arising)) failures.push(name + ' loss pool breaks in ' + s.tax_year)
+    })
+    if (res.total_depreciation > res.basis + 1e-6) failures.push(name + ' depreciation exceeds basis')
+  })
+  var maxEq = 0
+  rowsP.forEach(function(r, i) {
+    if (i < nC) return
+    var gap = Math.abs(r.equity_cf - ((r.ebitda - r.tax) - (r.interest + r.principal)))
+    maxEq = Math.max(maxEq, gap)
+  })
+  if (maxEq > 0.02) failures.push('equity cash flow ≠ CFADS − debt service by ' + r2(maxEq))
+  if (failures.length) {
+    throw pppInputError('OUTPUT_RECONCILIATION_FAILED',
+      'the tax schedules do not reconcile: ' + failures.join('; ') + '. Results withheld.', { failures: failures })
+  }
+  return {
+    passed: true,
+    tax_paid: r2(sum(lev.periods, function(x) { return x.taxPaid })),
+    tax_expense: r2(sum(lev.schedule, function(s) { return s.tax_expense })),
+    max_equity_identity_gap: r2(maxEq),
+  }
+}
+
 // ── P-023: reasonableness warnings ─────────────────────────────────────────
 // Invariant-ratio checks that hold across sectors and deal sizes. They flag
 // results that are possible but economically suspicious (typically an input
@@ -842,11 +1022,68 @@ function computePPPWarnings(result, inp) {
   // For taxable projects this overstates tax, so CFADS, debt capacity and
   // equity returns are understated (conservative) — material in magnitude
   // (e.g. +1.3pp to +6.3pp equity IRR on tested cases). Always disclosed.
-  if (inp.taxRate > 0 && ops.some(function(r) { return r.tax > 0 })) {
+  if (!inp.taxP028 && inp.taxRate > 0 && ops.some(function(r) { return r.tax > 0 })) {
     add('TAX_DEPRECIATION_NOT_MODELLED', 'warning',
       'Tax is charged on EBITDA less interest with no tax depreciation of the project cost and no loss carry-forward. ' +
       'Tax is therefore overstated: CFADS, debt capacity and equity returns are understated (conservative) for this taxable project.',
       inp.taxRate * 100)
+  }
+  // P-028 disclosures: tax inputs are modelling assumptions, not confirmed
+  // Jordanian tax treatment.
+  if (inp.taxP028) {
+    var ta = result.tax_assumptions
+    var pct = function(x) { return r2(x * 100) + '%' }
+    add('TAX_ASSUMPTIONS_UNCONFIRMED', 'warning',
+      'Tax depreciation, loss carry-forward, tax years and payment timing are modelling assumptions, not confirmed Jordanian ' +
+      'tax treatment. Confirm the asset classification, allowable depreciation period, loss rules, tax rate and payment dates ' +
+      'with a tax adviser before relying on these results.', null)
+    add('TAX_RATE_ASSUMED', 'info',
+      'Tax Rate ' + pct(inp.taxRate) + ' is applied as the combined tax burden (income tax + national contribution). Confirm ' +
+      'the sector classification (for example 20% + 1% for general companies, 24% + 3% for electricity).', inp.taxRate * 100)
+    add('TAX_DEPRECIATION_LIFE_PRELIMINARY', 'info',
+      'Tax depreciation: straight-line over ' + inp.taxLifeYrs + ' years from COD' + (ta.life_is_default ? ' (default: the concession period)' : '') +
+      '. This is a preliminary assumption — the legally allowable period depends on asset classification and the applicable tax treatment.',
+      inp.taxLifeYrs)
+    if (!inp.depShareGiven) {
+      add('TAX_BASIS_SHARE_ASSUMED', 'warning',
+        'Depreciable share not entered: 100% of Total Project Cost plus eligible IDC is assumed to be depreciable. Reduce it to ' +
+        'exclude land and any other non-depreciable costs.', 100)
+    }
+    if (inp.lossCarryYrs !== Infinity) {
+      add('TAX_LOSS_CLOCK_SIMPLIFIED', 'info',
+        'Tax losses may be used for ' + inp.lossCarryYrs + ' tax years after the year they arise (a partial first year counts as a full ' +
+        'year), then expire. Jordanian rules count the period from when losses are final and audited, which is usually later, so ' +
+        'the modelled expiry is earlier (conservative).', inp.lossCarryYrs)
+    }
+    if (ta.losses_expired > 0.005) {
+      add('TAX_LOSSES_EXPIRED', 'warning', 'Tax losses of ' + fmt(ta.losses_expired) + ' expire unused under the carry-forward limit.', ta.losses_expired)
+    }
+    if (ta.losses_unused_at_end > 0.005) {
+      add('TAX_LOSSES_UNUSED_AT_END', 'info', 'Tax losses of ' + fmt(ta.losses_unused_at_end) + ' remain unused at the end of the concession (no refund is modelled).', ta.losses_unused_at_end)
+    }
+    if (ta.undepreciated_at_end > 0.005 && !ta.terminal_write_off) {
+      add('TAX_UNDEPRECIATED_AT_HANDBACK', 'info',
+        'Tax depreciation life extends beyond the concession: ' + fmt(ta.undepreciated_at_end) + ' of the depreciation basis is not ' +
+        'deducted (no terminal write-off is assumed).', ta.undepreciated_at_end)
+    }
+    if (ta.terminal_write_off) {
+      add('TAX_WRITE_OFF_SELECTED', 'warning',
+        'A terminal tax write-off of the undepreciated basis is deducted in the final tax year. Use only where supported by the ' +
+        "project's tax position.", ta.undepreciated_at_end)
+    }
+    if (ta.tax_year_basis !== 'calendar') {
+      add('TAX_YEAR_FALLBACK', 'warning',
+        'No Construction Start Date: tax years are assumed to run in 12-month years from COD. Enter the date to use actual tax-year ' +
+        'boundaries (Tax Year End Month).', null)
+    }
+    if (ta.payment_accelerated) {
+      add('TAX_PAYMENT_AFTER_CONCESSION', 'info',
+        'Tax due after the concession ends is paid in the final operating period (conservative).', null)
+    }
+    add('TAX_EXPENSE_ALLOCATION_ESTIMATE', 'info',
+      'Period tax expense and net income allocate each tax year’s tax to model periods in proportion to taxable income' +
+      (inp.periodsPerYear > 1 ? ' (quarterly allocation)' : '') + ' — a modelling estimate, not an accounting-standard tax provision. ' +
+      'Cash tax paid (used in CFADS) follows the tax-year payment dates.', null)
   }
   if (result.revenue_basis === 'demand_estimate') {
     add('DEMAND_REVENUE_ESTIMATE', 'info',
@@ -1033,7 +1270,61 @@ function runPPPEngine(assumptions) {
   var sizingEbitda = loanEbitda.length ? loanEbitda[0] : 0
   var sizingMethod
   var supportableDebt
-  if (targetDSCR <= 0) {
+  // ── Construction capex by period (input-only; computed before sizing) ──
+  var capexByPeriod = []
+  var cw = inp.constrProfile ? normaliseWeights(inp.constrProfile) : null
+  for (var c = 0; c < nC; c++) capexByPeriod.push(cw ? tpc * cw[c] : tpc / nC)
+  var principalDrawn, construction
+
+  // ── P-028 tax set-up (taxable, straight-line): tax calendar and the
+  // depreciation bases. Levered basis = share × (TPC + eligible × IDC);
+  // unlevered (Project IRR) basis = share × TPC.
+  var taxCal = null, taxSizing = null
+  function taxOpts(basis) {
+    return { rate: taxRate, basis: basis, lifeYears: inp.taxLifeYrs, carryForwardYears: inp.lossCarryYrs,
+             writeOff: inp.taxWriteOffRaw === 'yes' }
+  }
+  function leveredBasis(idc) { return inp.depShare * (tpc + inp.idcEligibleShare * idc) }
+  if (inp.taxP028) {
+    taxCal = buildTaxCalendar({
+      nO: nO, monthsPerPeriod: 12 / p,
+      codMonthIdx: inp.startDate ? inp.startDate.year * 12 + inp.startDate.month - 1 + nC * (12 / p) : null,
+      yearEndMonth: inp.taxYearEndMonth, lagMonths: inp.taxLagMonths,
+    })
+  }
+
+  if (inp.taxP028) {
+    // Debt capacity depends on depreciation, whose basis includes IDC, which
+    // depends on the debt drawn. Solved as a fixed point on IDC (not a
+    // spreadsheet circular reference): size → fund construction → new IDC,
+    // until IDC changes by < 0.01. Not converging is a blocking error.
+    var idcK = 0, converged = false, sized = null, basisK = 0, it
+    for (it = 1; it <= 50; it++) {
+      basisK = leveredBasis(idcK)
+      if (debtPct <= 0) {
+        sized = { debt: 0, scan_points: 0 }; sizingMethod = 'none'      // no debt requested: nothing to size
+      } else if (targetDSCR <= 0) {
+        sized = { debt: Infinity, scan_points: 0 }; sizingMethod = 'none'
+      } else if (repayPeriods <= 0 || !loanEbitda.some(function(e) { return e > 0 })) {
+        sized = { debt: 0, scan_points: 0 }; sizingMethod = 'none'
+      } else {
+        var bK = basisK
+        sized = solveSupportableDebtTax(loanEbitda, function() { return createTaxState(taxCal, taxOpts(bK)) },
+          targetDSCR, rateP, gracePeriods, repayPeriods, profile)
+        sizingMethod = 'per_period_' + profile + '_tax'
+      }
+      principalDrawn = solveConstructionDebt(capexByPeriod, tpc, constrRateP, debtPct, sized.debt)
+      construction   = simulateConstructionFunding(capexByPeriod, tpc, principalDrawn, constrRateP)
+      if (Math.abs(construction.idcTotal - idcK) < 0.01) { converged = true; break }
+      idcK = construction.idcTotal
+    }
+    if (!converged) {
+      throw pppInputError('TAX_SIZING_NOT_CONVERGED',
+        'debt sizing with the tax calculation did not converge on IDC within 50 iterations. Results withheld.')
+    }
+    supportableDebt = sized.debt
+    taxSizing = { iterations: it, converged: true, scan_points: sized.scan_points, basis_used: r2(basisK) }
+  } else if (targetDSCR <= 0) {
     // F03-style "no DSCR constraint" → DSCR capacity is unbounded; Debt %
     // (applied to TPC + IDC inside the solver) is the only debt cap.
     supportableDebt = Infinity
@@ -1052,15 +1343,13 @@ function runPPPEngine(assumptions) {
     sizingMethod = 'per_period_' + profile
   }
 
-  // ── Construction capex by period ──
-  var capexByPeriod = []
-  var cw = inp.constrProfile ? normaliseWeights(inp.constrProfile) : null
-  for (var c = 0; c < nC; c++) capexByPeriod.push(cw ? tpc * cw[c] : tpc / nC)
-
   // P-015C: solve principal draws so that COD balance (principal + IDC)
-  // respects DSCR capacity, gearing on total funding, and TPC.
-  var principalDrawn = solveConstructionDebt(capexByPeriod, tpc, constrRateP, debtPct, supportableDebt)
-  var construction   = simulateConstructionFunding(capexByPeriod, tpc, principalDrawn, constrRateP)
+  // respects DSCR capacity, gearing on total funding, and TPC. (P-028 has
+  // already done this inside its IDC fixed point.)
+  if (!inp.taxP028) {
+    principalDrawn = solveConstructionDebt(capexByPeriod, tpc, constrRateP, debtPct, supportableDebt)
+    construction   = simulateConstructionFunding(capexByPeriod, tpc, principalDrawn, constrRateP)
+  }
   var idcTotal       = construction.idcTotal
   var totalFunding   = tpc + idcTotal                     // total uses (Convention A + IDC)
   var debt           = construction.codBalance            // COD term-loan balance (P-015D)
@@ -1121,6 +1410,10 @@ function runPPPEngine(assumptions) {
   // the SAME variables used in the P&L / cash-flow rows.
   var outDebt = debt
   var levelDS = 0, eqPrincipal = 0
+  // P-028: levered tax state on the final IDC (same rules as the sizing).
+  // The basis uses the REPORTED (cent-rounded) capitalised IDC, so the tax
+  // calculation is reproducible from the published figures.
+  var levTax = inp.taxP028 ? createTaxState(taxCal, taxOpts(leveredBasis(r2(idcTotal)))) : null
   for (var op = 1; op <= nO; op++) {
     var yr       = nC + op - 1
     var isGrace  = op <= gracePeriods
@@ -1137,6 +1430,8 @@ function runPPPEngine(assumptions) {
     var opex     = r2(periodOpexRaw(op, revenue))
     var ebitda   = r2(revenue - opex)
     var interest = hasDebt ? r2(outDebt * rateP) : 0
+    // P-028: cash tax paid this period (depends only on periods ≤ op).
+    var taxPaid = levTax ? levTax.step(op - 1, ebitda, interest) : null
 
     // CFADS uses the actual tax shield on this period's interest (consistent
     // with the sizing). Principal is clamped to [0, outDebt].
@@ -1148,7 +1443,7 @@ function runPPPEngine(assumptions) {
         principal = r2(lastRepay ? outDebt : Math.min(outDebt, eqPrincipal))
       } else {
         var pbtPre  = ebitda - interest
-        var taxPre  = Math.max(0, pbtPre * taxRate)
+        var taxPre  = levTax ? taxPaid : Math.max(0, pbtPre * taxRate)
         var cfadsT  = ebitda - taxPre
         var sculptedDS = cfadsT / targetDSCR
         principal = r2(Math.min(outDebt, Math.max(0, sculptedDS - interest)))
@@ -1156,14 +1451,28 @@ function runPPPEngine(assumptions) {
     }
     outDebt = r2(Math.max(0, outDebt - principal))
 
-    var pbt    = r2(ebitda - interest)
-    var tax    = r2(Math.max(0, pbt * taxRate))
-    var netInc = r2(pbt - tax)
-    var eqCFo  = r2(netInc - principal)
+    var pbt, tax, netInc, eqCFo, cfads, totalDS
+    if (levTax) {
+      // P-028: `tax` is CASH tax paid (the CFADS basis). Depreciation is
+      // non-cash and never enters CFADS. Equity CF = CFADS − debt service.
+      // pbt / net_income are completed after the loop (tax_depreciation,
+      // tax_expense).
+      tax     = taxPaid
+      cfads   = r2(ebitda - tax)
+      totalDS = r2(interest + principal)
+      eqCFo   = r2(cfads - totalDS)
+      pbt     = null
+      netInc  = null
+    } else {
+      pbt    = r2(ebitda - interest)
+      tax    = r2(Math.max(0, pbt * taxRate))
+      netInc = r2(pbt - tax)
+      eqCFo  = r2(netInc - principal)
 
-    // CFADS = ebitda minus tax (pre-debt-service, post-tax)
-    var cfads   = r2(ebitda - tax)
-    var totalDS = r2(interest + principal)
+      // CFADS = ebitda minus tax (pre-debt-service, post-tax)
+      cfads   = r2(ebitda - tax)
+      totalDS = r2(interest + principal)
+    }
     // Null when debt service < 1 JOD — eliminates division-by-zero spikes
     // in grace years and post-repayment free-cash years
     var dscr = totalDS > 1 ? r2(cfads / totalDS) : null
@@ -1184,15 +1493,41 @@ function runPPPEngine(assumptions) {
     })
   }
 
+  // ── P-028 reporting fields (non-cash; never part of CFADS) ──
+  // pbt = EBITDA − interest − tax depreciation; tax_expense = each tax
+  // year's tax allocated to its periods (modelling estimate, see pppTax.js);
+  // net_income = pbt − tax_expense.
+  var levTaxRes = null, unlevTaxRes = null
+  if (levTax) {
+    levTaxRes = levTax.finish()
+    rowsP.forEach(function(r, i) {
+      if (r.phase === 'Construction') {
+        r.tax_depreciation = 0; r.taxable_income = 0; r.tax_expense = 0
+        return
+      }
+      var tp = levTaxRes.periods[i - nC]
+      r.tax_depreciation = r2(tp.dep)
+      r.taxable_income   = r2(tp.taxable)
+      r.tax_expense      = tp.taxExpense
+      r.pbt              = r2(r.ebitda - r.interest - tp.dep)
+      r.net_income       = r2(r.pbt - r.tax_expense)
+    })
+  }
+
   // ── Returns on the periodic equity cash flows ──
   var rawIrr = p === 1 ? irrCalc(cfs) : irrCalcPeriodic(cfs, p)
   // Project IRR (Phase 4): unlevered, post-tax, before financing — base
   // capex out during construction (no IDC, no debt), EBITDA less tax on
   // EBITDA (no interest shield) during operations. With zero debt it equals
   // the equity IRR by construction.
-  var projCfs = rowsP.map(function(r) {
-    return r.phase === 'Construction' ? -r.capex : r.ebitda - Math.max(0, r.ebitda * taxRate)
+  // P-028: an INDEPENDENT unlevered tax run — no interest, depreciation of
+  // share × TPC (no IDC), its own loss pool, same tax years and payment lag.
+  var unlevTax = inp.taxP028 ? createTaxState(taxCal, taxOpts(inp.depShare * tpc)) : null
+  var projCfs = rowsP.map(function(r, i) {
+    if (r.phase === 'Construction') return -r.capex
+    return unlevTax ? r.ebitda - unlevTax.step(i - nC, r.ebitda, 0) : r.ebitda - Math.max(0, r.ebitda * taxRate)
   })
+  if (unlevTax) unlevTaxRes = unlevTax.finish()
   var rawProjIrr = p === 1 ? irrCalc(projCfs) : irrCalcPeriodic(projCfs, p)
   var projectIrr = rawProjIrr !== null ? r2((p === 1 ? rawProjIrr : Math.pow(1 + rawProjIrr, p) - 1) * 100) : null
   var irr    = rawIrr !== null ? r2((p === 1 ? rawIrr : Math.pow(1 + rawIrr, p) - 1) * 100) : null
@@ -1282,9 +1617,41 @@ function runPPPEngine(assumptions) {
       repayment_profile:          profile,
     },
   }
+  // ── P-028 tax outputs (taxable, straight-line only) ──
+  if (inp.taxP028) {
+    var stripRaw = function(s) { var o = Object.assign({}, s); delete o._raw; return o }
+    result.tax_schedule         = levTaxRes.schedule.map(stripRaw)
+    result.project_tax_schedule = unlevTaxRes.schedule.map(stripRaw)
+    result.tax_assumptions = {
+      confirmed:                 false,   // modelling assumptions, not confirmed Jordanian tax treatment
+      method:                    'straight_line',
+      tax_rate:                  taxRate,  // combined burden (income tax + national contribution)
+      depreciation_life_years:   inp.taxLifeYrs,
+      life_is_default:           !inp.taxLifeGiven,
+      depreciable_share:         inp.depShare,
+      depreciable_share_given:   inp.depShareGiven,
+      idc_eligible_share:        inp.idcEligibleShare,
+      levered_basis:             r2(levTaxRes.basis),
+      unlevered_basis:           r2(unlevTaxRes.basis),
+      loss_carry_forward_years:  inp.lossCarryYrs === Infinity ? 'unlimited' : inp.lossCarryYrs,
+      terminal_write_off:        inp.taxWriteOffRaw === 'yes',
+      tax_year_basis:            taxCal.calendar ? 'calendar' : 'cod_anniversary_fallback',
+      tax_year_end_month:        taxCal.calendar ? inp.taxYearEndMonth : null,
+      payment_lag_months:        inp.taxLagMonths,
+      total_depreciation:        r2(levTaxRes.total_depreciation),
+      undepreciated_at_end:      r2(levTaxRes.undepreciated_at_end),
+      losses_expired:            r2(levTaxRes.losses_expired_total),
+      losses_unused_at_end:      r2(levTaxRes.losses_unused_at_end),
+      payment_accelerated:       levTaxRes.payment_accelerated,
+    }
+    result.debt_sizing.tax_iterations = taxSizing.iterations
+    result.debt_sizing.tax_converged  = taxSizing.converged
+    result.debt_sizing.debt_range_scan_points = taxSizing.scan_points
+  }
   // P-023: reconciliation gate (throws if the outputs do not reconcile) and
   // reasonableness warnings (never block).
   result.integrity = checkPPPIntegrity(result, inp)
+  if (inp.taxP028) result.integrity.tax = checkPPPTaxIntegrity(rowsP, nC, levTaxRes, unlevTaxRes)
   result.warnings  = computePPPWarnings(result, inp)
   result.engine_version = PPP_ENGINE_VERSION
   return result
@@ -1299,6 +1666,8 @@ function normaliseWeights(list) {
 function aggregateToYears(rowsP, schedP, nC, p) {
   var FLOW = ['revenue', 'opex', 'ebitda', 'interest', 'pbt', 'tax', 'net_income', 'principal',
               'capex', 'equity_draw', 'debt_draw', 'idc', 'equity_cf']
+  // P-028 reporting fields, only when the periods carry them (taxable)
+  if (rowsP.length && rowsP[0].tax_depreciation !== undefined) FLOW = FLOW.concat(['tax_depreciation', 'taxable_income', 'tax_expense'])
   var cash_flows = [], debt_schedule = [], dscr_series = []
   function groups(start, end) {
     var g = []
@@ -1416,8 +1785,8 @@ function isPPPAvailabilityPayment(project, assumptions) {
 // output for the same inputs changes; list in PPP_ENGINE_COMPATIBLE_VERSIONS
 // every earlier version whose outputs are identical to the current engine.
 // Results from versions not listed are flagged as outdated (stale_engine).
-var PPP_ENGINE_VERSION = '2.0.0'
-var PPP_ENGINE_COMPATIBLE_VERSIONS = ['2.0.0']
+var PPP_ENGINE_VERSION = '2.1.0'   // P-028: tax depreciation + loss carry-forward (taxable results change)
+var PPP_ENGINE_COMPATIBLE_VERSIONS = ['2.1.0']   // 2.0.0 results: compatibility must be DEMONSTRATED (resultPersistence.js)
 
 var PPP_DSCR_FLOOR  = 1.20
 var PPP_IRR_HURDLE  = 10    // % equity IRR
@@ -1522,4 +1891,5 @@ export {
   runEngine, runPPPEngine,
   PPP_DSCR_FLOOR, PPP_IRR_HURDLE, PPP_ENGINE_VERSION, PPP_ENGINE_COMPATIBLE_VERSIONS,
   isPPPAvailabilityPayment, computePPPBankability, computeRequiredPayment,
+  solveSupportableDebtTax,   // exported for the P-028 sizing-validation tests
 }

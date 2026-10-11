@@ -8,7 +8,8 @@
  * ---------------------------------------------------------------------------
  */
 import { fmtNumber, fmtDSCR, fmtIRR } from '../../utils/format.js'
-import { isPPPAvailabilityPayment } from './annualEngine.js'
+import { isPPPAvailabilityPayment, runPPPEngine } from './annualEngine.js'
+import { assessResultCurrency } from './resultPersistence.js'
 
 export const BINDING_LABEL = {
   dscr: 'DSCR capacity (cash-flow constrained)',
@@ -47,7 +48,11 @@ export function pppResultBasis(modelOutput, { engineVersion, compatibleVersions 
   if (!p) return null
   const period = (modelOutput.periodicity || 'annual') + ' model'
   if (p.legacy) return 'Historical (saved before versioned results; not recalculated) · ' + period
-  return ((compatibleVersions || [engineVersion]).includes(p.engine_version)
+  const cur = assessResultCurrency(modelOutput, { engineVersion, compatibleVersions, rerun: runPPPEngine })
+  if (cur.compatibility === 'demonstrated') {
+    return 'Saved result, engine v' + p.engine_version + ' (results identical under v' + engineVersion + ') · ' + period
+  }
+  return (cur.status === 'current'
     ? 'Saved result, engine v' + p.engine_version
     : 'Outdated engine v' + p.engine_version + ' (current v' + engineVersion + ')') + ' · ' + period
 }
@@ -68,7 +73,7 @@ export function pppPdfMetricValues(modelOutput, versions) {
 // Phase 6 / item 4: what the PPP engine does NOT model. Shown with every
 // PPP result so unsupported capabilities are never presented as validated.
 export const PPP_MODEL_SCOPE_NOTES = [
-  'Tax: statutory rate on (EBITDA − interest) each period. No tax depreciation or amortisation of capitalised cost and no tax-loss carry-forward — tax is overstated (conservative) for taxable projects.',
+  'Tax (P-028): straight-line tax depreciation from COD, loss carry-forward and tax-year cash payments are MODELLING ASSUMPTIONS, not confirmed Jordanian tax treatment (see the tax schedule and model checks). The Tax Rate is the combined burden entered by the user. With Tax Depreciation = None, the earlier method (tax on EBITDA − interest each period, no depreciation or loss relief) is used.',
   'No reserve accounts (DSRA / MMRA), distribution lock-up or cash-sweep tests; dividends = CFADS − debt service each period.',
   'Single senior facility; financing fees are not modelled separately (include them in Total Project Cost).',
   'Revenue: availability payment (optionally escalated or seasonal) or a per-year Revenue Profile. Demand estimates are labelled as such and are not contractual.',
