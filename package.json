@@ -16,7 +16,7 @@
     "staging:resume": "powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1 -Mode Resume",
     "staging:seed": "powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1 -Mode SeedUsers",
     "staging:check-env": "node scripts/staging/check-env.mjs",
-    "staging:set-test-password": "powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1 -Mode SetTestPassword"
+    "staging:set-test-password": "node scripts/staging/set-test-password.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.1",

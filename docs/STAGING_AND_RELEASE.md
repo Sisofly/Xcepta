@@ -67,6 +67,7 @@ You use your own accounts throughout. Never paste passwords or keys into chat.
 5. **Create and link the synthetic staging test users.**
    - Staging dashboard → Authentication → Users → *Add user* (staging-only email, auto-confirm). Add a second user too if you want cross-tenant RLS checks.
    - Then run `npm run staging:seed`. It links each user to a new synthetic tenant (admin role); re-running it is harmless.
+   - To change a test user's password later, run `npm run staging:set-test-password`. It uses the supported Supabase Auth Admin API (`updateUserById`), so the user id and tenant link are kept. The staging secret key is typed hidden at runtime and never stored. Only `.test` users can be changed, and the result is verified by signing in with the public key.
 6. **Scope the Vercel environment variables.**
    - Vercel → project `xcepta` → Settings → Environment Variables. For **each** of `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`:
      - make sure the **existing production value is ticked for Production only**;
