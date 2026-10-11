@@ -27,6 +27,7 @@ import { assessResultCurrency } from '../../src/modules/feasibility/resultPersis
 import { buildDebtScheduleRows } from '../../src/modules/feasibility/debtSchedule.js'
 import { pppFundingSummaryRows, pppPdfMetricValues } from '../../src/modules/feasibility/pppReporting.js'
 import { loadStagingEnv, fail } from './env.mjs'
+import { exactDiff, describeDiff } from './exact-compare.mjs'
 
 const { env, ref } = loadStagingEnv(['STAGING_TEST_EMAIL', 'STAGING_TEST_PASSWORD'])
 const url = env.VITE_SUPABASE_URL, key = env.VITE_SUPABASE_ANON_KEY
@@ -111,13 +112,17 @@ async function main() {
       check(label + ' · version approved with timestamp', ver.status === 'approved' && !!ver.approved_at)
       const shown = await loadLatestModelOutput(db, version.version_id)                              // Reload
       const { _persistence, ...financial } = shown || {}
-      check(label + ' · reloaded result = engine output (exact)', JSON.stringify(financial) === JSON.stringify(strip(out)))
+      // Exact, key-order-insensitive comparison: jsonb reorders object keys,
+      // so JSON-text equality is not a valid test (see exact-compare.mjs).
+      const resultDiff = exactDiff(strip(out), financial)
+      check(label + ' · reloaded result = engine output (exact)', resultDiff.equal, describeDiff(resultDiff))
       check(label + ' · engine version + periodicity stored', _persistence && _persistence.engine_version === PPP_ENGINE_VERSION && shown.periodicity === out.periodicity)
       check(label + ' · currency = current', assessResultCurrency(shown, { engineVersion: PPP_ENGINE_VERSION,
         compatibleVersions: PPP_ENGINE_COMPATIBLE_VERSIONS, assumptions }).status === 'current')
       const sched = buildDebtScheduleRows(shown)
-      check(label + ' · debt schedule (saved) reconciles', JSON.stringify(sched) === JSON.stringify(strip(out.debt_schedule)) &&
-        Math.abs(sched[sched.length - 1].closing) <= 2, 'COD ' + Math.round(out.debt_amount) + ', IDC ' + Math.round(out.idc_capitalized))
+      const schedDiff = exactDiff(strip(out.debt_schedule), sched)
+      check(label + ' · debt schedule (saved) reconciles', schedDiff.equal && Math.abs(sched[sched.length - 1].closing) <= 2,
+        describeDiff(schedDiff) + '; COD ' + Math.round(out.debt_amount) + ', IDC ' + Math.round(out.idc_capitalized))
       check(label + ' · funding summary rendered', (pppFundingSummaryRows(shown) || []).length >= 10)
       const pdf = pppPdfMetricValues(shown, { engineVersion: PPP_ENGINE_VERSION, compatibleVersions: PPP_ENGINE_COMPATIBLE_VERSIONS })
       check(label + ' · PDF values from saved record', pdf.basis.startsWith('Saved result') && pdf.debt_amount === out.debt_amount, pdf.basis)

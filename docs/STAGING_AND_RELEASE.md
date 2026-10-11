@@ -111,3 +111,34 @@ The same procedure applies to every future migration file. **Staging first, alwa
 3. **Runtime guard:** even a mis-built bundle refuses to create a production client outside production.
 4. **Data:** staging contains synthetic data and a staging-only user; production users, projects and approvals are not copied.
 5. **Residual risk (by design, local only):** a developer can deliberately connect a *local* build to production with `XCEPTA_ALLOW_PRODUCTION_DB=1`. This is shown with a red banner and is impossible on Vercel.
+
+## 8. Lifecycle verification: exact comparison and the 0.01 roll-forward note
+
+### 8.1 Why `verify:staging` compares structurally, not as JSON text
+Postgres `jsonb` does not preserve object-key order: it stores keys sorted by length, then bytewise. A result reloaded from `model_outputs.result_payload` therefore has **identical values** to the engine output but serialises to **different JSON text**. That is why the first staging run reported 6 false failures, 2 per case. Diagnosis found 0 value differences and 0 type differences, with 69, 143 and 70 key-reordered objects.
+
+`scripts/staging/exact-compare.mjs` (`exactDiff`) ignores **only object key order**. Everything else is strict, with no tolerance:
+
+| Element | Rule |
+|---|---|
+| Numbers | `Object.is`, bit-exact; `0` ≠ `-0`, `NaN` = `NaN` |
+| Strings, booleans, `null` | Strict equality; data types must match |
+| Arrays | Same length and same element order |
+| Objects | Identical key sets; a missing or extra key is a difference |
+
+Expected financial results and the engine were not changed. The guard tests in `tests/exactCompare.test.js` round-trip three cases through real Postgres `jsonb` (PGlite). They prove that:
+- reordering alone passes;
+- the smallest representable double difference fails;
+- direct database tampering is caught: +0.01 on COD debt, +0.000001 deep in the debt schedule, a removed key, and a number stored as a string.
+
+A mutation check confirms the tests have teeth: giving the comparator a 0.02 tolerance makes 4 of them fail.
+
+### 8.2 The 0.01 quarterly debt roll-forward difference (existing methodology)
+In the quarterly Madaba case, `integrity.max_rollforward_gap = 0.01`. This is the engine's existing presentation rounding. It is not a persistence or calculation defect.
+
+- **Where:** construction rows of the debt schedule (`annualEngine.js`, construction row builder). `opening`, `draw`, `idc` and `closing` are each rounded to 2 dp **independently from their unrounded values**: `r2(opening) + r2(draw) + r2(idc)` can differ from `r2(closing)` by one cent.
+- **Observed:** periodic construction quarters 1, 2, 5, 6 and 11 show +0.01, −0.01, −0.01, +0.01 and −0.01. The annual year-3 row shows −0.01. Every period-to-period link gap is 0.00.
+- **No accumulation:** each `closing` is the rounding of the true unrounded balance, so cent residues do not compound. The COD balance 47,588,307.34 equals principal drawn plus IDC exactly (`cod_diff = 0`), and the final balance is 0.
+- **Before persistence:** the gap is present in the engine output itself. The saved and reloaded result is exactly identical (`exactDiff`: 0 differences).
+- **Within the existing tolerance:** `checkPPPIntegrity` allows `max(1, 0.01 × rows, 0.01 × periodic rows)` = **1.00** here (52 periodic rows), and the check passes. This tolerance is unchanged; it was not introduced or widened for staging.
+- The annual and variable-CFADS cases show a gap of 0.00.
