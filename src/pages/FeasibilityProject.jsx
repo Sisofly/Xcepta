@@ -13,6 +13,7 @@ import PPPMessages from '../modules/feasibility/PPPMessages'
 import PPPResultProvenance from '../modules/feasibility/PPPResultProvenance'
 import { savePPPApproval, loadLatestModelOutput } from '../modules/feasibility/pppResultStore'
 import { pppResultBasis, isUnsupportedProjectFinance } from '../modules/feasibility/pppReporting'
+import { PPP_START_DATE, PPP_START_DATE_LABEL, pppStartDateOf, derivePPPOperationsStart } from '../modules/feasibility/pppTimeline'
 import colors from '../theme/colors.js'
 import {
   fmtCurrency, fmtPct, fmtDSCR, fmtMultiple,
@@ -84,6 +85,7 @@ const PPP_DISPLAY_LABELS = {
   'Repayment Profile':                 'Debt Repayment Profile',
   'Target DSCR':                       'Target DSCR (debt sculpting / sizing)',
   'Lender Minimum DSCR':               'Lender Minimum DSCR (underwriting acceptance threshold)',
+  'Construction Start Date':           'Construction Start / Financial Close Date',
 }
 
 // P-016 / Phase 3 optional PPP inputs. Existing projects do not have these
@@ -2126,6 +2128,37 @@ export default function FeasibilityProject() {
                     : 'Enter Construction Period and Operations / Revenue Period above to see the full timeline.'
                   }
                 </p>
+                {/* Calendar placement for FP&A (pppTimeline.js). The date does not change any result. */}
+                {(() => {
+                  const startDate = pppStartDateOf(assumptions)
+                  const hasRow = assumptions.some(a => a.name === PPP_START_DATE)
+                  const cod = derivePPPOperationsStart(assumptions)
+                  if (!startDate) {
+                    return (
+                      <div style={{marginTop:'0.75rem',padding:'0.6rem 0.8rem',border:`1px solid ${colors.warning}`,borderRadius:'6px',
+                        background:colors.warningSoft,fontSize:'0.75rem',color:colors.warning,lineHeight:1.5}}>
+                        Required for FP&amp;A: {PPP_START_DATE_LABEL}. It places the model years on the calendar for monthly budgets;
+                        it does not change any financial result. {hasRow ? 'Enter the date in Project Structure above.' : ''}
+                        {!hasRow && (
+                          <button onClick={() => handleAddPPPInput({ name: PPP_START_DATE, category: 'ppp_structure', unit: null })}
+                            style={{marginLeft:'0.5rem',padding:'0.2rem 0.7rem',background:'none',border:`1px solid ${colors.warning}`,
+                              borderRadius:'4px',color:colors.warning,cursor:'pointer',fontSize:'0.72rem'}}>
+                            + Add {PPP_START_DATE_LABEL}
+                          </button>
+                        )}
+                      </div>
+                    )
+                  }
+                  return (
+                    <p style={{fontSize:'0.72rem',color:colors.textSecondary,marginTop:'0.5rem',lineHeight:1.5}}>
+                      Calendar: construction starts {startDate}
+                      {cod && cod.date ? ` · operations start (derived) ${cod.date}` : ' · operations start: enter a valid date'}
+                      {cod && cod.modelledMonths !== cod.enteredMonths
+                        ? ` — the model rounds ${cod.enteredMonths} construction months up to ${cod.modelledMonths} (whole model periods)`
+                        : ''}
+                    </p>
+                  )
+                })()}
               </div>
             )
           })()}

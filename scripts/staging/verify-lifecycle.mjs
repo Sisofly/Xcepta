@@ -26,6 +26,7 @@ import { savePPPApproval, loadLatestModelOutput } from '../../src/modules/feasib
 import { assessResultCurrency } from '../../src/modules/feasibility/resultPersistence.js'
 import { buildDebtScheduleRows } from '../../src/modules/feasibility/debtSchedule.js'
 import { pppFundingSummaryRows, pppPdfMetricValues } from '../../src/modules/feasibility/pppReporting.js'
+import { resolvePPPFpaBasis, pppMonthlyBudget } from '../../src/modules/feasibility/pppTimeline.js'
 import { loadStagingEnv, fail } from './env.mjs'
 import { exactDiff, describeDiff } from './exact-compare.mjs'
 
@@ -43,6 +44,7 @@ const BASE = {
   'Total Project Cost': 100_000_000, 'Debt %': 80, 'Equity %': 20, 'Annual Availability Payment': 12_000_000,
   'Concession Period': 25, 'Construction Period': 24, 'OPEX % of Revenue': 5, 'Interest Rate': 7,
   'Loan Tenor': 10, 'Grace Period': 2, 'Tax Rate': 20, 'WACC': 10, 'Target DSCR': 1.2,
+  'Construction Start Date': '2026-07-01',
 }
 const CASES = {
   'Annual — IDC, DSCR-bound': { ...BASE },
@@ -51,6 +53,7 @@ const CASES = {
     'Concession Period': 10, 'Construction Period': 36, 'OPEX Amount (JOD)': 54_020, 'OPEX Escalation %': 2.015,
     'Interest Rate': 8.25, 'Loan Tenor': 9.5, 'Grace Period': 0, 'Tax Rate': 0, 'WACC': 10, 'Target DSCR': 1.0,
     'Model Periodicity': 'Quarterly',
+    'Construction Start Date': '2026-01-01',
     'Construction Cost Profile': '6232.8,3008.4,6434.0,6443.8,3654.5,3554.5,3554.5,3554.5,3654.5,3554.5,3554.5,3588.4' },
   'Variable CFADS — escalation + demand profile + annuity': { ...BASE,
     'Availability Payment Escalation %': 2.5, 'OPEX Amount (JOD)': 800_000, 'OPEX Escalation %': 3.5,
@@ -126,6 +129,24 @@ async function main() {
       check(label + ' · funding summary rendered', (pppFundingSummaryRows(shown) || []).length >= 10)
       const pdf = pppPdfMetricValues(shown, { engineVersion: PPP_ENGINE_VERSION, compatibleVersions: PPP_ENGINE_COMPATIBLE_VERSIONS })
       check(label + ' · PDF values from saved record', pdf.basis.startsWith('Saved result') && pdf.debt_amount === out.debt_amount, pdf.basis)
+      // FP&A (same query as the FP&A page): date from the APPROVED inputs record,
+      // first operating month = first operating period ÷ its months; month after
+      // the concession is outside the timeline.
+      const fpaRows = await q(db.from('model_outputs').select('*').eq('version_id', version.version_id)
+        .order('computed_at', { ascending: false }).limit(1))
+      const basis = resolvePPPFpaBasis(fpaRows[0], assumptions)
+      const P = out.periods_per_year > 1 ? out.cash_flows_periodic : out.cash_flows
+      const firstOps = P.find(r => r.phase === 'Operations'), mpp = 12 / (out.periods_per_year || 1)
+      const est = basis.status === 'ok' ? pppMonthlyBudget(basis.result, basis.startDate, basis.bounds.operationsStart) : null
+      const [ey, em] = basis.status === 'ok' ? basis.bounds.concessionEnd.split('-').map(Number) : [0, 0]
+      const afterEnd = em === 12 ? (ey + 1) + '-01' : ey + '-' + String(em + 1).padStart(2, '0')
+      check(label + ' · FP&A monthly estimate from approved date',
+        basis.status === 'ok' && basis.startDate === inputs['Construction Start Date'] && est && est.status === 'ok' &&
+        est.phase === 'Operations' && est.budget.REV_AVAILABILITY === Math.round(firstOps.revenue / mpp) &&
+        !('REV_SALE' in est.budget) && pppMonthlyBudget(basis.result, basis.startDate, afterEnd).status === 'after_concession',
+        basis.status === 'ok'
+          ? 'start ' + basis.startDate + ' · operations from ' + basis.bounds.operationsStart + ' · concession ends ' + basis.bounds.concessionEnd
+          : basis.status)
     } catch (e) {
       check(label + ' · lifecycle', false, e.message)
     }

@@ -1,8 +1,10 @@
 import React from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { jsPDF } from 'jspdf'
+import { isPPPAvailabilityPayment } from '../modules/feasibility/annualEngine.js'
+import { PPP_FPA_ACCOUNTS, PPP_START_DATE_LABEL, resolvePPPFpaBasis, pppMonthlyBudget } from '../modules/feasibility/pppTimeline.js'
 
 const TABS = ['Actuals Entry', 'Variance Report']
 
@@ -14,6 +16,11 @@ const COA = [
   { code: 'COST_FINANCE',name: 'Finance Charges' },
   { code: 'COST_ADMIN',  name: 'Admin & Overheads' },
 ]
+// Account names for every account code that may appear in stored variances
+// (real-estate accounts above, PPP accounts incl. Availability Payments).
+const ACCOUNT_NAMES = {}
+;[...COA, ...PPP_FPA_ACCOUNTS].forEach(c => { ACCOUNT_NAMES[c.code] = c.name })
+const emptyRows = accounts => accounts.map(c => ({ coa_node: c.code, account_name: c.name, budget: '', actual: '' }))
 
 function flagColors(flag) {
   if (flag === 'red')   return { background: '#f8514922', color: '#f85149', border: '1px solid #f85149' }
@@ -120,14 +127,20 @@ export default function FPAProject() {
   const [loading, setLoading]       = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [period, setPeriod]         = useState('')
-  const [rows, setRows]             = useState(
-    COA.map(c => ({ coa_node: c.code, account_name: c.name, budget: '', actual: '' }))
-  )
+  const [rows, setRows]             = useState(emptyRows(COA))
   const [variances, setVariances]   = useState([])
   const [drillRow, setDrillRow]     = useState(null)
   const [expandedPeriods, setExpandedPeriods] = useState({})
   const [budgetPreview, setBudgetPreview] = useState(null)
+  const [pppEstimate, setPppEstimate] = useState(null)
   const [exporting, setExporting] = useState(false)
+
+  // PPP projects: own account list (Availability Payments) and a budget basis
+  // taken from the APPROVED result and its recorded inputs (pppTimeline.js).
+  const isPPP    = isPPPAvailabilityPayment(project, assumptions)
+  const accounts = isPPP ? PPP_FPA_ACCOUNTS : COA
+  const pppBasis = useMemo(() => (isPPP ? resolvePPPFpaBasis(modelOutput, assumptions) : null),
+    [isPPP, modelOutput, assumptions])
 
   useEffect(() => {
     async function load() {
@@ -137,7 +150,8 @@ export default function FPAProject() {
       const { data: scenarios } = await supabase.from('scenarios').select('scenario_id').eq('project_id', projectId)
       if (scenarios && scenarios.length) {
         const { data: versions } = await supabase.from('versions').select('*')
-          .eq('scenario_id', scenarios[0].scenario_id).eq('status', 'approved').limit(1)
+          .eq('scenario_id', scenarios[0].scenario_id).eq('status', 'approved')
+          .order('approved_at', { ascending: false }).limit(1)   // latest approved version
         if (versions && versions.length) {
           setVersion(versions[0])
           const { data: outputs } = await supabase.from('model_outputs').select('*')
@@ -163,17 +177,26 @@ export default function FPAProject() {
   useEffect(() => {
     if (!period || !modelOutput || !assumptions.length) {
       setBudgetPreview(null)
-      setRows(COA.map(c => ({ coa_node: c.code, account_name: c.name, budget: '', actual: '' })))
+      setPppEstimate(null)
+      setRows(emptyRows(accounts))
       return
     }
-    const budget = deriveBudget(period, modelOutput.cash_flows, assumptions)
+    let budget
+    if (isPPP) {
+      const est = pppBasis && pppBasis.status === 'ok'
+        ? pppMonthlyBudget(pppBasis.result, pppBasis.startDate, period) : null
+      setPppEstimate(est)
+      budget = est && est.status === 'ok' ? est.budget : null
+    } else {
+      budget = deriveBudget(period, modelOutput.cash_flows, assumptions)
+    }
     setBudgetPreview(budget)
-    setRows(COA.map(c => ({
+    setRows(accounts.map(c => ({
       coa_node: c.code, account_name: c.name,
       budget: budget && budget[c.code] !== undefined ? String(budget[c.code]) : '',
       actual: '',
     })))
-  }, [period, modelOutput, assumptions])
+  }, [period, modelOutput, assumptions, isPPP, accounts, pppBasis])
 
   async function loadVariances() {
     const { data } = await supabase.from('variances').select('*')
@@ -227,7 +250,7 @@ export default function FPAProject() {
         const severity_flag = variance_percent === null ? 'green'
           : favorable ? 'green' : (absVp >= 10 ? 'red' : 'amber')
         const sourceAssumption = isRevenue
-          ? assumptions.find(a => a.category === 'revenue')
+          ? (isPPP ? assumptions.find(a => a.name === 'Annual Availability Payment') : assumptions.find(a => a.category === 'revenue'))
           : assumptions.find(a => a.category === 'capital_structure')
         return {
           tenant_id, project_id: projectId,
@@ -243,7 +266,7 @@ export default function FPAProject() {
       if (varianceError) throw varianceError
 
       setPeriod('')
-      setRows(COA.map(c => ({ coa_node: c.code, account_name: c.name, budget: '', actual: '' })))
+      setRows(emptyRows(accounts))
       await loadVariances()
       setTab('Variance Report')
     } catch (err) {
@@ -387,7 +410,7 @@ export default function FPAProject() {
         var isRev = v.coa_node.startsWith('REV_')
         var va = Number(v.variance_amount)
         var vp = v.variance_percent !== null ? Number(v.variance_percent) : null
-        var coa = COA.find(function(c){return c.code===v.coa_node})
+        var coa = ACCOUNT_NAMES[v.coa_node] ? { name: ACCOUNT_NAMES[v.coa_node] } : null
         var favorable = isRev ? va >= 0 : va <= 0
         allLines.push({ name: coa?coa.name:v.coa_node, period:v.period, va, vp, favorable, isRev })
       })
@@ -704,6 +727,42 @@ export default function FPAProject() {
       </div>
 
       {/* Budget source banner */}
+      {isPPP && pppBasis && pppBasis.status !== 'no_approved_result' ? (() => {
+        const b = pppBasis
+        const ok = b.status === 'ok'
+        const tone = ok ? { bg: '#161b22', border: '#3fb95033', color: '#8b949e' } : { bg: '#d2992211', border: '#d29922', color: '#d29922' }
+        let text
+        if (ok) {
+          text = '✓ Budget pre-filled from the approved PPP result · ' + PPP_START_DATE_LABEL + ' ' + b.startDate +
+            ' · construction from ' + b.bounds.constructionStart + ' · operations from ' + b.bounds.operationsStart +
+            ' · concession ends ' + b.bounds.concessionEnd + '. Monthly figures are ESTIMATES: each modelled ' +
+            b.bounds.granularity + ' is spread evenly over its months; they are not monthly forecasts.'
+        } else if (b.status === 'date_added_after_approval') {
+          text = 'A ' + PPP_START_DATE_LABEL + ' (' + b.liveDate + ') was added after this version was approved. ' +
+            'Approved versions are never changed: approve a new version in Feasibility to use the date in FP&A ' +
+            '(the date does not change any financial result). Until then, enter budgets manually.'
+        } else if (b.status === 'legacy_result') {
+          text = 'This PPP result was approved before inputs were recorded with results, so it has no ' + PPP_START_DATE_LABEL + '. ' +
+            'Add the date in Feasibility → Assumptions and approve a new version to enable budget pre-fill.'
+        } else if (b.status === 'invalid_date') {
+          text = 'The approved ' + PPP_START_DATE_LABEL + ' "' + b.startDate + '" is not a valid date (YYYY-MM-DD). ' +
+            'Correct it in Feasibility → Assumptions and approve a new version.'
+        } else {
+          text = 'This PPP project has no ' + PPP_START_DATE_LABEL + ', so model years cannot be placed on the calendar. ' +
+            'Add the date in Feasibility → Assumptions, then approve a new version. Until then, enter budgets manually.'
+        }
+        return (
+          <div style={{ background: tone.bg, border: '1px solid ' + tone.border, borderRadius: '8px',
+            padding: '0.75rem 1.25rem', marginBottom: '1.5rem', fontSize: '0.8rem', color: tone.color, lineHeight: 1.5 }}>
+            {text}
+            {ok && b.liveDateDiffers && (
+              <span style={{ display: 'block', color: '#d29922', marginTop: '0.4rem' }}>
+                The live Assumptions show a different date ({b.liveDate || 'none'}). FP&A keeps the approved date until a new version is approved.
+              </span>
+            )}
+          </div>
+        )
+      })() : (
       <div style={{ background: hasBudget ? '#161b22' : '#f8514911',
         border: '1px solid ' + (hasBudget ? '#3fb95033' : '#f85149'),
         borderRadius: '8px', padding: '0.75rem 1.25rem', marginBottom: '1.5rem',
@@ -712,6 +771,7 @@ export default function FPAProject() {
           ? '✓ Budget pre-filled from approved model output · Monthly estimates derived from annual cash flows'
           : 'No approved model output found. Approve a feasibility version first to enable budget pre-fill.'}
       </div>
+      )}
 
       <div style={{ display: 'flex', borderBottom: '1px solid #21262d', marginBottom: '2rem' }}>
         {TABS.map(t => (
@@ -732,9 +792,22 @@ export default function FPAProject() {
                 style={{ padding: '0.5rem 0.75rem', background: '#0d1117', border: '1px solid #30363d',
                   borderRadius: '6px', color: '#e6edf3', fontSize: '0.9rem', width: '200px' }} />
             </div>
-            {period && !budgetPreview && hasBudget && (
+            {!isPPP && period && !budgetPreview && hasBudget && (
               <p style={{ fontSize: '0.75rem', color: '#d29922', marginTop: '1.2rem' }}>
                 Period outside modelled timeline — enter budget manually
+              </p>
+            )}
+            {isPPP && period && pppEstimate && (
+              <p style={{ fontSize: '0.75rem', marginTop: '1.2rem', lineHeight: 1.5, maxWidth: '520px',
+                color: pppEstimate.status === 'ok' ? '#8b949e' : '#d29922' }}>
+                {pppEstimate.status === 'ok'
+                  ? 'Estimate — month ' + pppEstimate.monthInPeriod + ' of ' + pppEstimate.monthsPerPeriod + ' in ' +
+                    pppEstimate.periodLabel + ' of the approved model, allocated evenly from that ' + pppEstimate.granularity + '.'
+                  : pppEstimate.status === 'before_start'
+                    ? 'Before construction start (' + pppEstimate.bounds.constructionStart + ') — outside the modelled timeline; enter budget manually.'
+                    : pppEstimate.status === 'after_concession'
+                      ? 'After the concession ends (' + pppEstimate.bounds.concessionEnd + ') — outside the modelled timeline; enter budget manually.'
+                      : 'No model budget for this period — enter budget manually.'}
               </p>
             )}
           </div>
@@ -763,7 +836,7 @@ export default function FPAProject() {
                   <th style={{ padding: '0.75rem 1rem', textAlign: 'left', color: '#8b949e', fontWeight: '500', fontSize: '0.75rem', width: '35%' }}>Account</th>
                   <th style={{ padding: '0.75rem 1rem', textAlign: 'right', color: '#8b949e', fontWeight: '500', fontSize: '0.75rem' }}>
                     Budget ({project.currency})
-                    {hasBudget && <span style={{ color: '#3fb95066', marginLeft: '0.4rem', fontSize: '0.68rem' }}>model</span>}
+                    {hasBudget && <span style={{ color: '#3fb95066', marginLeft: '0.4rem', fontSize: '0.68rem' }}>{isPPP ? 'model estimate' : 'model'}</span>}
                   </th>
                   <th style={{ padding: '0.75rem 1rem', textAlign: 'right', color: '#8b949e', fontWeight: '500', fontSize: '0.75rem' }}>
                     {period && isForecastPeriod(period) ? 'Forecast' : 'Actual'} ({project.currency})
@@ -933,7 +1006,7 @@ export default function FPAProject() {
                         </thead>
                         <tbody>
                           {pRows.map(v => {
-                            const coa   = COA.find(c => c.code === v.coa_node)
+                            const coa   = ACCOUNT_NAMES[v.coa_node] ? { name: ACCOUNT_NAMES[v.coa_node] } : null
                             const isSelected = drillRow && drillRow.variance_id === v.variance_id
                             const isRev = v.coa_node.startsWith('REV_')
                             const va    = Number(v.variance_amount)
