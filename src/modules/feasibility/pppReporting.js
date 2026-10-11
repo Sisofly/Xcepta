@@ -91,3 +91,58 @@ export function isUnsupportedProjectFinance(project, assumptions) {
   // real-estate projects may also select a 'PPP' delivery model.
   return project.project_type === 'Infrastructure / PPP'
 }
+
+// ── P-028 D1: Results cash-flow table (PPP) ──
+// Tax Expense (accrual: Net Income = PBT − Tax Expense) is shown separately
+// from Cash Tax Paid (cash: CFADS = EBITDA − Cash Tax Paid; equity CF = CFADS −
+// debt service). Results without a tax_expense field (tax-exempt, Tax
+// Depreciation = None, earlier engines) charge and pay tax in the same
+// period, so their Tax Expense equals the cash tax. Display only: the saved
+// rows are not modified. Annual rows of quarterly models carry the summed
+// quarterly values. Real-estate results keep their existing table.
+export const PPP_CASH_FLOW_HEADERS = ['Year', 'Phase', 'Revenue', 'Opex', 'EBITDA', 'Interest', 'PBT',
+  'Tax Expense', 'Cash Tax Paid', 'Net Income', 'Principal', 'Equity CF']
+export function pppCashFlowRows(rows) {
+  return (rows || []).map(r => ({ ...r, tax_expense: r.tax_expense !== undefined ? r.tax_expense : r.tax }))
+}
+
+// ── P-028 D2: PDF "Tax Methodology & Assumptions" section ──
+// Content for a saved taxable P-028 result (null otherwise). Raw values;
+// generatePDF formats them (Governance §10).
+export function pppTaxDisclosure(modelOutput) {
+  const ta = modelOutput && modelOutput.tax_assumptions
+  if (!ta) return null
+  const quarterly = modelOutput.periodicity === 'quarterly'
+  const notes = []
+  if (ta.loss_carry_forward_years !== 'unlimited') {
+    notes.push('Loss expiry is simplified: a tax loss may be used for ' + ta.loss_carry_forward_years + ' tax years after the year it ' +
+      'arises (a partial first year counts as a full year), then expires. Jordanian rules count the period from when losses are ' +
+      'final and audited, which is usually later, so the modelled expiry is earlier (conservative).')
+  }
+  notes.push('Cash Tax Paid follows the tax-year payment dates and is used for CFADS, DSCR and equity cash flows. Tax Expense is the ' +
+    'accrual used for Net Income. Depreciation is non-cash and is never deducted from CFADS.')
+  notes.push((quarterly ? 'Quarterly model: period tax expense allocates each tax year’s tax to quarters'
+    : 'Period tax expense allocates each tax year’s tax to model years') +
+    ' in proportion to taxable income. This is a modelling estimate, not an accounting-standard tax provision.')
+  if (!ta.depreciable_share_given) notes.push('Depreciable share was not entered: 100% of TPC plus eligible IDC is assumed depreciable.')
+  return {
+    title: 'Tax Methodology & Assumptions',
+    status: 'The tax methodology is a modelling assumption, not confirmed Jordanian tax treatment. Confirm the tax rate, asset ' +
+      'classification and allowable depreciation period, loss rules and payment dates with a tax adviser before relying on these results.',
+    items: [
+      { key: 'tax_rate',  label: 'Tax rate (combined income tax + national contribution)', value: ta.tax_rate, unit: 'fraction' },
+      { key: 'method',    label: 'Depreciation method', value: 'Straight-line from COD', unit: 'text' },
+      { key: 'basis',     label: 'Depreciation basis (share x (TPC + eligible IDC))', value: ta.levered_basis, unit: 'JOD' },
+      { key: 'life',      label: 'Depreciation life (preliminary' + (ta.life_is_default ? '; default = concession period' : '') + ')',
+        value: ta.depreciation_life_years, unit: 'years' },
+      { key: 'share',     label: 'Depreciable share of TPC + eligible IDC', value: ta.depreciable_share, unit: 'fraction' },
+      { key: 'idc',       label: 'Eligible capitalised IDC', value: ta.idc_eligible_share, unit: 'fraction' },
+      { key: 'losses',    label: 'Tax-loss carry-forward', value: ta.loss_carry_forward_years, unit: 'years' },
+      { key: 'lag',       label: 'Tax payment lag after tax-year end', value: ta.payment_lag_months, unit: 'months' },
+      { key: 'tax_years', label: 'Tax years', unit: 'text',
+        value: ta.tax_year_basis === 'calendar' ? 'Ending month ' + ta.tax_year_end_month + ' (calendar)' : '12-month years from COD (no start date)' },
+      { key: 'write_off', label: 'Terminal write-off at hand-back', value: ta.terminal_write_off ? 'Yes (selected)' : 'No', unit: 'text' },
+    ],
+    notes,
+  }
+}

@@ -13,7 +13,7 @@ import PPPMessages from '../modules/feasibility/PPPMessages'
 import PPPResultProvenance from '../modules/feasibility/PPPResultProvenance'
 import PPPTaxSchedule from '../modules/feasibility/PPPTaxSchedule'
 import { savePPPApproval, loadLatestModelOutput } from '../modules/feasibility/pppResultStore'
-import { pppResultBasis, isUnsupportedProjectFinance } from '../modules/feasibility/pppReporting'
+import { pppResultBasis, isUnsupportedProjectFinance, PPP_CASH_FLOW_HEADERS, pppCashFlowRows, pppTaxDisclosure } from '../modules/feasibility/pppReporting'
 import { PPP_START_DATE, PPP_START_DATE_LABEL, pppStartDateOf, derivePPPOperationsStart } from '../modules/feasibility/pppTimeline'
 import colors from '../theme/colors.js'
 import {
@@ -1301,6 +1301,39 @@ export default function FeasibilityProject() {
         y += 10
       }
       gap(6)
+
+      // ── P-028 (D2): Tax Methodology & Assumptions (taxable PPP results) ──
+      var taxDisc = pppAP && modelOutput ? pppTaxDisclosure(modelOutput) : null
+      if (taxDisc) {
+        var fmtTaxItem = function(it) {
+          if (it.unit === 'fraction') return (Number(it.value) * 100).toFixed(1) + '%'
+          if (it.unit === 'JOD') return fmtJOD(it.value)
+          if (it.unit === 'years') return it.value === 'unlimited' ? 'Unlimited' : it.value + ' years'
+          if (it.unit === 'months') return it.value + ' months'
+          return String(it.value)
+        }
+        secHead(taxDisc.title)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(180, 83, 9)
+        var taxStatus = doc.splitTextToSize(safe(taxDisc.status), TW - 6)
+        guard(taxStatus.length * 4 + 4)
+        doc.text(taxStatus, ML + 3, y); y += taxStatus.length * 4 + 3
+        taxDisc.items.forEach(function(it) {
+          guard(6)
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(60, 70, 90)
+          doc.text(safe(it.label), ML + 3, y)
+          doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 40, 60)
+          doc.text(safe(fmtTaxItem(it)), MR - 3, y, { align: 'right' })
+          y += 5.5
+        })
+        y += 2
+        taxDisc.notes.forEach(function(n) {
+          doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(100, 110, 125)
+          var lines = doc.splitTextToSize(safe(n), TW - 6)
+          guard(lines.length * 3.6 + 2)
+          doc.text(lines, ML + 3, y); y += lines.length * 3.6 + 2
+        })
+        gap(4)
+      }
 
       // ── IRR interpretation notes ──
       if (hasDevEngine) {
@@ -3276,12 +3309,12 @@ export default function FeasibilityProject() {
                     <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',overflow:'auto'}}>
                       <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.8rem',minWidth:'900px'}}>
                         <thead><tr style={{borderBottom:`1px solid ${colors.border}`}}>
-                          {['Year','Phase','Revenue','Opex','EBITDA','Interest','PBT','Tax','Net Income','Principal','Equity CF'].map(h => (
+                          {(pppAP ? PPP_CASH_FLOW_HEADERS : ['Year','Phase','Revenue','Opex','EBITDA','Interest','PBT','Tax','Net Income','Principal','Equity CF']).map(h => (
                             <th key={h} style={{padding:'0.6rem 0.75rem',textAlign:'right',color:colors.textSecondary,fontWeight:'500',fontSize:'0.7rem',whiteSpace:'nowrap'}}>{h}</th>
                           ))}
                         </tr></thead>
                         <tbody>
-                          {cfRows.map((row, index) => (
+                          {(pppAP ? pppCashFlowRows(cfRows) : cfRows).map((row, index) => (
                             <tr key={row.year} style={{borderBottom:`1px solid ${colors.border}`,background:index%2===0?colors.accentBgSubtle:'transparent'}}>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{row.year}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textMuted,textAlign:'right',fontSize:'0.7rem'}}>{row.phase}</td>
@@ -3290,6 +3323,7 @@ export default function FeasibilityProject() {
                               <td style={{padding:'0.6rem 0.75rem',color:Number(row.ebitda)>=0?colors.textPrimary:colors.danger,textAlign:'right'}}>{fmtNumber(row.ebitda)}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.interest)}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:Number(row.pbt)>=0?colors.textPrimary:colors.danger,textAlign:'right'}}>{fmtNumber(row.pbt)}</td>
+                              {pppAP && <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.tax_expense)}</td>}
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.tax)}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:Number(row.net_income)>=0?colors.textPrimary:colors.danger,textAlign:'right'}}>{fmtNumber(row.net_income)}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.principal)}</td>
@@ -3299,6 +3333,11 @@ export default function FeasibilityProject() {
                         </tbody>
                       </table>
                     </div>
+                    {pppAP && (
+                      <p style={{fontSize:'0.72rem',color:colors.textMuted,marginTop:'0.5rem',lineHeight:1.5}}>
+                        Net Income = PBT − Tax Expense (accrual). CFADS and Equity CF use Cash Tax Paid, which follows the tax-year payment dates.
+                      </p>
+                    )}
                     {modelOutput.cash_flows && modelOutput.cash_flows.length > 6 && (
                       <button onClick={() => setShowFullCF(!showFullCF)}
                         style={{marginTop:'0.75rem',background:'none',border:'none',color:colors.accent,cursor:'pointer',fontSize:'0.8rem'}}>
