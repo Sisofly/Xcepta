@@ -699,3 +699,75 @@ describe('S10 privileges (C1, C2): TRUNCATE / TRIGGER / REFERENCES, default priv
   })
 
 })
+
+// ═════════════════════════════════════════════════════════════════════════
+describe('S11 context marker (xcepta.ctx) — cannot be spoofed or reused to gain privileges', () => {
+  const doAs = (name, body) => as(name).raw('do $x$ begin ' + body + ' end $x$')
+  const opDo = body => op.raw('do $x$ begin ' + body + ' end $x$')
+
+  test('S11.1 the marker cannot be set through the API: no set_config / set_ctx RPC; app_private unreachable', async () => {
+    expect(msg(await as('A_analyst').rpc('set_config', { setting_name: 'xcepta.ctx', new_value: 'approve', is_local: true }))).toMatch(/does not exist/)
+    expect(msg(await as('A_analyst').rpc('set_ctx', { p_ctx: 'approve' }))).toMatch(/does not exist/)
+    await expect(as('A_analyst').raw("select app_private.set_ctx('approve')")).rejects.toThrow(/permission denied for schema app_private/)
+    await expect(op.raw("select app_private.set_ctx('approve')")).rejects.toThrow(/permission denied for schema app_private/)
+  })
+
+  test('S11.2 worst case — a member WITH direct SQL sets the marker: privileges still refuse every protected write', async () => {
+    const v = F.DA2.v.version_id
+    const attempts = [
+      ["perform set_config('xcepta.ctx', 'approve', true); update public.versions set status = 'approved' where version_id = '" + v + "';", /permission denied/],
+      ["perform set_config('xcepta.ctx', 'approve', true); insert into public.model_outputs (version_id, project_id, tenant_id) values ('" + v + "', '" + F.DA2.p.project_id + "', '" + T.A + "');", /permission denied/],
+      ["perform set_config('xcepta.ctx', 'admin', true); update public.users set role = 'admin' where user_id = '" + U.A_analyst + "';", /permission denied/],
+      ["perform set_config('xcepta.ctx', 'admin', true); insert into public.tenants (name) values ('spoofed');", /permission denied/],
+      ["perform set_config('xcepta.ctx', 'purge', true); delete from public.projects where project_id = '" + F.PA.p.project_id + "';", /permission denied/],
+      ["perform set_config('xcepta.ctx', 'purge', true); delete from public.model_outputs where output_id = '" + F.OA.output_id + "';", /permission denied/],
+      ["perform set_config('xcepta.ctx', 'archive', true); update public.versions set status = 'archived' where version_id = '" + F.PA.v.version_id + "';", /permission denied/],
+    ]
+    for (const [body, re] of attempts) await expect(doAs('A_admin', body)).rejects.toThrow(re)
+    expect((await one('select status from versions where version_id = $1', [v])).status).toBe('draft')
+    expect((await one('select role from users where user_id = $1', [U.A_analyst])).role).toBe('analyst')
+  })
+
+  test('S11.3 the functions authorize independently of the marker (auth, tenant, role checked first)', async () => {
+    const draft = F.DA2.v.version_id
+    await expect(doAs('A_analyst', "perform set_config('xcepta.ctx', 'approve', true); perform public.approve_version('" + draft + "', '{}'::jsonb, null);")).rejects.toThrow(/NOT_AUTHORIZED/)
+    await expect(doAs('B_manager', "perform set_config('xcepta.ctx', 'approve', true); perform public.approve_version('" + draft + "', '{}'::jsonb, null);")).rejects.toThrow(/NOT_FOUND/)
+    await expect(asClient(pg, { role: 'authenticated', sub: U.orphan }).raw("do $x$ begin perform set_config('xcepta.ctx', 'approve', true); perform public.approve_version('" + draft + "', '{}'::jsonb, null); end $x$")).rejects.toThrow(/NOT_AUTHENTICATED/)
+    await expect(doAs('A_manager', "perform set_config('xcepta.ctx', 'admin', true); perform public.admin_set_member_role('" + U.A_analyst + "', 'admin');")).rejects.toThrow(/NOT_AUTHORIZED/)
+    await expect(doAs('A_analyst', "perform set_config('xcepta.ctx', 'delete', true); perform public.delete_project('" + F.DA2.p.project_id + "');")).rejects.toThrow(/NOT_AUTHORIZED/)
+    // spoofing the service-role claim does not grant EXECUTE on operator functions
+    await expect(doAs('A_admin', "perform set_config('request.jwt.claims', '{\"role\":\"service_role\"}', true); perform public.operator_set_member_role('" + U.A_analyst + "', 'admin', 'spoofed operator call');"))
+      .rejects.toThrow(/permission denied for function operator_set_member_role/)
+    expect((await one('select status from versions where version_id = $1', [draft])).status).toBe('draft')
+  })
+
+  test('S11.4 the marker never outlives the function — not reusable later in the same transaction, even by the service role', async () => {
+    // the service role HAS table privileges, so reuse would matter: after an operator call, direct identity / record writes are still refused
+    await expect(opDo("perform public.operator_set_member_role('" + U.A_viewer + "', 'viewer', 'reuse test: no-op role set');" +
+      " if coalesce(current_setting('xcepta.ctx', true), '') <> '' then raise exception 'ctx leaked'; end if;" +
+      " update public.users set role = 'admin' where user_id = '" + U.A_viewer + "';")).rejects.toThrow(/IDENTITY_PROTECTED/)
+    await expect(opDo("perform public.operator_create_tenant('reuse test tenant');" +
+      " delete from public.versions where version_id = '" + F.PA.v.version_id + "';")).rejects.toThrow(/RECORD_PROTECTED/)
+    // a failed call inside the transaction leaves no marker behind (its subtransaction is rolled back)
+    const r = await op.raw("do $x$ begin begin perform public.operator_move_member('" + U.A_viewer + "', '" + T.B + "', 'x'); exception when others then null; end;" +
+      " if coalesce(current_setting('xcepta.ctx', true), '') <> '' then raise exception 'ctx leaked after error'; end if; end $x$")
+    expect(r).toBeTruthy()
+    expect((await one('select role, tenant_id from users where user_id = $1', [U.A_viewer]))).toEqual({ role: 'viewer', tenant_id: T.A })
+  })
+
+  test('S11.5 static order: in every SEC-03 function the identity / operator check precedes setting the marker', async () => {
+    const { readFileSync } = await import('fs')
+    const src = readFileSync(new URL(SECURITY_MIGRATIONS[3], new URL('./helpers/', import.meta.url)), 'utf8')
+    const fns = src.split(/create or replace function /).slice(1).map(b => ({ name: b.slice(0, b.indexOf('(')), body: b }))
+    const setters = fns.filter(f => /app_private\.set_ctx\('[a-z]+'\)/.test(f.body))   // functions that set a privileged marker
+    expect(setters.length).toBe(13)
+    for (const f of setters) {
+      const firstSet = f.body.search(/app_private\.set_ctx\('[a-z]+'\)/)
+      const guard = Math.min(...['app_private.require_member()', 'app_private.require_operator()', 'app_private.require_admin_target(']
+        .map(g => f.body.indexOf(g)).filter(i => i >= 0))
+      expect([f.name, guard >= 0 && guard < firstSet]).toEqual([f.name, true])
+      const resets = (f.body.match(/app_private\.set_ctx\(''\)/g) || []).length
+      expect([f.name, resets]).toEqual([f.name, 1])
+    }
+  })
+})
