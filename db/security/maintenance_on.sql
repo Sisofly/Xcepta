@@ -5,6 +5,8 @@
 -- table access returns nothing / is refused, so no old or new client can make
 -- partial changes while application and database protections are switched.
 -- Definer functions (approve_version, …) keep their own server-side checks.
+-- Runs in one transaction: on any error no policy is created.
+begin;
 do $$
 declare t text;
 begin
@@ -15,3 +17,4 @@ begin
                       using (public.app_has_role(array[''admin''])) with check (public.app_has_role(array[''admin'']))', t || '_maintenance', t);
   end loop;
 end $$;
+commit;

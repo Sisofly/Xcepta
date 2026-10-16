@@ -5,10 +5,13 @@
 -- Expected structure, run 1:   sec03_functions 20 · last_admin_trigger 1 · sec04_triggers 0 ·
 --   sec04_policies 0 · maintenance_policies 0 · policies_now 28 · grants_md5_now 264e089a3a351afa75905fcd1f4b193c ·
 --   dev_engine_results_column 0 · min_active_admins_per_tenant >= 1
--- Run 2 (freeze on):  maintenance_policies 13, policies_now 41; everything else as run 1.
--- Run 3 (SEC-04 applied, freeze still on): sec04_triggers 8, sec04_policies 38, policies_now 79,
---   grants_md5_now changes (direct writes revoked — compare with the rehearsal value
---   in docs/SECURITY_REMEDIATION.md §4); data columns unchanged.
+-- Run 2 (freeze on + cutover lock on): maintenance_policies 13, policies_now 41,
+--   grants_md5_now fabdac15a44f3ca18df6fcb894f86101 (lock); everything else as run 1.
+--   (Freeze only, before the lock: grants unchanged, 264e089a…)
+-- Run 3 (SEC-04 applied, freeze and lock still on): sec04_triggers 8, sec04_policies 38, policies_now 79,
+--   grants_md5_now 24b12f0ed2ae58fa8ae7030c61b94989; data columns unchanged.
+-- After maintenance_off.sql: maintenance_policies 0, policies_now 66; grants unchanged (24b12f0e…).
+-- After cutover_lock_off.sql (later): grants_md5_now 8420a1981965e2e68785c10e12694499.
 -- Data-quality columns (report; nothing is fixed automatically):
 --   approved_without_result      — legacy approvals with no saved result: stay protected; operator-only correction.
 --   results_on_unapproved        — saved results attached to draft versions (old non-atomic approval / orphans):

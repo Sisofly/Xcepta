@@ -158,6 +158,27 @@ So **every** step of the old app's multi-request deletes, and the FP&A replaceme
 
 The freeze never changes the fingerprint. A failed SEC-04 leaves B (tested).
 
+### 4d. Maintenance freeze and the full cutover rehearsal
+
+**What the freeze does:**
+-  is one explicit transaction (, one  block, ). It creates 13 RESTRICTIVE, admin-only policies (, FOR ALL, to authenticated) and nothing else.
+-  (one statement) drops exactly those 13; SEC-01..04 policies and look-alikes are untouched. Both are idempotent.
+
+**Policy counts:**
+- 28 now, 41 with the freeze, 79 with the freeze and SEC-04, 66 after the freeze is off.
+- The freeze never changes grants or data.
+
+**Access during the freeze:**
+- Only **active** tenant admins can read or write, and only in their own tenant.
+- Managers, analysts, viewers and inactive admins see nothing in all 13 tables, and their writes are refused.
+- anon has no access. The service role is not subject to RLS (operator path).
+
+**SECURITY DEFINER functions** (owned by postgres, so RLS — the freeze included — does not apply inside them) keep running with every role check: a manager can still approve, an analyst can delete their own draft-only project, and viewers, inactive members and other tenants are refused. They are atomic, and the old Preview does not call them.
+
+**Freeze vs lock:** the freeze does **not** stop an admin using the old Preview. Between  and  that admin can still delete a whole project, completely (the current behaviour). The lock closes this, so **lock first** is recommended.
+
+**Verification:** a read-only row fingerprint, , proves the cutover changes no data. Tests:  (50 tests; 8/8 mutations caught).
+
 ### 4b. Temporary staging request gate — SUPERSEDED by 4c (not enforced by hosted PostgREST; removed from staging)
 
 **Why it's needed:** the maintenance freeze lets **admins** in, and both staging accounts are admins. So the freeze alone does **not** stop the old Preview's partial deletion (rehearsed).
