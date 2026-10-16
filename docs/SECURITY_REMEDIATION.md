@@ -119,7 +119,20 @@ Run `db/security/verify_security_catalog.sql` (read-only) after every step. Rows
 | S5 | `maintenance_on.sql` → apply `sec04` → catalog: **all rows pass** → `verify:staging`, isolation, security API checks (6 users) → `maintenance_off.sql` | Every check passes |
 | S6 | Browser check on Preview: approve as manager, refused as analyst, delete/archive, colleague visibility | Your check |
 
+### 4a. SEC-04 readiness finding — the deployed app must never run against SEC-04 (rehearsal 2026-10-16)
+
+The deployed app (`2e4994c`) deletes a project or scenario as a series of separate requests and **ignores the errors of the intermediate steps**. After SEC-04 the protected steps are refused, but the unprotected ones still succeed:
+- **Delete project:** the app shows "Delete failed", but the project's **assumptions, actuals and variances are already deleted**. Versions, results and the project itself are kept. This also happens for projects with approved versions.
+- **Delete scenario:** the scenario's assumptions are deleted; the scenario and versions are kept.
+- Its approvals fail closed, with nothing written. The RE scenario approval fails **silently**.
+
+**Proposed order (awaiting approval):** deploy the new app **before** SEC-04. The new app works against the post-SEC-03 database (SEC-03 rehearsal) and after a SEC-04 rollback. Then apply SEC-04 inside the freeze. For staging, either push `rc/ppp-v1` to Preview first (needs P0, because the repo is public), or verify with the new app run locally against staging (`npm run dev`; `.env.local` targets staging) and **do not use Delete on the Preview** until it runs the new app.
+
+Pre-flight: `db/security/sec04_preflight.sql` (read-only; run before the freeze, with the freeze on, and after SEC-04).
+
 ## 5. Production cutover (later, separate approval) — no inconsistent external window
+
+> **Proposed change (§4a, awaiting approval):** merge PR #3 (new app) after P1 and **before** P2–P3, so the old app is never live against SEC-04. P4 becomes a smoke test of the already-deployed app.
 
 | # | Step | Purpose |
 |---|---|---|
