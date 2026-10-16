@@ -130,7 +130,35 @@ The deployed app (`2e4994c`) deletes a project or scenario as a series of separa
 
 Pre-flight: `db/security/sec04_preflight.sql` (read-only; run before the freeze, with the freeze on, and after SEC-04).
 
-### 4b. Temporary staging request gate (old Preview isolated during the SEC-04 cutover)
+### 4c. SEC-04 cutover lock (replaces 4b) — temporary, staging only, privileges only
+
+**Why 4b was replaced:** it was installed and verified on staging, but the hosted PostgREST 14.x did not enforce it: the probe showed the gate inactive. It was then fully removed (`gate_configured 0`, `staging_gate_schema 0`, probe 10/10 OPEN). Its root cause is recorded with `db/security/postgrest_diagnostic.sql` (read-only).
+
+**What the lock does:** `cutover_lock_on.sql` removes from `authenticated`:
+- DELETE on assumptions, actuals, variances, versions, model_outputs, scenarios and projects;
+- INSERT on actuals and variances.
+
+So **every** step of the old app's multi-request deletes, and the FP&A replacement, is refused, before and after SEC-04. Admins are covered too, unlike the freeze. Before SEC-04 it also has to cover versions, model_outputs, scenarios and projects: `assumptions.scenario_id` has no cascade, so the old scenario delete would otherwise remove versions and results and then fail.
+
+**Unaffected:** the SEC-03 functions (security definer).
+
+**Paused while locked:** FP&A submission and resetting overrides or drivers.
+
+**Removing the lock:** `cutover_lock_off.sql` restores exactly what was removed, depending on the state. It never re-opens deletes that SEC-04 owns.
+
+**Checking the state:** `cutover_lock_preflight.sql` (read-only) and `scripts/staging/probe-lock.mjs --expect=locked|unlocked` (never writes). Tests: `tests/cutoverLock.test.js` (53 tests; 11/11 mutations caught).
+
+| Stage | lock_state | SEC-04 triggers | Grants fingerprint |
+|---|---|---|---|
+| A — now (post-SEC-03) | unlocked | 0 | `264e089a3a351afa75905fcd1f4b193c` |
+| B — locked, before SEC-04 | locked | 0 | `fabdac15a44f3ca18df6fcb894f86101` |
+| C — locked + SEC-04 | locked | 8 | `24b12f0ed2ae58fa8ae7030c61b94989` |
+| D — end state | unlocked | 8 | `8420a1981965e2e68785c10e12694499` |
+| R1 — SEC-04 rolled back while locked | PARTIAL | 0 | `d9706beb7c5baf5ef1109202a8e0ffd6` → re-run the lock (→ B) |
+
+The freeze never changes the fingerprint. A failed SEC-04 leaves B (tested).
+
+### 4b. Temporary staging request gate — SUPERSEDED by 4c (not enforced by hosted PostgREST; removed from staging)
 
 **Why it's needed:** the maintenance freeze lets **admins** in, and both staging accounts are admins. So the freeze alone does **not** stop the old Preview's partial deletion (rehearsed).
 
