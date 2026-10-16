@@ -9,39 +9,50 @@
 import { buildPPPOutputRecord, hydrateModelOutput, isMissingP022Columns } from './resultPersistence.js'
 
 export const P022_MIGRATION_FILE = 'db/migrations/2026-10-10_p022_versioned_model_outputs.sql'
+export const SEC03_MIGRATION_FILE = 'db/migrations/2026-10-16_sec03_lifecycle_functions.sql'
 
-// Write one immutable, versioned PPP result, then approve the version.
-//   1. insert the complete record (engine output, engine version, inputs)
-//   2. flip the version to approved
-// If step 2 fails, the just-inserted row is removed so no orphan result is
-// left on a draft version. If the P-022 columns are missing (migration not
-// applied) nothing is written and the version stays a draft.
+// Approve a version and save its complete, versioned PPP result — atomically,
+// on the server (SEC-03 approve_version): role (manager / admin), tenant and
+// draft status are checked by the database, and identity, tenant and project
+// are taken from the database and auth.uid(), not from this record. The
+// version is approved only if the result is saved, in one transaction.
+//   P022_MIGRATION_MISSING    — the P-022 result columns are missing
+//   SECURITY_MIGRATION_MISSING — the SEC-03 approval function is missing
+// Returns the stored model_outputs row.
 export async function savePPPApproval(db, {
-  output, assumptions, engineVersion, versionId, projectId, tenantId, userId, approvedLabel, approvedAt,
+  output, assumptions, engineVersion, versionId, projectId, tenantId, userId, approvedLabel,
 }) {
   const record = buildPPPOutputRecord(output, {
     assumptions, engineVersion, versionId, projectId, tenantId, userId,
   })
-  const { data: inserted, error: insertError } = await db.from('model_outputs').insert(record).select()
-  if (insertError) {
-    if (isMissingP022Columns(insertError)) {
+  const { data: outputId, error } = await db.rpc('approve_version', {
+    p_version_id: versionId, p_record: record, p_label: approvedLabel || null,
+  })
+  if (error) {
+    if (isMissingP022Columns(error)) {
       const e = new Error('The database has not been upgraded for versioned results (P-022 migration). ' +
         'Approval cancelled — nothing was saved. Please ask an administrator to apply ' + P022_MIGRATION_FILE + '.')
       e.code = 'P022_MIGRATION_MISSING'
       throw e
     }
-    throw insertError
+    if (isMissingApprovalFunction(error)) {
+      const e = new Error('The database has not been upgraded for secured approvals (SEC-03 migration). ' +
+        'Approval cancelled — nothing was saved. Please ask an administrator to apply ' + SEC03_MIGRATION_FILE + '.')
+      e.code = 'SECURITY_MIGRATION_MISSING'
+      throw e
+    }
+    throw error
   }
-  const { error: approveError } = await db.from('versions').update({
-    status: 'approved', approved_at: approvedAt || new Date().toISOString(), label: approvedLabel,
-  }).eq('version_id', versionId)
-  if (approveError) {
-    const row = Array.isArray(inserted) ? inserted[0] : inserted
-    const pk = row && ['output_id', 'model_output_id', 'id'].find(k => row[k] != null)
-    if (pk) await db.from('model_outputs').delete().eq(pk, row[pk])
-    throw approveError
-  }
-  return Array.isArray(inserted) ? inserted[0] : inserted
+  const { data: rows, error: readError } = await db.from('model_outputs').select('*').eq('output_id', outputId)
+  if (readError) throw readError
+  return rows && rows[0] ? rows[0] : { output_id: outputId }
+}
+
+// PostgREST (PGRST202) or Postgres (42883) error for a missing function.
+export function isMissingApprovalFunction(error) {
+  if (!error) return false
+  const text = [error.code, error.message, error.details, error.hint].filter(Boolean).join(' ')
+  return /approve_version/.test(text) && /(PGRST202|42883|does not exist|Could not find the function)/i.test(text)
 }
 
 // Latest stored result for a version, hydrated for display (any engine).

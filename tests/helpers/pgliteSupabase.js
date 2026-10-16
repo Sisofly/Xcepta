@@ -70,6 +70,24 @@ class Query {
   }
 }
 
+// rpc(fn, { arg: value }) → select public.fn(arg => $1 …) — like supabase-js
+// rpc over PostgREST: { data: <function result>, error }.
+async function rpc(pg, fn, args) {
+  const names = Object.keys(args || {})
+  const params = names.map(k => toParam(args[k]))
+  const sql = 'select public.' + ident(fn) + '(' + names.map((k, i) => ident(k) + ' => $' + (i + 1)).join(', ') + ') as result'
+  try {
+    const res = await pg.query(sql, params)
+    return { data: res.rows[0] ? res.rows[0].result : null, error: null }
+  } catch (e) {
+    return { data: null, error: { code: e.code, message: e.message, details: e.detail || null, hint: e.hint || null } }
+  }
+}
+
 export function supabaseLike(pg) {
-  return { from: table => new Query(pg, table) }
+  return {
+    from: table => new Query(pg, table),
+    rpc: (fn, args) => rpc(pg, fn, args),
+    raw: (sql, params) => pg.query(sql, params),
+  }
 }

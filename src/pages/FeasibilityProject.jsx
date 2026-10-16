@@ -232,6 +232,9 @@ export default function FeasibilityProject() {
   const [savingOverride, setSavingOverride] = useState(false)
   const [openGroups, setOpenGroups] = useState({ 'Market Dynamics': true })
   const [preparedBy, setPreparedBy] = useState('')
+  const [myRole, setMyRole] = useState(null)
+  // Approval requires manager / admin (enforced by approve_version on the server).
+  const canApprove = !myRole || myRole === 'manager' || myRole === 'admin'
 
   useEffect(() => {
     async function load() {
@@ -285,6 +288,8 @@ export default function FeasibilityProject() {
       if (authUser) {
         const { data: userRow } = await supabase.from('users').select('*').eq('user_id', authUser.id).single()
         setPreparedBy((userRow && (userRow.full_name || userRow.name)) ? (userRow.full_name || userRow.name) : authUser.email || '')
+        // SEC: role for presentation only — the database enforces every rule
+        setMyRole(userRow && userRow.role ? userRow.role : null)
       }
       setLoading(false)
     }
@@ -467,13 +472,10 @@ export default function FeasibilityProject() {
     if (!window.confirm(msg)) return
     setScDeletingId(sc.scenario_id)
     try {
-      if (sc.latestVersion) {
-        await supabase.from('model_outputs').delete().eq('version_id', sc.latestVersion.version_id)
-        await supabase.from('versions').delete().eq('scenario_id', sc.scenario_id)
-      }
-      await supabase.from('assumptions').delete()
-        .eq('project_id', projectId).eq('scenario_id', sc.scenario_id)
-      await supabase.from('scenarios').delete().eq('scenario_id', sc.scenario_id)
+      // SEC-03: draft-only scenarios are deleted on the server; approved or
+      // archived records are protected (archive instead)
+      const { error: delErr } = await supabase.rpc('delete_scenario', { p_scenario_id: sc.scenario_id })
+      if (delErr) throw delErr
       await loadScenarios()
     } catch (err) { alert('Delete failed: ' + err.message) }
     finally { setScDeletingId(null) }
@@ -559,11 +561,6 @@ export default function FeasibilityProject() {
         await loadScenarios()
         return
       }
-      await supabase.from('versions').update({
-        status: 'approved', approved_at: new Date().toISOString(), label: newLabel,
-      }).eq('version_id', sc.latestVersion.version_id)
-      const { data: { user } } = await supabase.auth.getUser()
-      const { data: userData } = await supabase.from('users').select('tenant_id').eq('user_id', user.id).single()
       // Merge: project-level defaults → project-level overrides → scenario-level driver overrides
       const scenarioDriverOverrides = {}
       if (sc.drivers) {
@@ -577,12 +574,13 @@ export default function FeasibilityProject() {
       const output = scPPPAP
         ? runPPPEngine(sc.assumptions || assumptions)
         : runEngine(sc.assumptions, mergedDefs)
-      await supabase.from('model_outputs').insert({
-        version_id: sc.latestVersion.version_id, project_id: projectId,
-        tenant_id: userData.tenant_id, irr: output.irr, npv: output.npv,
-        equity_multiple: output.equity_multiple, dscr_series: output.dscr_series,
-        cash_flows: output.cash_flows, created_by: user.id,
+      // SEC-03: approval and result are saved atomically on the server
+      const { error: apErr } = await supabase.rpc('approve_version', {
+        p_version_id: sc.latestVersion.version_id, p_label: newLabel,
+        p_record: { irr: output.irr, npv: output.npv, equity_multiple: output.equity_multiple,
+                    dscr_series: output.dscr_series, cash_flows: output.cash_flows },
       })
+      if (apErr) throw apErr
       await loadScenarios()
     } catch (err) { alert('Error: ' + err.message) }
     finally { setScApproving(null) }
@@ -728,24 +726,14 @@ export default function FeasibilityProject() {
         return
       }
 
-      // ── Engine succeeded — flip the version to approved ──
-      const { error } = await supabase.from('versions').update({
-        status: 'approved', approved_at: new Date().toISOString(), label: newLabel,
-      }).eq('version_id', version.version_id)
-      if (error) throw error
-
-      // ── Persist engine output to model_outputs so the Results tab can render it ──
-      const { data: { user } } = await supabase.auth.getUser()
-      const { data: userData } = await supabase.from('users')
-        .select('tenant_id').eq('user_id', user.id).single()
-      const { error: insertError } = await supabase.from('model_outputs').insert({
-        version_id: version.version_id, project_id: projectId,
-        tenant_id: userData.tenant_id,
-        irr: output.irr, npv: output.npv, equity_multiple: output.equity_multiple,
-        dscr_series: output.dscr_series, cash_flows: output.cash_flows,
-        created_by: user.id,
+      // ── SEC-03: approve and save the result atomically on the server
+      // (role, tenant and draft status are checked by the database) ──
+      const { error } = await supabase.rpc('approve_version', {
+        p_version_id: version.version_id, p_label: newLabel,
+        p_record: { irr: output.irr, npv: output.npv, equity_multiple: output.equity_multiple,
+                    dscr_series: output.dscr_series, cash_flows: output.cash_flows },
       })
-      if (insertError) throw insertError
+      if (error) throw error
 
       const approvedVersion = { ...version, status: 'approved', approved_at: new Date().toISOString(), label: newLabel }
       setVersion(approvedVersion)
@@ -2690,11 +2678,15 @@ export default function FeasibilityProject() {
                 <PPPMessages error={pppLiveCheck.error} warnings={pppLiveCheck.warnings}
                   title="Checks on the current inputs" />
               )}
-              <button onClick={handleApprove} disabled={approving || unsupportedPF || !!(pppLiveCheck && pppLiveCheck.error)}
+              <button onClick={handleApprove} disabled={approving || unsupportedPF || !canApprove || !!(pppLiveCheck && pppLiveCheck.error)}
+                title={!canApprove ? 'Approving requires the manager or admin role' : undefined}
                 style={{padding:'0.55rem 1.4rem',background:colors.success,color:'white',border:`1px solid ${colors.success}`,
-                  borderRadius:'6px',cursor:approving?'not-allowed':'pointer',fontSize:'0.875rem',fontWeight:'500',opacity:approving?0.6:1}}>
+                  borderRadius:'6px',cursor:approving||!canApprove?'not-allowed':'pointer',fontSize:'0.875rem',fontWeight:'500',opacity:approving||!canApprove?0.6:1}}>
                 {approving ? 'Approving & running model...' : 'Approve Version'}
               </button>
+              {!canApprove && (
+                <p style={{fontSize:'0.72rem',color:colors.textMuted,marginTop:'0.4rem'}}>Approving a version requires the manager or admin role.</p>
+              )}
             </div>
           ) : (
             <div>
@@ -3516,7 +3508,8 @@ export default function FeasibilityProject() {
                           </span>
                           {isDraft && (
                             <button onClick={() => handleApproveScenario(sc)}
-                              disabled={scApproving === sc.scenario_id}
+                              disabled={scApproving === sc.scenario_id || !canApprove}
+                              title={!canApprove ? 'Approving requires the manager or admin role' : undefined}
                               style={{padding:'0.3rem 0.8rem',background:colors.success,color:'white',border:'none',
                                 borderRadius:'5px',cursor:'pointer',fontSize:'0.75rem',
                                 opacity:scApproving===sc.scenario_id?0.6:1}}>

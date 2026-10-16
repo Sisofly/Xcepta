@@ -169,21 +169,23 @@ async function main() {
   try {
     const { version } = await createSyntheticProject('Legacy row display', BASE, user, tenantId)
     const out = runPPPEngine(Object.entries(BASE).map(([name, value]) => ({ name, value })))
-    await q(db.from('model_outputs').insert({ version_id: version.version_id, project_id: created.projects.at(-1), tenant_id: tenantId,
-      created_by: user.id, irr: out.irr, npv: out.npv, equity_multiple: out.equity_multiple, dscr_series: out.dscr_series,
-      cash_flows: out.cash_flows }))
+    // A pre-P-022-shaped record (legacy columns only), approved through the
+    // secured server function — direct result inserts are refused (SEC-04).
+    await q(db.rpc('approve_version', { p_version_id: version.version_id, p_label: 'v1.0 Approved',
+      p_record: { irr: out.irr, npv: out.npv, equity_multiple: out.equity_multiple, dscr_series: out.dscr_series, cash_flows: out.cash_flows } }))
     const shown = await loadLatestModelOutput(db, version.version_id)
     check('Legacy row · displayed and flagged historical', shown && shown._persistence.legacy === true && shown.irr === out.irr)
   } catch (e) { check('Legacy row · display', false, e.message) }
 
   console.table(results)
   if (cleanup) {
-    for (const v of created.versions) { await db.from('model_outputs').delete().eq('version_id', v); await db.from('intake_state').delete().eq('version_id', v) }
-    for (const p of created.projects) await db.from('assumptions').delete().eq('project_id', p)
-    for (const v of created.versions) await db.from('versions').delete().eq('version_id', v)
-    for (const s of created.scenarios) await db.from('scenarios').delete().eq('scenario_id', s)
-    for (const p of created.projects) await db.from('projects').delete().eq('project_id', p)
-    console.log('Cleanup attempted for ' + created.projects.length + ' synthetic project(s).')
+    // SEC-03/04: approved records cannot be deleted by members; only draft-only
+    // projects are removed here. Approved synthetic projects are removed by the
+    // platform operator (operator_purge_project, with reason and confirmation).
+    let removed = 0
+    for (const p of created.projects) { const { error } = await db.rpc('delete_project', { p_project_id: p }); if (!error) removed++ }
+    console.log('Cleanup: ' + removed + ' draft-only project(s) deleted; ' + (created.projects.length - removed) +
+      ' approved synthetic project(s) kept (operator purge only).')
   } else {
     console.log('Synthetic projects kept (names start with "SYNTHETIC —"). Re-run with -- --cleanup to delete them.')
   }

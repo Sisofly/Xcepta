@@ -82,7 +82,9 @@ async function main() {
         const still = await a.from('projects').select('project_id').eq('project_id', probe.data.project_id)
         check('User B cannot delete user A\'s project', (still.data || []).length === 1 ? 'PASS' : 'FAIL')
       }
-      await a.from('projects').delete().eq('project_id', probe.data.project_id)
+      // SEC-03/04: members delete only draft-only projects, through the server function
+      const del = await a.rpc('delete_project', { p_project_id: probe.data.project_id })
+      if (del.error && /Could not find the function|PGRST202/.test(del.error.message)) await a.from('projects').delete().eq('project_id', probe.data.project_id)   // before SEC-03
     }
   }
 

@@ -69,22 +69,13 @@ export default function Feasibility() {
   async function handleDelete(e, projectId, projectName) {
     e.stopPropagation()
     const confirmed = window.confirm(
-      'Permanently delete "' + projectName + '"?\n\nThis will delete the project and all associated data including assumptions, versions, model outputs, actuals, and variances.\n\nThis cannot be undone.'
+      'Permanently delete "' + projectName + '"?\n\nOnly projects without approved or archived versions can be deleted; approved results are kept (archive the project instead).\n\nThis cannot be undone.'
     )
     if (!confirmed) return
     setDeletingId(projectId)
     try {
-      await supabase.from('model_outputs').delete().eq('project_id', projectId)
-      await supabase.from('variances').delete().eq('project_id', projectId)
-      await supabase.from('actuals').delete().eq('project_id', projectId)
-      await supabase.from('assumptions').delete().eq('project_id', projectId)
-      const { data: scenarios } = await supabase.from('scenarios').select('scenario_id').eq('project_id', projectId)
-      if (scenarios && scenarios.length) {
-        const scenarioIds = scenarios.map(s => s.scenario_id)
-        await supabase.from('versions').delete().in('scenario_id', scenarioIds)
-      }
-      await supabase.from('scenarios').delete().eq('project_id', projectId)
-      const { error } = await supabase.from('projects').delete().eq('project_id', projectId)
+      // SEC-03: deleted on the server, draft-only (approved records are protected)
+      const { error } = await supabase.rpc('delete_project', { p_project_id: projectId })
       if (error) throw error
       fetchProjects(viewMode)
     } catch (err) {
