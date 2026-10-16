@@ -38,8 +38,9 @@ const asMember = uid => `select set_config('request.jwt.claims', '{"role":"authe
 
 async function setupDb(db) {
   run('createdb', ['-h', 'localhost', '-p', PORT, '-U', 'postgres', db])
+  // replacer function: a replacement *string* would turn $$ into $
   sql(db, SUPABASE_STUBS.replace('create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;',
-    `do $$ begin if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls; end if; end $$;`))
+    () => `do $$ begin if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls; end if; end $$;`))
   sqlFile(db, 'tests/fixtures/xcepta_production_schema.sql')
   for (const m of SECURITY_MIGRATIONS) sqlFile(db, new URL(m, new URL('../../tests/helpers/', import.meta.url)).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
   const t = sql(db, `${asOperator} select public.operator_create_tenant('Race tenant');`).split('\n').pop()
@@ -50,68 +51,68 @@ async function setupDb(db) {
 }
 const admins = (db, t) => Number(sql(db, `select count(*) from public.users where tenant_id = '${t}' and role = 'admin' and active;`))
 
-// Session 1 holds its transaction open for HOLD ms after its change; session 2 starts meanwhile.
-async function race(db, s1, s2, { iso = '' } = {}) {
-  const p1 = session(db, `begin; ${s1} select pg_sleep(2.5); commit;`)
-  await sleep(700)
+// Session 1 holds its transaction open for 2.5 s after its change; session 2 starts meanwhile.
+// Both sessions run at the given isolation level.
+const HOLD_MS = 2500, START_GAP_MS = 700
+async function race(db, s1, s2, iso) {
+  const p1 = session(db, `begin isolation level ${iso}; ${s1} select pg_sleep(${HOLD_MS / 1000}); commit;`)
+  await sleep(START_GAP_MS)
   const t0 = Date.now()
-  const p2 = session(db, `begin ${iso}; ${s2} commit;`)
+  let t2 = 0
+  const p2 = session(db, `begin isolation level ${iso}; ${s2} commit;`).then(r => { t2 = Date.now(); return r })
   const [r1, r2] = await Promise.all([p1, p2])
-  return { r1, r2, waitedMs: Date.now() - t0 }
+  return { r1, r2, waitedMs: t2 - t0 }                   // session 2's own duration
 }
+
+const ISOLATION = ['read committed', 'repeatable read', 'serializable']
+const SCENARIOS = [
+  { key: 'demote', name: 'operator demotes both admins',
+    s1: x => `${asOperator} select public.operator_set_member_role('${x.a1}', 'analyst', 'parallel demotion test one');`,
+    s2: x => `${asOperator} select public.operator_set_member_role('${x.a2}', 'analyst', 'parallel demotion test two');` },
+  { key: 'cross', name: 'admins demote / deactivate each other',
+    s1: x => `${asMember(x.a1)} select public.admin_set_member_role('${x.a2}', 'manager');`,
+    s2: x => `${asMember(x.a2)} select public.admin_set_member_active('${x.a1}', false);` },
+  { key: 'selfdown', name: 'both admins deactivate themselves',
+    s1: x => `${asMember(x.a1)} select public.admin_set_member_active('${x.a1}', false);`,
+    s2: x => `${asMember(x.a2)} select public.admin_set_member_active('${x.a2}', false);` },
+  { key: 'move', name: 'operator moves both admins out',
+    s1: x => `${asOperator} select public.operator_move_member('${x.a1}', '${x.other}', 'parallel move test one');`,
+    s2: x => `${asOperator} select public.operator_move_member('${x.a2}', '${x.other}', 'parallel move test two');` },
+  { key: 'control', control: true, name: 'CONTROL: operator demotion, protection removed',
+    s1: x => `${asOperator} select public.operator_set_member_role('${x.a1}', 'analyst', 'parallel demotion test one');`,
+    s2: x => `${asOperator} select public.operator_set_member_role('${x.a2}', 'analyst', 'parallel demotion test two');` },
+]
+const REMOVE_PROTECTION = `drop trigger users_last_admin_guard on public.users;
+  create or replace function app_private.lock_tenant(p_tenant uuid) returns void language sql volatile security definer set search_path = '' as $$ select $$;`
 
 const report = []
 try {
   run('initdb', ['-D', data, '-U', 'postgres', '--auth=trust', '-E', 'UTF8', '--locale=C'])
-  run('pg_ctl', ['-D', data, '-l', join(dir, 'pg.log'), '-o', `-p ${PORT} -c listen_addresses=localhost`, '-w', 'start'])
-  console.log('PostgreSQL ' + sql('postgres', 'show server_version;') + ' (local, localhost:' + PORT + ', throwaway)')
+  // stdio 'ignore': the server inherits pg_ctl's handles; a captured pipe would never close (Windows)
+  run('pg_ctl', ['-D', data, '-l', join(dir, 'pg.log'), '-o', `-p ${PORT} -c listen_addresses=localhost`, '-w', 'start'], { stdio: 'ignore' })
+  console.log('PostgreSQL ' + sql('postgres', 'show server_version;') + ' (local, ' + sql('postgres', 'show listen_addresses;') + ':' + PORT + ', throwaway)')
 
-  // 1. operator demotes both admins in parallel
-  {
-    const { t, a1, a2 } = await setupDb('race1')
-    const r = await race('race1', `${asOperator} select public.operator_set_member_role('${a1}', 'analyst', 'parallel demotion test one');`,
-                                  `${asOperator} select public.operator_set_member_role('${a2}', 'analyst', 'parallel demotion test two');`)
-    report.push(['operator demotes both admins in parallel', r, admins('race1', t)])
-  }
-  // 2. tenant admins act against each other in parallel (A1 demotes A2 while A2 deactivates A1)
-  {
-    const { t, a1, a2 } = await setupDb('race2')
-    const r = await race('race2', `${asMember(a1)} select public.admin_set_member_role('${a2}', 'manager');`,
-                                  `${asMember(a2)} select public.admin_set_member_active('${a1}', false);`)
-    report.push(['admins demote / deactivate each other in parallel', r, admins('race2', t)])
-  }
-  // 3. same as 1 under REPEATABLE READ for the second session
-  {
-    const { t, a1, a2 } = await setupDb('race3')
-    const r = await race('race3', `${asOperator} select public.operator_set_member_role('${a1}', 'analyst', 'parallel demotion test one');`,
-                                  `${asOperator} select public.operator_set_member_role('${a2}', 'analyst', 'parallel demotion test two');`, { iso: 'isolation level repeatable read' })
-    report.push(['parallel demotion, second session REPEATABLE READ', r, admins('race3', t)])
-  }
-  // 4. operator moves both admins out in parallel
-  {
-    const { t, a1, a2 } = await setupDb('race4')
-    const other = sql('race4', `${asOperator} select public.operator_create_tenant('Other tenant');`).split('\n').pop()
-    const r = await race('race4', `${asOperator} select public.operator_move_member('${a1}', '${other}', 'parallel move test one');`,
-                                  `${asOperator} select public.operator_move_member('${a2}', '${other}', 'parallel move test two');`)
-    report.push(['operator moves both admins out in parallel', r, admins('race4', t)])
-  }
-  // 5. CONTROL — protection removed (trigger dropped, tenant lock a no-op): the race must reproduce
-  {
-    const { t, a1, a2 } = await setupDb('race5')
-    sql('race5', `drop trigger users_last_admin_guard on public.users;
-      create or replace function app_private.lock_tenant(p_tenant uuid) returns void language sql volatile security definer set search_path = '' as $$ select $$;`)
-    const r = await race('race5', `${asOperator} select public.operator_set_member_role('${a1}', 'analyst', 'parallel demotion test one');`,
-                                  `${asOperator} select public.operator_set_member_role('${a2}', 'analyst', 'parallel demotion test two');`)
-    report.push(['CONTROL: same race with the protection removed', r, admins('race5', t)])
+  let i = 0
+  for (const sc of SCENARIOS) for (const iso of ISOLATION) {
+    const db = 'race' + (++i)
+    const x = await setupDb(db)
+    if (sc.key === 'move') x.other = sql(db, `${asOperator} select public.operator_create_tenant('Other tenant');`).split('\n').pop()
+    if (sc.control) sql(db, REMOVE_PROTECTION)
+    if (admins(db, x.t) !== 2) throw new Error(db + ': setup did not create 2 active admins')
+    const r = await race(db, sc.s1(x), sc.s2(x), iso)
+    report.push({ sc, iso, r, n: admins(db, x.t) })
   }
   let ok = true
-  for (const [name, r, n] of report) {
-    const control = name.startsWith('CONTROL')
-    const pass = control ? n === 0 : n >= 1
+  for (const { sc, iso, r, n } of report) {
+    const c1 = r.r1.code === 0, c2 = r.r2.code === 0
+    const waited = r.waitedMs >= HOLD_MS - START_GAP_MS - 300
+    // Protected: exactly one change commits, one admin is left, and session 2 waited for session 1 (tenant lock).
+    // Control: both changes commit and the tenant is left without an active admin (the race is real).
+    const pass = sc.control ? (c1 && c2 && n === 0) : (c1 && !c2 && n === 1 && waited)
     ok = ok && pass
-    const second = r.r2.code === 0 ? 'committed' : 'refused: ' + (r.r2.out.match(/(LAST_ADMIN[^\n]*|NOT_AUTHORIZED[^\n]*|could not serialize[^\n]*)/) || [r.r2.out.split('\n').pop()])[0]
-    console.log((pass ? 'PASS ' : 'FAIL ') + name.padEnd(52) + ' | session 1 ' + (r.r1.code === 0 ? 'committed' : 'failed') +
-      ' | session 2 waited ' + (r.waitedMs / 1000).toFixed(1) + 's, ' + second + ' | active admins left: ' + n + (control ? ' (expected 0 — race reproduced)' : ''))
+    const second = c2 ? 'committed' : 'refused: ' + (r.r2.out.match(/(LAST_ADMIN[^\n]*|NOT_AUTHORIZED[^\n]*|could not serialize[^\n]*|deadlock[^\n]*)/) || [r.r2.out.split('\n').pop()])[0]
+    console.log((pass ? 'PASS ' : 'FAIL ') + (sc.name + ' [' + iso + ']').padEnd(66) + ' | s1 ' + (c1 ? 'committed' : 'FAILED: ' + r.r1.out.split('\n').pop()) +
+      ' | s2 waited ' + (r.waitedMs / 1000).toFixed(1) + 's, ' + second + ' | active admins left: ' + n + (sc.control ? ' (control expects 0)' : ''))
   }
   console.log(ok ? '\nALL CONCURRENCY CHECKS PASSED' : '\nCONCURRENCY CHECK FAILED')
   process.exitCode = ok ? 0 : 1

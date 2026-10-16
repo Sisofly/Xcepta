@@ -73,7 +73,10 @@
 - **Tests:**
   - S12: every path and the override;
   - S12.7: the tenant lock is actually taken on every path (single session);
-  - `scripts/security/pg17-concurrency.mjs`: genuinely parallel sessions on a real PostgreSQL 17 server, including a control run with the protection removed. **Not yet executed:** this machine has only PostgreSQL client tools.
+  - `scripts/security/pg17-concurrency.mjs`: genuinely parallel sessions on a real PostgreSQL 17 server (throwaway local cluster, localhost only). **Executed 2026-10-16 on PostgreSQL 17.11 (official EDB binaries): 15/15 pass.**
+    - 4 scenarios (operator demotes both admins; admins demote/deactivate each other; both admins deactivate themselves; operator moves both admins out) × READ COMMITTED, REPEATABLE READ and SERIALIZABLE (both sessions).
+    - Every protected run: session 2 blocked ~1.8–2.0 s on the tenant lock, then was refused (`LAST_ADMIN` under READ COMMITTED; `could not serialize access` under REPEATABLE READ / SERIALIZABLE); exactly one active admin left.
+    - Control (trigger dropped, tenant lock a no-op), at all three levels: session 2 did not wait (0.1 s), both committed, **0** active admins — the race is real, and SERIALIZABLE alone does not prevent it.
 
 ## 2. Workflows that change
 
