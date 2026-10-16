@@ -2,7 +2,8 @@
 -- editor (staging first) before and after each security migration. It changes
 -- nothing. Every row must show pass = true once SEC-04 is applied; before that,
 -- the rows for later steps show false (expected).
-begin read only;
+-- A single SELECT (read-only by construction), so the Supabase SQL Editor shows
+-- its result grid; with psql use PGOPTIONS='-c default_transaction_read_only=on'.
 with
 defs as (
   select n.nspname || '.' || p.proname as fn, p.oid, pg_get_userbyid(p.proowner) as owner, p.proconfig
@@ -115,4 +116,3 @@ checks(step, check_name, pass, detail) as (
          not (has_schema_privilege('anon', 'public', 'CREATE') or has_schema_privilege('authenticated', 'public', 'CREATE')), null
 )
 select step, check_name, pass, detail from checks order by step, check_name;
-rollback;
