@@ -11,8 +11,10 @@
 -- items · manager approves and archives · admin manages members of its tenant ·
 -- platform operator (service role) creates tenants, adds/moves members and is
 -- the ONLY path that can permanently delete approved records.
+-- Runs in one transaction: on any error nothing is applied.
 -- Idempotent. Rollback: db/migrations/rollback/2026-10-16_sec03_rollback.sql
 -- ---------------------------------------------------------------------------
+begin;
 
 -- ── Approval: the only way a version becomes approved ─────────────────────
 create or replace function public.approve_version(p_version_id uuid, p_record jsonb, p_label text default null)
@@ -388,3 +390,5 @@ grant execute on function public.operator_create_tenant(text, text, text), publi
   public.operator_move_member(uuid, uuid, text), public.operator_purge_project(uuid, text, text),
   public.operator_set_member_role(uuid, text, text)
   to service_role;
+
+commit;

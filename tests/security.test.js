@@ -9,6 +9,7 @@
  * no membership, the anonymous role, the service role and the database owner.
  */
 import { createSecurityDb, asClient, SECURITY_MIGRATIONS } from './helpers/pgliteSecurity.js'
+import { splitSqlStatements, runLikePsql } from './helpers/sqlStatements.js'
 import { runPPPEngine, PPP_ENGINE_VERSION } from '../src/modules/feasibility/annualEngine.js'
 import { savePPPApproval, loadLatestModelOutput } from '../src/modules/feasibility/pppResultStore.js'
 import { exactDiff } from '../scripts/staging/exact-compare.mjs'
@@ -165,7 +166,8 @@ describe('S1 identity (B1) — no self-assignment of tenant, role or identity fi
     expect(msg(await owner.from('users').update({ role: 'admin' }).eq('user_id', U.A_viewer))).toMatch(/IDENTITY_PROTECTED/)
     expect(msg(await op.from('users').insert({ user_id: uuid(), tenant_id: T.A, email: 'z@x.test', name: 'z' }).select())).toMatch(/IDENTITY_PROTECTED/)
     expect(msg(await op.from('tenants').delete().eq('tenant_id', T.B))).toMatch(/IDENTITY_PROTECTED/)        // no tenant cascade either
-    await expect(op.raw('truncate public.users cascade')).rejects.toThrow(/RECORD_PROTECTED: [a-z_]+ cannot be truncated/)
+    await expect(op.raw('truncate public.users cascade')).rejects.toThrow(/permission denied for table users/)          // C1: no TRUNCATE privilege
+    await expect(owner.raw('truncate public.users cascade')).rejects.toThrow(/RECORD_PROTECTED: [a-z_]+ cannot be truncated/) // trigger layer (owner)
     expect((await one('select role from users where user_id = $1', [U.A_viewer])).role).toBe('viewer')
   })
 
@@ -507,7 +509,7 @@ describe('S9 integrity proof and migration behaviour', () => {
     const { readFileSync } = await import('fs')
     const res = await pg.exec(readFileSync(new URL('../db/security/verify_security_catalog.sql', import.meta.url), 'utf8'))
     const checks = res.find(r => r.rows && r.rows.length && 'check_name' in r.rows[0]).rows
-    expect(checks.length).toBe(17)
+    expect(checks.length).toBe(22)
     expect(checks.filter(c => !c.pass).map(c => c.step + ' ' + c.check_name + ' ' + (c.detail || ''))).toEqual([])
   })
 
@@ -524,8 +526,13 @@ describe('S9 integrity proof and migration behaviour', () => {
       triggers: (await db.query("select tgrelid::regclass::text || ':' || tgname as t from pg_trigger where not tgisinternal and tgrelid::regclass::text <> 'audit_events' order by 1")).rows.map(r => r.t),
     })
     const baseline = await snap(db3)
-    for (const m of SECURITY_MIGRATIONS.slice(1)) await db3.exec(readFileSync(new URL(m, new URL('./helpers/', import.meta.url)), 'utf8'))
+    for (const m of SECURITY_MIGRATIONS.slice(1, 4)) await db3.exec(readFileSync(new URL(m, new URL('./helpers/', import.meta.url)), 'utf8'))
+    const afterSec03 = await snap(db3)
+    await db3.exec(readFileSync(new URL(SECURITY_MIGRATIONS[4], new URL('./helpers/', import.meta.url)), 'utf8'))
     expect((await snap(db3)).policies).not.toEqual(baseline.policies)
+    await db3.exec(readFileSync(new URL('../db/migrations/rollback/2026-10-16_sec04_rollback.sql', import.meta.url), 'utf8'))
+    expect(await snap(db3)).toEqual(afterSec03)                                  // SEC-04 rollback -> exactly post-SEC-03
+    await db3.exec(readFileSync(new URL(SECURITY_MIGRATIONS[4], new URL('./helpers/', import.meta.url)), 'utf8'))
     for (const r of ['04', '03', '02', '01']) await db3.exec(readFileSync(new URL(`../db/migrations/rollback/2026-10-16_sec${r}_rollback.sql`, import.meta.url), 'utf8'))
     expect(await snap(db3)).toEqual(baseline)
     expect((await db3.query("select count(*)::int n from information_schema.tables where table_name = 'audit_events'")).rows[0].n).toBe(1)  // audit history kept
@@ -569,4 +576,126 @@ describe('S9 integrity proof and migration behaviour', () => {
     expect(pol).toBe(pol1)
     await db2.close()
   })
+})
+
+// ═════════════════════════════════════════════════════════════════════════
+describe('S10 privileges (C1, C2): TRUNCATE / TRIGGER / REFERENCES, default privileges, ownership differences', () => {
+  const verify = async db => {
+    const { readFileSync } = await import('fs')
+    const res = await db.exec(readFileSync(new URL('../db/security/verify_security_catalog.sql', import.meta.url), 'utf8'))
+    return res.find(r => r.rows && r.rows.length && 'check_name' in r.rows[0]).rows
+  }
+  const failing = rows => rows.filter(c => !c.pass).map(c => c.check_name)
+
+  test('S10.1 only the owner holds TRUNCATE / TRIGGER / REFERENCES; TRUNCATE (which bypasses RLS) is refused for every API role', async () => {
+    const holders = (await pg.query(`select c.relname, r.rolname from pg_class c join pg_namespace n on n.oid = c.relnamespace
+        cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
+       where n.nspname = 'public' and c.relkind = 'r' and has_table_privilege(r.rolname, c.oid, 'TRUNCATE,TRIGGER,REFERENCES')`)).rows
+    expect(holders).toEqual([])
+    for (const t of ['assumptions', 'actuals', 'variances', 'intake_state', 'static_defaults', 'projects', 'model_outputs']) {
+      await expect(op.raw('truncate public.' + t)).rejects.toThrow(/permission denied/)
+      await expect(as('A_admin').raw('truncate public.' + t)).rejects.toThrow(/permission denied/)
+    }
+  })
+
+  test('S10.2 legitimate service-role and operator operations still work', async () => {
+    const id = ok(await op.from('actuals').insert({ tenant_id: T.A, period: '2030-01', coa_node: 'REV_AVAILABILITY', amount: 10, project_id: F.PA.p.project_id }).select())[0].actual_id
+    ok(await op.from('actuals').update({ amount: 11 }).eq('actual_id', id))
+    expect(ok(await op.from('actuals').select('*').eq('actual_id', id))[0].amount).toBe(11)
+    ok(await op.from('actuals').delete().eq('actual_id', id))
+    expect(ok(await op.from('model_outputs').select('*')).length).toBeGreaterThan(0)            // reads everything (bypasses RLS)
+    const t = ok(await op.rpc('operator_create_tenant', { p_name: 'Tenant C (S10)' }))
+    const u = uuid()
+    await pg.query('insert into auth.users (id, email) values ($1, $2)', [u, 'c@xcepta.test'])
+    ok(await op.rpc('operator_add_member', { p_user_id: u, p_tenant_id: t, p_email: 'c@xcepta.test', p_name: 'C', p_role: 'analyst' }))
+    ok(await op.rpc('operator_set_member_role', { p_user_id: u, p_role: 'admin', p_reason: 'bootstrap admin for tenant C' }))
+    expect((await one('select role from users where user_id = $1', [u])).role).toBe('admin')
+  })
+
+  test('S10.3 objects created LATER by the migration owner get no PUBLIC / anon EXECUTE and no TRUNCATE / TRIGGER / REFERENCES', async () => {
+    const db = await createSecurityDb()
+    await db.exec(`create function public.probe_fn() returns int language sql as $$ select 1 $$;
+                   create table public.probe_t (id int primary key); create sequence public.probe_s;`)
+    const f = (await db.query(`select has_function_privilege('anon', 'public.probe_fn()', 'EXECUTE') a,
+        has_function_privilege('authenticated', 'public.probe_fn()', 'EXECUTE') u,
+        has_function_privilege('service_role', 'public.probe_fn()', 'EXECUTE') s,
+        exists (select 1 from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x
+                 where p.oid = 'public.probe_fn()'::regprocedure and x.grantee = 0) pub`)).rows[0]
+    expect(f).toEqual({ a: false, u: false, s: true, pub: false })
+    const t = (await db.query(`select has_table_privilege('anon', 'public.probe_t', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') anon,
+        has_table_privilege('authenticated', 'public.probe_t', 'SELECT') auth_sel,
+        has_table_privilege('authenticated', 'public.probe_t', 'TRUNCATE,TRIGGER,REFERENCES') auth_trunc,
+        has_table_privilege('service_role', 'public.probe_t', 'TRUNCATE,TRIGGER,REFERENCES') svc_trunc,
+        has_sequence_privilege('anon', 'public.probe_s', 'USAGE,SELECT,UPDATE') anon_seq`)).rows[0]
+    expect(t).toEqual({ anon: false, auth_sel: true, auth_trunc: false, svc_trunc: false, anon_seq: false })
+    // a new table without RLS is flagged by the catalog verification
+    expect(failing(await verify(db))).toEqual(['RLS enabled on every public table'])
+    await db.close()
+  })
+
+  test('S10.4 Supabase ownership differences: objects / grants by ANOTHER role are not covered by owner revokes — the catalog verification flags them', async () => {
+    const db = await createSecurityDb()
+    await db.exec(`create role supabase_admin nologin; grant usage, create on schema public to supabase_admin;
+      alter default privileges for role supabase_admin in schema public grant execute on functions to anon, authenticated;
+      grant truncate on public.assumptions to supabase_admin with grant option;
+      set role supabase_admin;
+      create function public.sa_probe() returns int language sql as $$ select 1 $$;
+      grant truncate on public.assumptions to authenticated;
+      reset role;`)
+    expect(failing(await verify(db)).sort()).toEqual([
+      'every table privilege of anon / authenticated / service_role is granted by the table owner (owner revokes are effective)',
+      'no function in schema public executable by anon (any function, any owner)',
+      'no role except the owner holds TRUNCATE / TRIGGER / REFERENCES on public tables'].sort())
+    // re-running the owner's revoke does NOT remove another grantor's grant …
+    await db.exec('revoke truncate, trigger, references on all tables in schema public from authenticated, service_role;')
+    expect((await db.query(`select has_table_privilege('authenticated', 'public.assumptions', 'TRUNCATE') t`)).rows[0].t).toBe(true)
+    // … the documented remediation (owner revokes the grantor's grant option with CASCADE) does
+    await db.exec('revoke truncate on public.assumptions from supabase_admin cascade; drop function public.sa_probe();')
+    expect(failing(await verify(db))).toEqual([])
+    await db.close()
+  })
+
+  test('S10.5 a failing migration applies NOTHING, even when run statement by statement like psql -f (C3)', async () => {
+    const { readFileSync } = await import('fs')
+    const src = readFileSync(new URL(SECURITY_MIGRATIONS[1], new URL('./helpers/', import.meta.url)), 'utf8')
+    const broken = src.replace('create table if not exists public.audit_events (', 'create table if not exists public.audit_events (broken_column not_a_type, ')
+    expect(splitSqlStatements(src).length).toBeGreaterThan(20)                       // really statement by statement
+    const db = await createSecurityDb({ upTo: 1 })
+    const r = await runLikePsql(db, broken)
+    expect(r.error).not.toBeNull()
+    const left = (await db.query(`select (select count(*) from pg_namespace where nspname = 'app_private')::int sch,
+        (select count(*) from information_schema.columns where table_name = 'users' and column_name = 'active')::int col,
+        (select count(*) from pg_default_acl where defaclnamespace = 0)::int defacl`)).rows[0]
+    expect(left).toEqual({ sch: 0, col: 0, defacl: 0 })
+    expect((await runLikePsql(db, src)).error).toBeNull()                              // the intact file then applies cleanly
+    await db.close()
+  })
+
+  test('S10.6 explicit per-function revokes hold even where the C2 default privileges are absent', async () => {
+    const { readFileSync } = await import('fs')
+    const db = await createSecurityDb({ upTo: 1 })
+    const sec01NoDefaults = readFileSync(new URL(SECURITY_MIGRATIONS[1], new URL('./helpers/', import.meta.url)), 'utf8')
+      .split('\n').filter(l => !/^alter default privileges for role postgres/.test(l)).join('\n')
+    await db.exec(sec01NoDefaults)
+    for (const m of SECURITY_MIGRATIONS.slice(2)) await db.exec(readFileSync(new URL(m, new URL('./helpers/', import.meta.url)), 'utf8'))
+    const exposed = (await db.query(`select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname in ('public', 'app_private') and (has_function_privilege('anon', p.oid, 'EXECUTE')
+          or (n.nspname = 'app_private' and has_function_privilege('authenticated', p.oid, 'EXECUTE')))`)).rows
+    expect(exposed).toEqual([])
+    await db.close()
+  })
+
+  test('S10.7 every migration and rollback script is one explicit transaction (begin first, commit last)', async () => {
+    const { readFileSync, readdirSync } = await import('fs')
+    const files = SECURITY_MIGRATIONS.slice(1).map(m => new URL(m, new URL('./helpers/', import.meta.url)))
+      .concat(readdirSync(new URL('../db/migrations/rollback/', import.meta.url)).map(n => new URL('../db/migrations/rollback/' + n, import.meta.url)))
+    expect(files.length).toBe(8)
+    for (const u of files) {
+      const st = splitSqlStatements(readFileSync(u, 'utf8'))
+      expect([u.pathname, st[0].replace(/^(--[^\n]*\n)*/, '').trim()]).toEqual([u.pathname, 'begin'])
+      expect([u.pathname, st[st.length - 1]]).toEqual([u.pathname, 'commit'])
+      expect([u.pathname, st.filter(x => /^(begin|commit|rollback)$/i.test(x.replace(/^(--[^\n]*\n)*/, '').trim())).length]).toEqual([u.pathname, 2])
+    }
+  })
+
 })

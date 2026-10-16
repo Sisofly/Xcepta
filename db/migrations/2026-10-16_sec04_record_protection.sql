@@ -19,8 +19,10 @@
 --     tenant table requires an ACTIVE membership.
 --   • model_outputs_tenant_read: colleagues in the same tenant can read
 --     approved results (previously creator-only); other tenants still cannot.
+-- Runs in one transaction: on any error nothing is applied.
 -- Idempotent. Rollback: db/migrations/rollback/2026-10-16_sec04_rollback.sql
 -- ---------------------------------------------------------------------------
+begin;
 
 -- ── Direct-write privileges ───────────────────────────────────────────────
 revoke insert, update, delete, truncate on public.model_outputs from public, anon, authenticated;
@@ -187,3 +189,5 @@ alter function app_private.projects_guard() owner to postgres;
 alter function app_private.scenarios_guard() owner to postgres;
 revoke all on function app_private.model_outputs_guard(), app_private.versions_guard(), app_private.projects_guard(),
   app_private.scenarios_guard() from public, anon, authenticated, service_role;
+
+commit;

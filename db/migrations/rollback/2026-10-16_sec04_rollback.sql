@@ -1,6 +1,8 @@
 -- ROLLBACK SEC-04 — EMERGENCY USE ONLY. Returns approved-record protection to
 -- the pre-SEC-04 state (the I1 / I2 findings re-open). Apply only together
 -- with an application rollback, after a fresh backup. No data is changed.
+-- Runs in one transaction: on any error nothing is changed.
+begin;
 drop trigger if exists model_outputs_guard on public.model_outputs;
 drop trigger if exists versions_guard on public.versions;
 drop trigger if exists projects_guard on public.projects;
@@ -26,8 +28,8 @@ begin
 end $$;
 drop policy if exists users_active_or_self on public.users;
 drop policy if exists model_outputs_tenant_read on public.model_outputs;
--- privileges as before SEC-04 (production baseline: authenticated had ALL on these tables)
-grant select, insert, update, delete, truncate on public.model_outputs, public.versions to authenticated;
-grant delete, truncate on public.projects, public.scenarios to authenticated;
-grant truncate on public.actuals, public.assumptions, public.coa_mappings, public.intake_state, public.results,
-  public.static_defaults, public.variances to authenticated;
+-- privileges as after SEC-03 (TRUNCATE / TRIGGER / REFERENCES stay revoked —
+-- SEC-02 removed them; its rollback restores them)
+grant select, insert, update, delete on public.model_outputs, public.versions to authenticated;
+grant delete on public.projects, public.scenarios to authenticated;
+commit;

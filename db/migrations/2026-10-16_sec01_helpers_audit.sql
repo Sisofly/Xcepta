@@ -13,8 +13,25 @@
 -- schema-qualified), EXECUTE revoked from PUBLIC/anon and granted explicitly.
 -- Supabase's default privileges grant EXECUTE on new public functions to anon
 -- and authenticated; this file revokes that for every function it creates.
+-- Also hardens DEFAULT privileges for objects the migration owner (postgres)
+-- creates later (C2): no EXECUTE for PUBLIC / anon / authenticated on new
+-- functions (database-wide for role postgres: PostgreSQL's built-in PUBLIC
+-- EXECUTE can only be removed globally), no anon access to new tables or
+-- sequences, and never TRUNCATE / TRIGGER / REFERENCES by default. Objects
+-- created by other roles (e.g. supabase_admin) keep their own defaults —
+-- db/security/verify_security_catalog.sql flags any such exposure.
+-- Runs in one transaction: on any error nothing is applied (C3).
 -- Idempotent. Rollback: db/migrations/rollback/2026-10-16_sec01_rollback.sql
 -- ---------------------------------------------------------------------------
+begin;
+
+-- ── Default privileges for objects created LATER (existing objects unchanged)
+alter default privileges for role postgres revoke execute on functions from public;
+alter default privileges for role postgres in schema public revoke execute on functions from anon, authenticated;
+alter default privileges for role postgres in schema public revoke all on tables from anon;
+alter default privileges for role postgres in schema public revoke truncate, trigger, references on tables from authenticated, service_role;
+alter default privileges for role postgres in schema public revoke all on sequences from anon;
+
 
 alter table public.users    add column if not exists active boolean not null default true;
 alter table public.versions add column if not exists approved_by uuid,
@@ -118,3 +135,5 @@ revoke all on function public.app_tenant_id(), public.app_role(), public.app_has
   from public, anon;
 grant execute on function public.app_tenant_id(), public.app_role(), public.app_has_role(text[]), public.current_tenant_id()
   to authenticated, service_role;
+
+commit;

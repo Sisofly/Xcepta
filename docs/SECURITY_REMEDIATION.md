@@ -33,6 +33,20 @@
 - admin: manage members of their own tenant.
 - Platform operator (service role): create tenants, add, move and set members, and **purge**. Purge is the only way to permanently delete approved records, and needs `PURGE <project_id>`, a reason of at least 10 characters, and an audit record written first.
 
+### 1a. S0 follow-up (C1–C3)
+
+- **C1 (SEC-02).** TRUNCATE, TRIGGER and REFERENCES are revoked on every public table from `authenticated` and `service_role`; anon loses everything. Row-level security never applies to TRUNCATE, so only the table owner keeps it. The truncate guards remain as a second layer, for the owner.
+- **C2 (SEC-01).** Default privileges for objects `postgres` creates later:
+  - no EXECUTE for PUBLIC, anon or authenticated on new functions. This is set for the role `postgres` across the whole database, because PostgreSQL's built-in PUBLIC EXECUTE can't be removed per schema;
+  - no anon access to new tables or sequences;
+  - no default TRUNCATE, TRIGGER or REFERENCES.
+
+  New objects must be granted explicitly. Existing objects are unchanged.
+- **C3.** Every migration and rollback runs in **one explicit transaction**. The Supabase SQL editor sends a script as one request, which is atomic anyway, but `psql -f` sends statements one by one; the explicit `begin … commit` makes both atomic. Test S10.5 runs the files statement by statement.
+- **Supabase ownership.** An owner's REVOKE removes only grants the owner made. Grants made by another role (e.g. `supabase_admin`), and objects that role creates under its own defaults, are not covered. The catalog verification therefore checks **effective** privileges and **who granted them**, and flags any exposure (test S10.4).
+  - Remediation, as owner: `revoke <privilege> on <table> from <other grantor> cascade`.
+  - `supabase_admin` defaults can't be changed by the project login.
+
 ## 2. Workflows that change
 
 1. **Approving needs manager or admin** (`users.role` defaults to `analyst`). Production roles must be assigned before cutover (§5, P1).
@@ -67,7 +81,7 @@ Run `db/security/verify_security_catalog.sql` (read-only) after every step. Rows
 | # | Step | Verify |
 |---|---|---|
 | S0 | Read-only pre-checks: role distribution; `model_outputs.tenant_id` = its project's tenant; approved versions without a result | Report to you; nothing is fixed automatically |
-| S1 | Apply `sec01` | Catalog SEC-01 rows pass |
+| S1 | Apply `sec01` | Catalog: the 7 SEC-01 rows and 4 cross-cutting rows pass (later steps false). Excluding `audit_events`, the policy and grant fingerprints are unchanged (`af4487…` / `27a4fc…`); including it, policies 27, md5 `c7d6525c…`, grants md5 `6f9e0f73…` |
 | S2 | Apply `sec02` | SEC-02 rows pass; `verify:staging:isolation` |
 | S3 | Apply `sec03`; create the 6 synthetic `.test` users through `operator_add_member` (approved) | SEC-03 row passes; `verify:staging` (it now approves through `approve_version`) |
 | S4 | Push `rc/ppp-v1` → Preview (staging) | Browser check |

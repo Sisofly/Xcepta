@@ -11,13 +11,19 @@
 --     editor and FK cascades): identity fields change only inside the
 --     admin / operator functions (execution context 'admin', SEC-03).
 --   • Same-tenant read of colleague profiles (names, roles) for "approved by".
+--   • C1: TRUNCATE (which row-level security never applies to), TRIGGER and
+--     REFERENCES are revoked on every public table from authenticated and the
+--     service role (anon loses everything). Only the owner keeps them.
+-- Runs in one transaction: on any error nothing is applied.
 -- Idempotent. Rollback: db/migrations/rollback/2026-10-16_sec02_rollback.sql
 -- ---------------------------------------------------------------------------
+begin;
 
 revoke insert, update, delete, truncate on public.users, public.tenants from public, anon, authenticated;
 grant update (name) on public.users to authenticated;
 revoke all on all tables in schema public from anon;
 revoke all on all sequences in schema public from anon;
+revoke truncate, trigger, references on all tables in schema public from authenticated, service_role;
 
 create or replace function app_private.users_guard() returns trigger
   language plpgsql security definer set search_path = '' as $$
@@ -63,3 +69,5 @@ create policy users_same_tenant_read on public.users for select to authenticated
 alter function app_private.users_guard() owner to postgres;
 alter function app_private.tenants_guard() owner to postgres;
 revoke all on function app_private.users_guard(), app_private.tenants_guard() from public, anon, authenticated, service_role;
+
+commit;

@@ -25,7 +25,7 @@ checks(step, check_name, pass, detail) as (
          not (has_schema_privilege('anon', 'app_private', 'USAGE') or has_schema_privilege('authenticated', 'app_private', 'USAGE')
               or has_schema_privilege('service_role', 'app_private', 'USAGE')), null
   union all
-  select 'SEC-01', 'operator_* functions executable by service_role only',
+  select 'SEC-03', 'operator_* functions executable by service_role only',
          coalesce(bool_and(not has_function_privilege('authenticated', oid, 'EXECUTE') and has_function_privilege('service_role', oid, 'EXECUTE')), false),
          string_agg(fn, ', ') from defs where fn like 'public.operator\_%'
   union all
@@ -33,6 +33,40 @@ checks(step, check_name, pass, detail) as (
          (select relrowsecurity from pg_class where oid = 'public.audit_events'::regclass)
          and exists (select 1 from pg_trigger where tgrelid = 'public.audit_events'::regclass and tgname = 'audit_events_append_only')
          and exists (select 1 from pg_trigger where tgrelid = 'public.audit_events'::regclass and tgname = 'audit_events_no_truncate'), null
+  union all
+  select 'SEC-01', 'default privileges: new functions by postgres not executable by PUBLIC / anon / authenticated',
+         not exists (select 1 from (
+             select a.grantee, a.privilege_type from pg_default_acl d, aclexplode(d.defaclacl) a
+              where d.defaclrole = 'postgres'::regrole and d.defaclobjtype = 'f' and d.defaclnamespace in (0, 'public'::regnamespace)
+             union all   -- PostgreSQL's built-in PUBLIC EXECUTE applies while no database-wide entry exists
+             select 0::oid, 'EXECUTE' where not exists (select 1 from pg_default_acl where defaclrole = 'postgres'::regrole and defaclobjtype = 'f' and defaclnamespace = 0)
+           ) e where e.privilege_type = 'EXECUTE' and e.grantee in (0, 'anon'::regrole, 'authenticated'::regrole)), null
+  union all
+  select 'SEC-01', 'default privileges: new public tables / sequences give anon nothing and nobody TRUNCATE / TRIGGER / REFERENCES',
+         not exists (select 1 from pg_default_acl d, aclexplode(d.defaclacl) a
+                      where d.defaclrole = 'postgres'::regrole and d.defaclobjtype in ('r', 'S') and d.defaclnamespace in (0, 'public'::regnamespace)
+                        and (a.grantee = 'anon'::regrole
+                             or (a.grantee in ('authenticated'::regrole, 'service_role'::regrole) and a.privilege_type in ('TRUNCATE', 'TRIGGER', 'REFERENCES')))), null
+  union all
+  select 'SEC-02', 'no role except the owner holds TRUNCATE / TRIGGER / REFERENCES on public tables',
+         not exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r'
+                      and (has_table_privilege('anon', c.oid, 'TRUNCATE,TRIGGER,REFERENCES') or has_table_privilege('authenticated', c.oid, 'TRUNCATE,TRIGGER,REFERENCES')
+                           or has_table_privilege('service_role', c.oid, 'TRUNCATE,TRIGGER,REFERENCES'))),
+         (select string_agg(c.relname, ', ') from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r'
+           and (has_table_privilege('anon', c.oid, 'TRUNCATE,TRIGGER,REFERENCES') or has_table_privilege('authenticated', c.oid, 'TRUNCATE,TRIGGER,REFERENCES')
+                or has_table_privilege('service_role', c.oid, 'TRUNCATE,TRIGGER,REFERENCES')))
+  union all
+  select 'ALL', 'every table privilege of anon / authenticated / service_role is granted by the table owner (owner revokes are effective)',
+         not exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace, aclexplode(c.relacl) a
+                      where n.nspname = 'public' and c.relkind = 'r' and a.grantee in ('anon'::regrole, 'authenticated'::regrole, 'service_role'::regrole)
+                        and a.grantor <> c.relowner),
+         (select string_agg(distinct c.relname || ' by ' || pg_get_userbyid(a.grantor), ', ') from pg_class c join pg_namespace n on n.oid = c.relnamespace, aclexplode(c.relacl) a
+           where n.nspname = 'public' and c.relkind = 'r' and a.grantee in ('anon'::regrole, 'authenticated'::regrole, 'service_role'::regrole) and a.grantor <> c.relowner)
+  union all
+  select 'ALL', 'no function in schema public executable by anon (any function, any owner)',
+         not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and has_function_privilege('anon', p.oid, 'EXECUTE')),
+         (select string_agg(p.proname || ' (owner ' || pg_get_userbyid(p.proowner) || ')', ', ') from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname = 'public' and has_function_privilege('anon', p.oid, 'EXECUTE'))
   union all
   select 'SEC-02', 'authenticated cannot change users.tenant_id / role / email / active',
          not (has_column_privilege('authenticated', 'public.users', 'tenant_id', 'UPDATE') or has_column_privilege('authenticated', 'public.users', 'role', 'UPDATE')
