@@ -130,6 +130,36 @@ The deployed app (`2e4994c`) deletes a project or scenario as a series of separa
 
 Pre-flight: `db/security/sec04_preflight.sql` (read-only; run before the freeze, with the freeze on, and after SEC-04).
 
+### 4b. Temporary staging request gate (old Preview isolated during the SEC-04 cutover)
+
+**Why it's needed:** the maintenance freeze lets **admins** in, and both staging accounts are admins. So the freeze alone does **not** stop the old Preview's partial deletion (rehearsed).
+
+**How it works:**
+- PostgREST calls `staging_gate.check_request()` before every Data API request: tables, views and RPC, every method.
+- Allowed:
+  - an `Origin` of **exactly** `http://localhost:5173` or `http://127.0.0.1:5173` (the local Vite app);
+  - a Referer on those origins when no Origin is sent;
+  - **no Origin and no Referer at all**. These are non-browser clients (Node staging scripts, curl).
+- Refused, with `42501`, HTTP 401/403 and `STAGING_GATE: …`:
+  - every other origin, including all `*.vercel.app`;
+  - unreadable headers (fails closed).
+- The refused request's own statement never runs.
+
+**Limits:**
+- It's a safeguard against the old **browser** app. Browsers always send Origin on these requests, and page scripts can't change it. It isn't a defence against a non-browser client forging headers; SEC-01..04 are.
+- Auth (sign-in), Storage, Realtime and Edge Functions aren't gated. The deployed app uses only Auth (sign-in, session, sign-out) and the Data API (`.from` / `.rpc`), and Auth has no access to application tables.
+
+**Safety:**
+- Touches no table, policy or grant; catalog verification is unchanged.
+- The install refuses unless SEC-03 is present (Production has none) and every Auth account is `@xcepta.test`, and it never replaces another pre-request setting. It runs in one transaction.
+- Removal is two steps: `staging_gate_off.sql` (resets only this setting; the function stays), then a probe, then `staging_gate_remove.sql` (refuses while still configured; no CASCADE).
+
+**Files:**
+- `db/security/staging_gate_precheck.sql` (read-only);
+- `db/security/staging_gate_on.sql`, `staging_gate_off.sql`, `staging_gate_remove.sql`;
+- `scripts/staging/probe-gate.mjs --expect=open|gated` (staging only);
+- tests `tests/stagingGate.test.js` (28 tests; 11/11 mutations caught).
+
 ## 5. Production cutover (later, separate approval) — no inconsistent external window
 
 > **Proposed change (§4a, awaiting approval):** merge PR #3 (new app) after P1 and **before** P2–P3, so the old app is never live against SEC-04. P4 becomes a smoke test of the already-deployed app.
