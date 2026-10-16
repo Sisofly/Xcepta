@@ -94,6 +94,9 @@ checks(step, check_name, pass, detail) as (
            'public.operator_create_tenant', 'public.operator_add_member', 'public.operator_move_member', 'public.operator_purge_project',
            'public.operator_set_member_role')) = 13, null
   union all
+  select 'SEC-03', 'last-admin invariant trigger present (every path, tenant-serialized)',
+         exists (select 1 from pg_trigger where tgrelid = 'public.users'::regclass and tgname = 'users_last_admin_guard'), null
+  union all
   select 'SEC-04', 'authenticated cannot write model_outputs or change version status / delete versions, projects, scenarios',
          not (has_table_privilege('authenticated', 'public.model_outputs', 'INSERT') or has_table_privilege('authenticated', 'public.model_outputs', 'UPDATE')
               or has_table_privilege('authenticated', 'public.model_outputs', 'DELETE') or has_column_privilege('authenticated', 'public.versions', 'status', 'UPDATE')

@@ -47,6 +47,34 @@
   - Remediation, as owner: `revoke <privilege> on <table> from <other grantor> cascade`.
   - `supabase_admin` defaults can't be changed by the project login.
 
+### 1b. Last-admin invariant (SEC-03)
+
+**Rule:** every tenant always keeps at least one **active admin**.
+
+**How it's enforced:**
+- **One trigger covers every path.** `users_last_admin_guard` runs on any demotion, deactivation, tenant move or delete, from any source: admin and operator functions, the service role, the owner, or a cascade.
+- **Order of checks:**
+  1. it takes a tenant-level lock (`FOR NO KEY UPDATE` on the tenant row);
+  2. it locks the tenant's remaining active admin rows;
+  3. it refuses with `LAST_ADMIN` if none would remain.
+- **Effect on concurrency:**
+  - concurrent changes for the same tenant run one after another;
+  - under REPEATABLE READ or SERIALIZABLE, the second one fails with a serialization error instead;
+  - foreign-key inserts that reference the tenant or user rows aren't blocked.
+- **The membership functions also lock the tenant first:**
+  - `admin_set_member_role` and `admin_set_member_active`;
+  - `operator_set_member_role`;
+  - `operator_move_member`, which locks both tenants in a fixed order.
+- **Emergency override:** operator-only; tenant admins never have one. `operator_set_member_role` / `operator_move_member` with `p_override_last_admin = true` require:
+  - the exact confirmation `LEAVE TENANT WITHOUT ADMIN <tenant_id>`;
+  - a reason of at least 20 characters.
+
+  The override is audited **before** the change (`member.last_admin_override`). Its flag is transaction-local and reset at the end of the function.
+- **Tests:**
+  - S12: every path and the override;
+  - S12.7: the tenant lock is actually taken on every path (single session);
+  - `scripts/security/pg17-concurrency.mjs`: genuinely parallel sessions on a real PostgreSQL 17 server, including a control run with the protection removed. **Not yet executed:** this machine has only PostgreSQL client tools.
+
 ## 2. Workflows that change
 
 1. **Approving needs manager or admin** (`users.role` defaults to `analyst`). Production roles must be assigned before cutover (§5, P1).

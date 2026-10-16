@@ -509,7 +509,7 @@ describe('S9 integrity proof and migration behaviour', () => {
     const { readFileSync } = await import('fs')
     const res = await pg.exec(readFileSync(new URL('../db/security/verify_security_catalog.sql', import.meta.url), 'utf8'))
     const checks = res.find(r => r.rows && r.rows.length && 'check_name' in r.rows[0]).rows
-    expect(checks.length).toBe(22)
+    expect(checks.length).toBe(23)
     expect(checks.filter(c => !c.pass).map(c => c.step + ' ' + c.check_name + ' ' + (c.detail || ''))).toEqual([])
   })
 
@@ -769,5 +769,122 @@ describe('S11 context marker (xcepta.ctx) — cannot be spoofed or reused to gai
       const resets = (f.body.match(/app_private\.set_ctx\(''\)/g) || []).length
       expect([f.name, resets]).toEqual([f.name, 1])
     }
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════
+describe('S12 last-admin invariant — every path, operator override controlled and audited', () => {
+  let TT, ADM, ADM2, MEM
+  const make = async (name, role) => {
+    const id = uuid()
+    await pg.query('insert into auth.users (id, email) values ($1, $2)', [id, name + '@xcepta.test'])
+    ok(await op.rpc('operator_add_member', { p_user_id: id, p_tenant_id: TT, p_email: name + '@xcepta.test', p_name: name, p_role: role }))
+    return id
+  }
+  const adminsOf = async t => (await one(`select count(*)::int n from users where tenant_id = $1 and role = 'admin' and active`, [t])).n
+  beforeAll(async () => {
+    TT = ok(await op.rpc('operator_create_tenant', { p_name: 'Tenant L (last-admin)' }))
+    ADM = await make('L_admin', 'admin'); ADM2 = await make('L_admin2', 'admin'); MEM = await make('L_analyst', 'analyst')
+  })
+
+  test('S12.1 tenant admins: two admins → one may step down; the last one cannot (role or deactivation)', async () => {
+    const a = asClient(pg, { role: 'authenticated', sub: ADM })
+    ok(await a.rpc('admin_set_member_role', { p_user_id: ADM2, p_role: 'manager' }))
+    expect(await adminsOf(TT)).toBe(1)
+    expect(msg(await a.rpc('admin_set_member_role', { p_user_id: ADM, p_role: 'manager' }))).toMatch(/LAST_ADMIN/)
+    expect(msg(await a.rpc('admin_set_member_active', { p_user_id: ADM, p_active: false }))).toMatch(/LAST_ADMIN/)
+    expect(await adminsOf(TT)).toBe(1)
+  })
+
+  test('S12.2 operator_set_member_role and operator_move_member cannot remove the last admin without the override', async () => {
+    expect(msg(await op.rpc('operator_set_member_role', { p_user_id: ADM, p_role: 'analyst', p_reason: 'routine role change test' }))).toMatch(/LAST_ADMIN/)
+    expect(msg(await op.rpc('operator_move_member', { p_user_id: ADM, p_tenant_id: T.B, p_reason: 'routine tenant move test' }))).toMatch(/LAST_ADMIN/)
+    expect(await one('select tenant_id, role from users where user_id = $1', [ADM])).toEqual({ tenant_id: TT, role: 'admin' })
+  })
+
+  test('S12.3 every other path is covered by the trigger: owner (even inside the admin context), service role, cascades', async () => {
+    await expect(owner.raw(`do $$ begin perform set_config('xcepta.ctx', 'admin', true);
+      update public.users set role = 'analyst' where user_id = '${ADM}'; end $$`)).rejects.toThrow(/LAST_ADMIN/)
+    await expect(owner.raw(`do $$ begin perform set_config('xcepta.ctx', 'admin', true);
+      update public.users set active = false where user_id = '${ADM}'; end $$`)).rejects.toThrow(/LAST_ADMIN/)
+    await expect(owner.raw(`do $$ begin perform set_config('xcepta.ctx', 'admin', true);
+      delete from public.users where user_id = '${ADM}'; end $$`)).rejects.toThrow(/LAST_ADMIN/)
+    await expect(owner.raw(`do $$ begin perform set_config('xcepta.ctx', 'admin', true);
+      update public.users set tenant_id = '${T.B}' where user_id = '${ADM}'; end $$`)).rejects.toThrow(/LAST_ADMIN/)
+    expect(msg(await op.from('users').update({ role: 'analyst' }).eq('user_id', ADM))).toMatch(/IDENTITY_PROTECTED|LAST_ADMIN/)
+    expect(await adminsOf(TT)).toBe(1)
+  })
+
+  test('S12.4 the override flag cannot be used by members, and a spoofed flag alone never bypasses the identity guard', async () => {
+    await expect(asClient(pg, { role: 'authenticated', sub: ADM }).raw(`do $$ begin
+      perform set_config('xcepta.last_admin_override', 'on', true); perform set_config('xcepta.ctx', 'admin', true);
+      update public.users set role = 'analyst' where user_id = '${ADM}'; end $$`)).rejects.toThrow(/permission denied/)
+    await expect(op.raw(`do $$ begin perform set_config('xcepta.last_admin_override', 'on', true);
+      update public.users set role = 'analyst' where user_id = '${ADM}'; end $$`)).rejects.toThrow(/IDENTITY_PROTECTED/)
+    expect(await adminsOf(TT)).toBe(1)
+  })
+
+  test('S12.5 emergency override: operator only, exact confirmation, documented reason, audited before the change', async () => {
+    const confirm = 'LEAVE TENANT WITHOUT ADMIN ' + TT
+    expect(msg(await as('A_admin').rpc('operator_set_member_role', { p_user_id: ADM, p_role: 'analyst', p_reason: 'x'.repeat(30),
+      p_override_last_admin: true, p_confirm: confirm }))).toMatch(/permission denied/)
+    expect(msg(await op.rpc('operator_set_member_role', { p_user_id: ADM, p_role: 'analyst', p_reason: 'emergency: admin left the company',
+      p_override_last_admin: true, p_confirm: 'yes' }))).toMatch(/CONFIRMATION_REQUIRED/)
+    expect(msg(await op.rpc('operator_set_member_role', { p_user_id: ADM, p_role: 'analyst', p_reason: 'too short reason',
+      p_override_last_admin: true, p_confirm: confirm }))).toMatch(/REASON_REQUIRED/)
+    expect(await adminsOf(TT)).toBe(1)
+    ok(await op.rpc('operator_set_member_role', { p_user_id: ADM, p_role: 'analyst', p_reason: 'emergency: sole admin left the company',
+      p_override_last_admin: true, p_confirm: confirm }))
+    expect(await adminsOf(TT)).toBe(0)
+    const ev = await one(`select details from audit_events where action = 'member.last_admin_override' and tenant_id = $1 order by at desc limit 1`, [TT])
+    expect(ev.details).toMatchObject({ action: 'set_role:analyst', reason: 'emergency: sole admin left the company' })
+    // the override does not persist: the next change in a new request is guarded again
+    ok(await op.rpc('operator_set_member_role', { p_user_id: MEM, p_role: 'admin', p_reason: 'restore an admin for the tenant' }))
+    expect(msg(await op.rpc('operator_set_member_role', { p_user_id: MEM, p_role: 'analyst', p_reason: 'routine change, no override' }))).toMatch(/LAST_ADMIN/)
+    // override for a move, then the moved admin is no longer an admin anywhere by default (least privilege)
+    expect(msg(await op.rpc('operator_move_member', { p_user_id: MEM, p_tenant_id: T.B, p_reason: 'emergency move of the sole admin',
+      p_override_last_admin: true, p_confirm: confirm }))).toBe('')
+    expect(await one('select tenant_id, role from users where user_id = $1', [MEM])).toEqual({ tenant_id: T.B, role: 'analyst' })
+    expect(await adminsOf(TT)).toBe(0)
+  })
+
+  test('S12.6 the override flag never outlives the operator call (reset; not reusable in the same transaction)', async () => {
+    ok(await op.rpc('operator_set_member_role', { p_user_id: ADM, p_role: 'admin', p_reason: 'restore admin after S12.5' }))
+    await expect(op.raw(`do $x$ begin
+      perform public.operator_set_member_role('${ADM2}', 'admin', 'second admin for reuse test');
+      if coalesce(current_setting('xcepta.last_admin_override', true), '') <> '' then raise exception 'override leaked'; end if;
+      perform set_config('xcepta.ctx', 'admin', true);
+      update public.users set role = 'manager' where user_id = '${ADM}';
+      update public.users set role = 'manager' where user_id = '${ADM2}';
+    end $x$`)).rejects.toThrow(/LAST_ADMIN: a tenant must keep at least one active admin/)
+    expect(await adminsOf(TT)).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('S12b tenant-level serialization point (single session; the parallel race test runs on a real server: scripts/security/pg17-concurrency.mjs)', () => {
+  test('S12.7 every membership change that can remove an admin takes the tenant row lock in its transaction', async () => {
+    const t = ok(await op.rpc('operator_create_tenant', { p_name: 'Tenant K (lock check)' }))
+    const ids = [uuid(), uuid()]
+    for (const [i, id] of ids.entries()) {
+      await pg.query('insert into auth.users (id, email) values ($1, $2)', [id, 'k' + i + '@xcepta.test'])
+      ok(await op.rpc('operator_add_member', { p_user_id: id, p_tenant_id: t, p_email: 'k' + i + '@xcepta.test', p_name: 'K' + i, p_role: 'admin' }))
+    }
+    // xmax of the tenant row = this transaction's id  <=>  the row is locked by this transaction
+    const lockedBy = (call) => op.raw(`do $x$ declare x xid; begin ${call}
+      select xmax into x from public.tenants where tenant_id = '${t}';
+      if x::text <> pg_current_xact_id()::text then raise exception 'TENANT NOT LOCKED (xmax %, xact %)', x, pg_current_xact_id(); end if;
+      raise exception 'LOCK_OK'; end $x$`)
+    await expect(lockedBy(`perform public.operator_set_member_role('${ids[0]}', 'manager', 'lock check: operator demotion');`)).rejects.toThrow(/LOCK_OK/)
+    await expect(lockedBy(`perform public.operator_move_member('${ids[0]}', '${T.B}', 'lock check: operator move');`)).rejects.toThrow(/LOCK_OK/)
+    // tenant admin path, as a real admin of the tenant
+    await expect(asClient(pg, { role: 'authenticated', sub: ids[1] }).raw(`do $x$ declare x xid; begin
+      perform public.admin_set_member_role('${ids[0]}', 'manager');
+      select xmax into x from public.tenants where tenant_id = '${t}';
+      if x::text <> pg_current_xact_id()::text then raise exception 'TENANT NOT LOCKED'; end if; raise exception 'LOCK_OK'; end $x$`)).rejects.toThrow(/LOCK_OK/)
+    // direct path (owner inside the admin context): the TRIGGER takes the lock
+    await expect(owner.raw(`do $x$ declare x xid; begin perform set_config('xcepta.ctx', 'admin', true);
+      update public.users set role = 'manager' where user_id = '${ids[0]}';
+      select xmax into x from public.tenants where tenant_id = '${t}';
+      if x::text <> pg_current_xact_id()::text then raise exception 'TENANT NOT LOCKED'; end if; raise exception 'LOCK_OK'; end $x$`)).rejects.toThrow(/LOCK_OK/)
   })
 })

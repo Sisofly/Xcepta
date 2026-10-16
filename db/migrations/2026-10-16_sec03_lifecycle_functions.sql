@@ -12,6 +12,11 @@
 -- platform operator (service role) creates tenants, adds/moves members and is
 -- the ONLY path that can permanently delete approved records.
 -- Runs in one transaction: on any error nothing is applied.
+-- Last-admin invariant: a tenant always keeps at least one ACTIVE admin. A
+-- trigger on public.users enforces it for EVERY path (admin and operator
+-- functions, service role, owner, cascades), serialized per tenant; the
+-- membership functions also lock the tenant first. Only the platform operator
+-- can override it — explicitly confirmed, documented and audited.
 -- Idempotent. Rollback: db/migrations/rollback/2026-10-16_sec03_rollback.sql
 -- ---------------------------------------------------------------------------
 begin;
@@ -182,6 +187,44 @@ begin
   perform app_private.set_ctx('');
 end $$;
 
+-- ── Last-admin invariant (every path) ─────────────────────────────────────
+-- Any change that removes an active admin from a tenant (demotion,
+-- deactivation, move to another tenant, deletion) first takes a tenant-level
+-- lock, then locks the tenant's remaining active admin rows and is refused if
+-- none would remain. NO KEY UPDATE locks: concurrent membership changes of
+-- the same tenant serialize (and fail with a serialization error under
+-- REPEATABLE READ / SERIALIZABLE), while ordinary foreign-key inserts that
+-- reference the tenant or user rows are not blocked.
+create or replace function app_private.set_last_admin_override(p_on boolean) returns void
+  language sql volatile set search_path = '' as $$
+  select pg_catalog.set_config('xcepta.last_admin_override', case when p_on then 'on' else '' end, true) $$;
+
+create or replace function app_private.lock_tenant(p_tenant uuid) returns void
+  language sql volatile security definer set search_path = '' as $$
+  select 1 from public.tenants where tenant_id = p_tenant for no key update $$;
+
+create or replace function app_private.users_last_admin_guard() returns trigger
+  language plpgsql security definer set search_path = '' as $$
+declare v_others integer;
+begin
+  if not (old.role = 'admin' and old.active
+          and (tg_op = 'DELETE' or new.role is distinct from 'admin' or not new.active or new.tenant_id is distinct from old.tenant_id)) then
+    return coalesce(new, old);
+  end if;
+  perform app_private.lock_tenant(old.tenant_id);
+  select count(*) into v_others from (
+    select 1 from public.users u
+     where u.tenant_id = old.tenant_id and u.role = 'admin' and u.active and u.user_id <> old.user_id
+       for no key update) x;
+  if v_others = 0 and coalesce(pg_catalog.current_setting('xcepta.last_admin_override', true), '') <> 'on' then
+    raise exception using errcode = '55000', message = 'LAST_ADMIN: a tenant must keep at least one active admin';
+  end if;
+  return coalesce(new, old);
+end $$;
+drop trigger if exists users_last_admin_guard on public.users;
+create trigger users_last_admin_guard before update or delete on public.users
+  for each row execute function app_private.users_last_admin_guard();
+
 -- ── Tenant administration (admin role, own tenant only) ───────────────────
 create or replace function app_private.require_admin_target(p_user_id uuid) returns public.users
   language plpgsql stable security definer set search_path = '' as $$
@@ -191,6 +234,7 @@ begin
   if not public.app_has_role(array['admin']) then
     raise exception using errcode = '42501', message = 'NOT_AUTHORIZED: member administration requires the admin role';
   end if;
+  perform app_private.lock_tenant(public.app_tenant_id());               -- serialize membership changes per tenant
   select x.* into u from public.users x where x.user_id = p_user_id;
   if not found or u.tenant_id is distinct from public.app_tenant_id() then
     raise exception using errcode = 'P0002', message = 'NOT_FOUND: member not found';
@@ -256,6 +300,25 @@ begin
   end if;
 end $$;
 
+-- Emergency override of the last-admin invariant — operator only, never for
+-- tenant admins. Requires p_override_last_admin = true, the exact confirmation
+-- 'LEAVE TENANT WITHOUT ADMIN <tenant_id>' and a reason of at least 20
+-- characters; the override is audited BEFORE the change. The flag is
+-- transaction-local and reset at the end of the operator function.
+create or replace function app_private.last_admin_override(p_on boolean, p_confirm text, p_reason text, p_tenant uuid, p_user uuid, p_action text)
+  returns void language plpgsql volatile security definer set search_path = '' as $$
+begin
+  if not coalesce(p_on, false) then return; end if;
+  if p_confirm is distinct from ('LEAVE TENANT WITHOUT ADMIN ' || p_tenant::text) then
+    raise exception using errcode = '22023', message = 'CONFIRMATION_REQUIRED: p_confirm must be ''LEAVE TENANT WITHOUT ADMIN <tenant_id>''';
+  end if;
+  if coalesce(length(trim(p_reason)), 0) < 20 then
+    raise exception using errcode = '22023', message = 'REASON_REQUIRED: an emergency override needs a documented reason (at least 20 characters)';
+  end if;
+  perform app_private.audit('member.last_admin_override', 'users', p_user, p_tenant, jsonb_build_object('action', p_action, 'reason', p_reason));
+  perform app_private.set_last_admin_override(true);
+end $$;
+
 create or replace function public.operator_create_tenant(p_name text, p_country text default 'Jordan', p_currency text default 'JOD')
   returns uuid language plpgsql volatile security definer set search_path = '' as $$
 declare v_id uuid;
@@ -287,7 +350,8 @@ begin
   perform app_private.set_ctx('');
 end $$;
 
-create or replace function public.operator_move_member(p_user_id uuid, p_tenant_id uuid, p_reason text)
+create or replace function public.operator_move_member(p_user_id uuid, p_tenant_id uuid, p_reason text,
+    p_override_last_admin boolean default false, p_confirm text default null)
   returns void language plpgsql volatile security definer set search_path = '' as $$
 declare u record;
 begin
@@ -300,16 +364,22 @@ begin
   if not exists (select 1 from public.tenants where tenant_id = p_tenant_id) then
     raise exception using errcode = 'P0002', message = 'NOT_FOUND: tenant not found';
   end if;
+  -- both tenants, in a fixed order (no deadlock between opposite moves)
+  perform app_private.lock_tenant(least(u.tenant_id, p_tenant_id));
+  perform app_private.lock_tenant(greatest(u.tenant_id, p_tenant_id));
+  perform app_private.last_admin_override(p_override_last_admin, p_confirm, p_reason, u.tenant_id, p_user_id, 'move');
   perform app_private.set_ctx('admin');
   update public.users set tenant_id = p_tenant_id, role = 'analyst', active = true where user_id = p_user_id;   -- least privilege in the new tenant
   perform app_private.audit('member.move_out', 'users', p_user_id, u.tenant_id, jsonb_build_object('to', p_tenant_id, 'reason', p_reason, 'previous_role', u.role));
   perform app_private.audit('member.move_in', 'users', p_user_id, p_tenant_id, jsonb_build_object('from', u.tenant_id, 'reason', p_reason));
+  perform app_private.set_last_admin_override(false);
   perform app_private.set_ctx('');
 end $$;
 
 -- Role assignment by the operator — used to bootstrap a tenant's first admin
 -- (tenant admins use admin_set_member_role). Reason required; audited.
-create or replace function public.operator_set_member_role(p_user_id uuid, p_role text, p_reason text)
+create or replace function public.operator_set_member_role(p_user_id uuid, p_role text, p_reason text,
+    p_override_last_admin boolean default false, p_confirm text default null)
   returns void language plpgsql volatile security definer set search_path = '' as $$
 declare u record;
 begin
@@ -322,10 +392,13 @@ begin
   end if;
   select user_id, tenant_id, role into u from public.users where user_id = p_user_id;
   if not found then raise exception using errcode = 'P0002', message = 'NOT_FOUND: member not found'; end if;
+  perform app_private.lock_tenant(u.tenant_id);
+  perform app_private.last_admin_override(p_override_last_admin, p_confirm, p_reason, u.tenant_id, p_user_id, 'set_role:' || p_role);
   perform app_private.set_ctx('admin');
   update public.users set role = p_role where user_id = p_user_id;
   perform app_private.audit('member.set_role_by_operator', 'users', p_user_id, u.tenant_id,
     jsonb_build_object('from', u.role, 'to', p_role, 'reason', p_reason));
+  perform app_private.set_last_admin_override(false);
   perform app_private.set_ctx('');
 end $$;
 
@@ -374,8 +447,10 @@ begin
     'public.delete_draft_version(uuid)', 'public.delete_scenario(uuid)', 'public.delete_project(uuid)',
     'public.admin_set_member_role(uuid, text)', 'public.admin_set_member_active(uuid, boolean)', 'public.admin_rename_tenant(text)',
     'public.operator_create_tenant(text, text, text)', 'public.operator_add_member(uuid, uuid, text, text, text)',
-    'public.operator_move_member(uuid, uuid, text)', 'public.operator_purge_project(uuid, text, text)',
-    'public.operator_set_member_role(uuid, text, text)',
+    'public.operator_move_member(uuid, uuid, text, boolean, text)', 'public.operator_purge_project(uuid, text, text)',
+    'public.operator_set_member_role(uuid, text, text, boolean, text)',
+    'app_private.set_last_admin_override(boolean)', 'app_private.lock_tenant(uuid)', 'app_private.users_last_admin_guard()',
+    'app_private.last_admin_override(boolean, text, text, uuid, uuid, text)',
     'app_private.assert_draft_only(uuid, uuid, uuid)', 'app_private.require_admin_target(uuid)', 'app_private.require_operator()']
   loop
     execute format('alter function %s owner to postgres', f);
@@ -387,8 +462,8 @@ grant execute on function public.approve_version(uuid, jsonb, text), public.arch
   public.admin_set_member_role(uuid, text), public.admin_set_member_active(uuid, boolean), public.admin_rename_tenant(text)
   to authenticated;
 grant execute on function public.operator_create_tenant(text, text, text), public.operator_add_member(uuid, uuid, text, text, text),
-  public.operator_move_member(uuid, uuid, text), public.operator_purge_project(uuid, text, text),
-  public.operator_set_member_role(uuid, text, text)
+  public.operator_move_member(uuid, uuid, text, boolean, text), public.operator_purge_project(uuid, text, text),
+  public.operator_set_member_role(uuid, text, text, boolean, text)
   to service_role;
 
 commit;

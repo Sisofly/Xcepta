@@ -25,7 +25,7 @@ export const SECURITY_MIGRATIONS = [
   '../../db/migrations/2026-10-16_sec04_record_protection.sql',
 ]
 
-const SUPABASE_STUBS = `
+export const SUPABASE_STUBS = `
   create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
   create schema extensions;
   create function extensions.uuid_generate_v4() returns uuid language sql as $$ select gen_random_uuid() $$;
