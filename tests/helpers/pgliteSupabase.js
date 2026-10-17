@@ -7,6 +7,7 @@
  *   from(t).delete().eq(c, x)          from(t).select('*').eq().order().limit()
  *   from(t).delete().eq(c, x).select() (returns the deleted rows, like Prefer: return=representation)
  *   from(t).select().eq().maybeSingle() (one row or null; more than one → error, like PostgREST)
+ *   .is(c, null | true | false)        (IS NULL / TRUE / FALSE, like PostgREST is.null)
  * Results are { data, error } like supabase-js; errors carry the Postgres
  * SQLSTATE `code` and `message`. numeric columns are returned as JS numbers
  * and json/jsonb as parsed values, matching PostgREST's JSON responses.
@@ -41,6 +42,10 @@ class Query {
   update(v) { this.op = 'update'; this.values = v; return this }
   delete() { this.op = 'delete'; return this }
   eq(col, val) { this.filters.push([col, val]); return this }
+  is(col, val) {                                     // .is(col, null | true | false) → col IS NULL / TRUE / FALSE
+    if (val !== null && val !== true && val !== false) throw new Error('is() supports null, true or false')
+    this.filters.push([col, val, 'is']); return this
+  }
   order(col, opts) { this.orderBy = [col, !opts || opts.ascending !== false]; return this }
   limit(n) { this.lim = n; return this }
   then(resolve, reject) { return this.run().then(resolve, reject) }
@@ -48,7 +53,8 @@ class Query {
   async run() {
     const params = []
     const p = v => { params.push(toParam(v)); return '$' + params.length }
-    const where = this.filters.length ? ' where ' + this.filters.map(([c, v]) => ident(c) + ' = ' + p(v)).join(' and ') : ''
+    const where = this.filters.length ? ' where ' + this.filters.map(([c, v, op]) =>
+      op === 'is' ? ident(c) + ' is ' + String(v) : ident(c) + ' = ' + p(v)).join(' and ') : ''
     let sql
     if (this.op === 'insert') {
       const cols = Object.keys(this.rows[0])

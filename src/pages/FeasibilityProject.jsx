@@ -13,7 +13,7 @@ import PPPMessages from '../modules/feasibility/PPPMessages'
 import PPPResultProvenance from '../modules/feasibility/PPPResultProvenance'
 import PPPTaxSchedule from '../modules/feasibility/PPPTaxSchedule'
 import { savePPPApproval, loadLatestModelOutput } from '../modules/feasibility/pppResultStore'
-import { removeBenchmarkOverride, deleteAssumption } from '../modules/feasibility/assumptionWrites'
+import { saveBenchmarkOverride, removeBenchmarkOverride, deleteAssumption } from '../modules/feasibility/assumptionWrites'
 import { pppResultBasis, isUnsupportedProjectFinance, PPP_CASH_FLOW_HEADERS, pppCashFlowRows, pppTaxDisclosure } from '../modules/feasibility/pppReporting'
 import { PPP_START_DATE, PPP_START_DATE_LABEL, pppStartDateOf, derivePPPOperationsStart } from '../modules/feasibility/pppTimeline'
 import colors from '../theme/colors.js'
@@ -343,24 +343,12 @@ export default function FeasibilityProject() {
     setSavingOverride(true)
     const val = parseFloat(editingOverrideValue)
     if (isNaN(val)) { alert('Please enter a valid number'); setSavingOverride(false); return }
-    const { data: existing } = await supabase.from('assumptions').select('assumption_id')
-      .eq('project_id', projectId).eq('category', 'benchmark_override').eq('name', key).maybeSingle()
-    let error
-    if (existing) {
-      ;({ error } = await supabase.from('assumptions').update({ value: val }).eq('assumption_id', existing.assumption_id))
-    } else {
-      ;({ error } = await supabase.from('assumptions').insert({
-        project_id: projectId, name: key, category: 'benchmark_override',
-        value: val, unit: null, confidence: 'indicative',
-        tenant_id: project.tenant_id,
-        module_origin: 'feasibility',
-        source_type: 'user_entry',
-      }))
-    }
-    if (!error) {
+    // Project-level override only (never a scenario driver of the same name); confirmed by the database.
+    const result = await saveBenchmarkOverride(supabase, { projectId, tenantId: project.tenant_id, key, value: val })
+    if (result.ok) {
       setOverrides(prev => ({ ...prev, [key]: val }))
       if (version && version.status === 'approved') setAssumptionsModified(true)
-    } else { alert('Override failed: ' + error.message) }
+    } else { alert('Override failed: ' + result.message) }
     setEditingOverrideKey(null); setEditingOverrideValue(''); setSavingOverride(false)
   }
 
