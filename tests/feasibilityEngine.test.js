@@ -1418,7 +1418,11 @@ function pppWith(overrides) {
 // concession scenario.
 // =====================================================================
 describe('B34 — PPP base scenario sanity', () => {
-  const out = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
+  // P-028: B34 locks the 2.0.0 base scenario, hand-computed with the 2.0.0 tax
+  // method (tax on EBITDA − interest, no depreciation or loss relief), now
+  // selected explicitly with Tax Depreciation = None. Assertions and expected
+  // values unchanged; the default P-028 method is tested in tests/pppTax.test.js.
+  const out = runPPPEngine([...P_PPP_BASE_ASSUMPTIONS, { name: 'Tax Depreciation', value: null, unit: 'None' }])
 
   // ── Post-fix sizing semantics (P-009 / P-013, 2026-05-24) ────────────────
   // Engine no longer sizes debt as TPC × Debt%. With no `Target DSCR` row in
@@ -1613,7 +1617,11 @@ describe('B34 — PPP base scenario sanity', () => {
 // Outstanding debt is unchanged through grace.
 // =====================================================================
 describe('B35 — grace-period principal behavior', () => {
-  const out = runPPPEngine(P_PPP_BASE_ASSUMPTIONS)
+  // P-028: B35 is hand-computed on the 2.0.0 base scenario, hand-computed with the 2.0.0 tax
+  // method (tax on EBITDA − interest, no depreciation or loss relief), now
+  // selected explicitly with Tax Depreciation = None. Assertions and expected
+  // values unchanged; the default P-028 method is tested in tests/pppTax.test.js.
+  const out = runPPPEngine([...P_PPP_BASE_ASSUMPTIONS, { name: 'Tax Depreciation', value: null, unit: 'None' }])
   const opsRows = out.cash_flows.filter(r => r.phase === 'Operations')
 
   test('B35.1: principal = 0 for ops years 1 and 2 (grace = 2); > 0 for year 3', () => {
@@ -1787,9 +1795,18 @@ describe('B38 — PPP input falsy-fallback hardened (Batch 2A)', () => {
   })
 
   test('B38.5: Concession Period=1 (minimum valid) → runs (1 ops year)', () => {
-    const out = runPPPEngine(pppWith({ 'Concession Period': 1 }))
+    // P-024 (2026-10-10): the base fixture's 10-yr loan cannot mature inside a
+    // 1-yr concession and is now rejected (see B38.5b). This test's subject is
+    // the concession validator, so the loan is shortened to fit (1-yr tenor,
+    // no grace) — the concession input under test is unchanged.
+    const out = runPPPEngine(pppWith({ 'Concession Period': 1, 'Loan Tenor': 1, 'Grace Period': 0 }))
     expect(out).toBeDefined()
     expect(out.operations_years).toBe(1)
+  })
+
+  test('B38.5b: P-024 — loan maturity beyond concession expiry is blocked', () => {
+    expect(() => runPPPEngine(pppWith({ 'Concession Period': 1 })))
+      .toThrow(/LOAN_MATURITY_EXCEEDS_CONCESSION/)
   })
 
   test('B38.6: Construction Period=6 months (sub-year) → runs (1 construction year via ceil)', () => {

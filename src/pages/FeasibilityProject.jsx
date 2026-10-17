@@ -5,9 +5,17 @@ import { jsPDF } from 'jspdf'
 import DevEngineTab from './DevEngineTab'
 import {
   getVal, pppVal, runEngine, runPPPEngine,
-  PPP_DSCR_FLOOR, PPP_IRR_HURDLE,
+  PPP_DSCR_FLOOR, PPP_IRR_HURDLE, PPP_ENGINE_VERSION, PPP_ENGINE_COMPATIBLE_VERSIONS,
   isPPPAvailabilityPayment, computePPPBankability, computeRequiredPayment,
 } from '../modules/feasibility/annualEngine'
+import { buildDebtScheduleRows } from '../modules/feasibility/debtSchedule'
+import PPPMessages from '../modules/feasibility/PPPMessages'
+import PPPResultProvenance from '../modules/feasibility/PPPResultProvenance'
+import PPPTaxSchedule from '../modules/feasibility/PPPTaxSchedule'
+import { savePPPApproval, loadLatestModelOutput } from '../modules/feasibility/pppResultStore'
+import { saveBenchmarkOverride, removeBenchmarkOverride, deleteAssumption } from '../modules/feasibility/assumptionWrites'
+import { pppResultBasis, isUnsupportedProjectFinance, PPP_CASH_FLOW_HEADERS, pppCashFlowRows, pppTaxDisclosure } from '../modules/feasibility/pppReporting'
+import { PPP_START_DATE, PPP_START_DATE_LABEL, pppStartDateOf, derivePPPOperationsStart } from '../modules/feasibility/pppTimeline'
 import colors from '../theme/colors.js'
 import {
   fmtCurrency, fmtPct, fmtDSCR, fmtMultiple,
@@ -16,11 +24,23 @@ import {
 import { getRecommendation } from '../utils/recommend.js'
 
 // ── Assumption edit-type helpers ──
-const DROPDOWN_OPTIONS = { 'Revenue Model': ['Sale', 'Rental', 'Mixed'] }
+const DROPDOWN_OPTIONS = {
+  'Revenue Model': ['Sale', 'Rental', 'Mixed'],
+  // PPP (P-016 / Phase 3)
+  'Model Periodicity': ['Annual', 'Quarterly'],
+  'Revenue Basis': ['Contractual', 'Demand Estimate'],
+  'Repayment Profile': ['Sculpted', 'Annuity', 'Equal Principal'],
+  // P-028 tax (modelling assumptions)
+  'Tax Depreciation': ['Straight-line', 'None'],
+  'Terminal Tax Write-off': ['No', 'Yes'],
+}
 const DATE_FIELDS = ['Construction Start Date', 'Operations Start Date']
+// Free-text list inputs (stored in `unit`), e.g. "10, 20, 30"
+const TEXT_FIELDS = ['Revenue Profile', 'Construction Cost Profile', 'Quarterly Revenue Weights']
 function editType(name) {
   if (DROPDOWN_OPTIONS[name]) return 'dropdown'
   if (DATE_FIELDS.includes(name)) return 'date'
+  if (TEXT_FIELDS.includes(name)) return 'text'
   return 'number'
 }
 function isEditable(a) { return editType(a.name) !== 'number' || a.value !== null }
@@ -58,7 +78,57 @@ const PPP_DISPLAY_LABELS = {
   'Annual Availability Payment': 'Annual Availability Payment (JOD)',
   'Total Project Cost':          'Total Project Cost (JOD)',
   'OPEX % of Revenue':           'OPEX % of Annual Payment',
+  'Model Periodicity':                 'Model Periodicity (annual / quarterly calculation)',
+  'Construction Cost Profile':         'Construction Cost Profile (weights per construction year or quarter)',
+  'Construction Interest Rate':        'Construction Interest Rate (IDC, % p.a.)',
+  'OPEX Amount (JOD)':                 'Fixed OPEX (JOD per year, replaces OPEX %)',
+  'Availability Payment Escalation %': 'Availability Payment Escalation (% p.a.)',
+  'OPEX Escalation %':                 'Fixed OPEX Escalation (% p.a.)',
+  'Revenue Profile':                   'Revenue Profile (JOD per operating year, replaces AP)',
+  'Revenue Basis':                     'Revenue Basis (contractual vs demand estimate)',
+  'Quarterly Revenue Weights':         'Quarterly Revenue Weights (4 values, quarterly models)',
+  'Repayment Profile':                 'Debt Repayment Profile',
+  'Target DSCR':                       'Target DSCR (debt sculpting / sizing)',
+  'Lender Minimum DSCR':               'Lender Minimum DSCR (underwriting acceptance threshold)',
+  'Construction Start Date':           'Construction Start / Financial Close Date',
+  // P-028 tax inputs — modelling assumptions, not confirmed Jordanian tax treatment
+  'Tax Rate':                          'Tax Rate (combined: income tax + national contribution, %)',
+  'Tax Depreciation':                  'Tax Depreciation Method (Straight-line, or None = earlier method)',
+  'Tax Depreciation Life (years)':     'Tax Depreciation Life (years, preliminary — depends on asset classification)',
+  'Depreciable Share %':               'Depreciable Share of TPC + IDC (%, exclude land / non-depreciable cost)',
+  'Eligible IDC %':                    'Eligible Capitalised IDC for Depreciation (%)',
+  'Tax Loss Carry-Forward (years)':    'Tax Loss Carry-Forward (years; model clock, see disclosure)',
+  'Terminal Tax Write-off':            'Terminal Tax Write-off at Hand-back (only if supported)',
+  'Tax Year End Month':                'Tax Year End Month (1–12)',
+  'Tax Payment Lag (months)':          'Tax Payment Lag (months after tax-year end)',
 }
+
+// P-016 / Phase 3 optional PPP inputs. Existing projects do not have these
+// rows; the Assumptions tab offers to add them. Every default is NEUTRAL —
+// adding a row does not change any result until its value is edited.
+const PPP_OPTIONAL_INPUTS = [
+  { name: 'Model Periodicity',                 category: 'ppp_structure', unit: 'Annual' },
+  { name: 'Construction Cost Profile',         category: 'ppp_structure', unit: '' },
+  { name: 'Construction Interest Rate',        category: 'ppp_financing', unit: 'percent', valueFrom: 'Interest Rate' },
+  { name: 'Repayment Profile',                 category: 'ppp_financing', unit: 'Sculpted' },
+  { name: 'Lender Minimum DSCR',               category: 'ppp_financing', unit: 'ratio', value: PPP_DSCR_FLOOR },
+  { name: 'Availability Payment Escalation %', category: 'ppp_revenue',   unit: 'percent', value: 0 },
+  { name: 'OPEX Amount (JOD)',                 category: 'ppp_revenue',   unit: 'JOD', valueFrom: 'fixedOpexEquivalent' },
+  { name: 'OPEX Escalation %',                 category: 'ppp_revenue',   unit: 'percent', value: 0 },
+  { name: 'Revenue Profile',                   category: 'ppp_revenue',   unit: '' },
+  { name: 'Revenue Basis',                     category: 'ppp_revenue',   unit: 'Contractual' },
+  { name: 'Quarterly Revenue Weights',         category: 'ppp_revenue',   unit: '' },
+  // P-028 tax inputs: each row is added with the value the engine already
+  // assumes when the row is absent, so adding it does not change results.
+  { name: 'Tax Depreciation',                  category: 'ppp_financing', unit: 'Straight-line' },
+  { name: 'Tax Depreciation Life (years)',     category: 'ppp_financing', unit: 'years', valueFrom: 'Concession Period' },
+  { name: 'Depreciable Share %',               category: 'ppp_financing', unit: 'percent', value: 100 },
+  { name: 'Eligible IDC %',                    category: 'ppp_financing', unit: 'percent', value: 100 },
+  { name: 'Tax Loss Carry-Forward (years)',    category: 'ppp_financing', unit: 'years', value: 5 },
+  { name: 'Terminal Tax Write-off',            category: 'ppp_financing', unit: 'No' },
+  { name: 'Tax Year End Month',                category: 'ppp_financing', unit: 'month', value: 12 },
+  { name: 'Tax Payment Lag (months)',          category: 'ppp_financing', unit: 'months', value: 4 },
+]
 
 function fmtPPPAssumptionValue(a) {
   if (a.value === null || a.value === undefined) return a.unit || '---'
@@ -94,6 +164,21 @@ function dscrColor(v) {
   return colors.danger
 }
 
+// P-023: lists PPP model warnings in the approval confirmation so they are
+// seen before a baseline is locked. Blocking errors are left to the
+// approve handler (its engine run throws and nothing is written).
+function pppConfirmNote(project, assumptionRows) {
+  if (!isPPPAvailabilityPayment(project, assumptionRows)) return ''
+  try {
+    const ws = runPPPEngine(assumptionRows).warnings || []
+    if (!ws.length) return ''
+    return '\n\nModel checks (' + ws.length + '):\n' +
+      ws.map(w => '• ' + (w.severity === 'warning' ? 'Warning: ' : 'Note: ') + w.message).join('\n')
+  } catch {
+    return ''
+  }
+}
+
 export default function FeasibilityProject() {
   const { projectId } = useParams()
   const navigate = useNavigate()
@@ -103,6 +188,7 @@ export default function FeasibilityProject() {
   const [defaults, setDefaults] = useState([])
   const [variances, setVariances] = useState([])
   const [modelOutput, setModelOutput] = useState(null)
+  const [showQuarterlyDebt, setShowQuarterlyDebt] = useState(false)
   const [tab, setTab] = useState('Assumptions')
   const [loading, setLoading] = useState(true)
   const [approving, setApproving] = useState(false)
@@ -147,6 +233,9 @@ export default function FeasibilityProject() {
   const [savingOverride, setSavingOverride] = useState(false)
   const [openGroups, setOpenGroups] = useState({ 'Market Dynamics': true })
   const [preparedBy, setPreparedBy] = useState('')
+  const [myRole, setMyRole] = useState(null)
+  // Approval requires manager / admin (enforced by approve_version on the server).
+  const canApprove = !myRole || myRole === 'manager' || myRole === 'admin'
 
   useEffect(() => {
     async function load() {
@@ -181,9 +270,8 @@ export default function FeasibilityProject() {
       const { data: vars } = await supabase.from('variances').select('*').eq('project_id', projectId).order('period', { ascending: false })
       setVariances(vars || [])
       if (versionData && versionData.status === 'approved') {
-        const { data: outputs } = await supabase.from('model_outputs').select('*')
-          .eq('version_id', versionData.version_id).order('computed_at', { ascending: false }).limit(1)
-        if (outputs && outputs.length) setModelOutput(outputs[0])
+        const outputs = await loadLatestModelOutput(supabase, versionData.version_id)
+        if (outputs) setModelOutput(outputs)
       }
       // Always load latest approved output for PDF (works even when current version is draft)
       if (scenarios && scenarios.length) {
@@ -192,9 +280,8 @@ export default function FeasibilityProject() {
           .order('approved_at', { ascending: false }).limit(1)
         if (approvedVers && approvedVers.length) {
           setLatestApprovedVersion(approvedVers[0])
-          const { data: approvedOutputs } = await supabase.from('model_outputs').select('*')
-            .eq('version_id', approvedVers[0].version_id).order('computed_at', { ascending: false }).limit(1)
-          if (approvedOutputs && approvedOutputs.length) setLatestApprovedOutput(approvedOutputs[0])
+          const approvedOutputs = await loadLatestModelOutput(supabase, approvedVers[0].version_id)
+          if (approvedOutputs) setLatestApprovedOutput(approvedOutputs)
         }
       }
       // Prepared By
@@ -202,6 +289,8 @@ export default function FeasibilityProject() {
       if (authUser) {
         const { data: userRow } = await supabase.from('users').select('*').eq('user_id', authUser.id).single()
         setPreparedBy((userRow && (userRow.full_name || userRow.name)) ? (userRow.full_name || userRow.name) : authUser.email || '')
+        // SEC: role for presentation only — the database enforces every rule
+        setMyRole(userRow && userRow.role ? userRow.role : null)
       }
       setLoading(false)
     }
@@ -211,7 +300,7 @@ export default function FeasibilityProject() {
   async function handleSaveAssumption(assumptionId, name) {
     setSavingAssumption(true)
     const type = editType(name)
-    const isUnitField = type === 'dropdown' || type === 'date'
+    const isUnitField = type === 'dropdown' || type === 'date' || type === 'text'
     let payload, updatedFields
     if (isUnitField) {
       payload = { unit: editingValue }; updatedFields = { unit: editingValue }
@@ -227,35 +316,46 @@ export default function FeasibilityProject() {
     setEditingId(null); setEditingValue(''); setSavingAssumption(false)
   }
 
+  // P-016 / Phase 3: add a missing optional PPP input with its neutral
+  // default (see PPP_OPTIONAL_INPUTS). Base (project-level) rows only.
+  async function handleAddPPPInput(def) {
+    const { data: { user } } = await supabase.auth.getUser()
+    let value = def.value === undefined ? null : def.value
+    if (def.valueFrom === 'Interest Rate') value = pppVal(assumptions, 'Interest Rate') ?? 7
+    if (def.valueFrom === 'Concession Period') value = pppVal(assumptions, 'Concession Period') ?? 25
+    if (def.valueFrom === 'fixedOpexEquivalent') {
+      const ap = pppVal(assumptions, 'Annual Availability Payment') || 0
+      const pct = pppVal(assumptions, 'OPEX % of Revenue') ?? 5
+      value = Math.round(ap * pct / 100)
+    }
+    const { data, error } = await supabase.from('assumptions').insert({
+      project_id: projectId, scenario_id: null, name: def.name, category: def.category,
+      value, unit: def.unit, confidence: 'indicative',
+      tenant_id: project.tenant_id, author_user_id: user ? user.id : null,
+      module_origin: 'feasibility', source_type: 'user_entry',
+    }).select().single()
+    if (error) { alert('Could not add input: ' + error.message); return }
+    setAssumptions(prev => [...prev, data])
+    if (version && version.status === 'approved') setAssumptionsModified(true)
+  }
+
   async function handleSaveOverride(key) {
     setSavingOverride(true)
     const val = parseFloat(editingOverrideValue)
     if (isNaN(val)) { alert('Please enter a valid number'); setSavingOverride(false); return }
-    const { data: existing } = await supabase.from('assumptions').select('assumption_id')
-      .eq('project_id', projectId).eq('category', 'benchmark_override').eq('name', key).maybeSingle()
-    let error
-    if (existing) {
-      ;({ error } = await supabase.from('assumptions').update({ value: val }).eq('assumption_id', existing.assumption_id))
-    } else {
-      ;({ error } = await supabase.from('assumptions').insert({
-        project_id: projectId, name: key, category: 'benchmark_override',
-        value: val, unit: null, confidence: 'indicative',
-        tenant_id: project.tenant_id,
-        module_origin: 'feasibility',
-        source_type: 'user_entry',
-      }))
-    }
-    if (!error) {
+    // Project-level override only (never a scenario driver of the same name); confirmed by the database.
+    const result = await saveBenchmarkOverride(supabase, { projectId, tenantId: project.tenant_id, key, value: val })
+    if (result.ok) {
       setOverrides(prev => ({ ...prev, [key]: val }))
       if (version && version.status === 'approved') setAssumptionsModified(true)
-    } else { alert('Override failed: ' + error.message) }
+    } else { alert('Override failed: ' + result.message) }
     setEditingOverrideKey(null); setEditingOverrideValue(''); setSavingOverride(false)
   }
 
   async function handleRemoveOverride(key) {
-    const { data: existing } = await supabase.from('assumptions').select('assumption_id')
-      .eq('project_id', projectId).eq('category', 'benchmark_override').eq('name', key).maybeSingle()
-    if (existing) await supabase.from('assumptions').delete().eq('assumption_id', existing.assumption_id)
+    // Local state changes only once the database confirms the override is gone.
+    const result = await removeBenchmarkOverride(supabase, projectId, key)
+    if (!result.ok) { alert('Remove override failed: ' + result.message); return }
     setOverrides(prev => { const n = { ...prev }; delete n[key]; return n })
     if (version && version.status === 'approved') setAssumptionsModified(true)
   }
@@ -272,9 +372,7 @@ export default function FeasibilityProject() {
       const latestVer = vers && vers.length ? vers[0] : null
       let output = null
       if (latestVer && latestVer.status === 'approved') {
-        const { data: outs } = await supabase.from('model_outputs').select('*')
-          .eq('version_id', latestVer.version_id).order('computed_at', { ascending: false }).limit(1)
-        output = outs && outs.length ? outs[0] : null
+        output = await loadLatestModelOutput(supabase, latestVer.version_id)
       }
       const { data: scAssump } = await supabase.from('assumptions').select('*')
         .eq('project_id', projectId).eq('scenario_id', s.scenario_id)
@@ -338,7 +436,7 @@ export default function FeasibilityProject() {
   async function handleSaveScenarioAssumption(assumptionId, name, scenarioAssumptions) {
     setScSaving(true)
     const type = editType(name)
-    const isUnitField = type === 'dropdown' || type === 'date'
+    const isUnitField = type === 'dropdown' || type === 'date' || type === 'text'
     const payload = isUnitField ? { unit: scEditingValue } : {
       value: scEditingValue !== '' && !isNaN(Number(scEditingValue)) ? Number(scEditingValue) : scEditingValue
     }
@@ -363,13 +461,10 @@ export default function FeasibilityProject() {
     if (!window.confirm(msg)) return
     setScDeletingId(sc.scenario_id)
     try {
-      if (sc.latestVersion) {
-        await supabase.from('model_outputs').delete().eq('version_id', sc.latestVersion.version_id)
-        await supabase.from('versions').delete().eq('scenario_id', sc.scenario_id)
-      }
-      await supabase.from('assumptions').delete()
-        .eq('project_id', projectId).eq('scenario_id', sc.scenario_id)
-      await supabase.from('scenarios').delete().eq('scenario_id', sc.scenario_id)
+      // SEC-03: draft-only scenarios are deleted on the server; approved or
+      // archived records are protected (archive instead)
+      const { error: delErr } = await supabase.rpc('delete_scenario', { p_scenario_id: sc.scenario_id })
+      if (delErr) throw delErr
       await loadScenarios()
     } catch (err) { alert('Delete failed: ' + err.message) }
     finally { setScDeletingId(null) }
@@ -409,13 +504,18 @@ export default function FeasibilityProject() {
   async function handleResetScenarioDriver(sc, driverKey) {
     const existing = sc.drivers && sc.drivers[driverKey]
     if (!existing) return
-    await supabase.from('assumptions').delete().eq('assumption_id', existing.assumption_id)
+    const result = await deleteAssumption(supabase, existing.assumption_id)
+    if (!result.ok) alert('Reset failed: ' + result.message)
     await loadScenarios()
   }
 
   // ── Approve and run a scenario (uses scenario-level drivers) ──
   async function handleApproveScenario(sc) {
     if (!sc.latestVersion) return
+    if (isUnsupportedProjectFinance(project, sc.assumptions || assumptions)) {
+      alert('This contract model is not supported by a validated XCEPTA engine; approval is disabled.')
+      return
+    }
     // ── B2: Capital structure validation (RE / non-PPP only) ──
     if (!isPPPAvailabilityPayment(project, sc.assumptions || assumptions)) {
       const eqRaw   = getVal(sc.assumptions || assumptions, 'Equity %')
@@ -436,16 +536,21 @@ export default function FeasibilityProject() {
         return
       }
     }
-    const confirmed = window.confirm('Approve and run this scenario? The model will be computed with current assumptions and key drivers.')
+    const confirmed = window.confirm('Approve and run this scenario? The model will be computed with current assumptions and key drivers.' +
+      pppConfirmNote(project, sc.assumptions || assumptions))
     if (!confirmed) return
     setScApproving(sc.scenario_id)
     try {
       const newLabel = sc.latestVersion.label.replace('Draft', 'Approved')
-      await supabase.from('versions').update({
-        status: 'approved', approved_at: new Date().toISOString(), label: newLabel,
-      }).eq('version_id', sc.latestVersion.version_id)
-      const { data: { user } } = await supabase.auth.getUser()
-      const { data: userData } = await supabase.from('users').select('tenant_id').eq('user_id', user.id).single()
+      // P-022: PPP scenarios run the engine first (a blocking input error
+      // leaves the scenario a draft) and persist a complete versioned result
+      // before approving the version.
+      if (isPPPAvailabilityPayment(project, sc.assumptions || assumptions)) {
+        const scOutput = runPPPEngine(sc.assumptions || assumptions)
+        await persistApprovedPPP(scOutput, sc.assumptions || assumptions, sc.latestVersion.version_id, newLabel)
+        await loadScenarios()
+        return
+      }
       // Merge: project-level defaults → project-level overrides → scenario-level driver overrides
       const scenarioDriverOverrides = {}
       if (sc.drivers) {
@@ -459,12 +564,13 @@ export default function FeasibilityProject() {
       const output = scPPPAP
         ? runPPPEngine(sc.assumptions || assumptions)
         : runEngine(sc.assumptions, mergedDefs)
-      await supabase.from('model_outputs').insert({
-        version_id: sc.latestVersion.version_id, project_id: projectId,
-        tenant_id: userData.tenant_id, irr: output.irr, npv: output.npv,
-        equity_multiple: output.equity_multiple, dscr_series: output.dscr_series,
-        cash_flows: output.cash_flows, created_by: user.id,
+      // SEC-03: approval and result are saved atomically on the server
+      const { error: apErr } = await supabase.rpc('approve_version', {
+        p_version_id: sc.latestVersion.version_id, p_label: newLabel,
+        p_record: { irr: output.irr, npv: output.npv, equity_multiple: output.equity_multiple,
+                    dscr_series: output.dscr_series, cash_flows: output.cash_flows },
       })
+      if (apErr) throw apErr
       await loadScenarios()
     } catch (err) { alert('Error: ' + err.message) }
     finally { setScApproving(null) }
@@ -532,23 +638,40 @@ export default function FeasibilityProject() {
     const latestVer = versions && versions.length ? versions[0] : null
     if (latestVer) setVersion(latestVer)
     if (latestVer && latestVer.status === 'approved') {
-      const { data: outputs } = await supabase.from('model_outputs').select('*')
-        .eq('version_id', latestVer.version_id).order('computed_at', { ascending: false }).limit(1)
-      if (outputs && outputs.length) setModelOutput(outputs[0])
+      const outputs = await loadLatestModelOutput(supabase, latestVer.version_id)
+      if (outputs) setModelOutput(outputs)
     }
     const { data: approvedVers } = await supabase.from('versions').select('*')
       .eq('scenario_id', scenarioId).eq('status', 'approved')
       .order('approved_at', { ascending: false }).limit(1)
     if (approvedVers && approvedVers.length) {
       setLatestApprovedVersion(approvedVers[0])
-      const { data: approvedOutputs } = await supabase.from('model_outputs').select('*')
-        .eq('version_id', approvedVers[0].version_id).order('computed_at', { ascending: false }).limit(1)
-      if (approvedOutputs && approvedOutputs.length) setLatestApprovedOutput(approvedOutputs[0])
+      const approvedOutputs = await loadLatestModelOutput(supabase, approvedVers[0].version_id)
+      if (approvedOutputs) setLatestApprovedOutput(approvedOutputs)
     }
+  }
+
+  // ── P-022: write one immutable, versioned PPP result, then approve ──
+  // 1. insert the complete record (engine output, engine version, inputs)
+  // 2. flip the version to approved
+  // If step 2 fails the just-inserted row is removed, so no orphan result is
+  // left on a draft version. If the P-022 columns are missing (migration not
+  // applied) nothing is written and the version stays a draft.
+  async function persistApprovedPPP(output, assumptionRows, versionId, approvedLabel) {
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data: userData } = await supabase.from('users').select('tenant_id').eq('user_id', user.id).single()
+    await savePPPApproval(supabase, {
+      output, assumptions: assumptionRows, engineVersion: PPP_ENGINE_VERSION,
+      versionId, projectId, tenantId: userData.tenant_id, userId: user.id, approvedLabel,
+    })
   }
 
   async function handleApprove() {
     if (!version) return
+    if (isUnsupportedProjectFinance(project, assumptions)) {
+      alert('This contract model is not supported by a validated XCEPTA engine; approval is disabled.')
+      return
+    }
     // ── B2: Capital structure validation (RE / non-PPP only) ──
     if (!isPPPAvailabilityPayment(project, assumptions)) {
       const eqRaw   = getVal(assumptions, 'Equity %')
@@ -569,7 +692,8 @@ export default function FeasibilityProject() {
         return
       }
     }
-    const confirmed = window.confirm('Approve this version? This is irreversible - the baseline will be locked for variance tracking.')
+    const confirmed = window.confirm('Approve this version? This is irreversible - the baseline will be locked for variance tracking.' +
+      pppConfirmNote(project, assumptions))
     if (!confirmed) return
     setApproving(true)
     try {
@@ -578,26 +702,28 @@ export default function FeasibilityProject() {
       const mergedDefs = getMergedDefaults(defaults, overrides)
       const isPPP = isPPPAvailabilityPayment(project, assumptions)
       const output = isPPP ? runPPPEngine(assumptions) : runEngine(assumptions, mergedDefs)
-
-      // ── Engine succeeded — flip the version to approved ──
       const newLabel = version.label ? version.label.replace('Draft', 'Approved') : version.label
-      const { error } = await supabase.from('versions').update({
-        status: 'approved', approved_at: new Date().toISOString(), label: newLabel,
-      }).eq('version_id', version.version_id)
-      if (error) throw error
 
-      // ── Persist engine output to model_outputs so the Results tab can render it ──
-      const { data: { user } } = await supabase.auth.getUser()
-      const { data: userData } = await supabase.from('users')
-        .select('tenant_id').eq('user_id', user.id).single()
-      const { error: insertError } = await supabase.from('model_outputs').insert({
-        version_id: version.version_id, project_id: projectId,
-        tenant_id: userData.tenant_id,
-        irr: output.irr, npv: output.npv, equity_multiple: output.equity_multiple,
-        dscr_series: output.dscr_series, cash_flows: output.cash_flows,
-        created_by: user.id,
+      // ── P-022: PPP results are persisted as a complete, versioned record
+      // BEFORE the version is flipped to approved, so a version can never be
+      // approved without its full result. ──
+      if (isPPP) {
+        await persistApprovedPPP(output, assumptions, version.version_id, newLabel)
+        const approvedVersion = { ...version, status: 'approved', approved_at: new Date().toISOString(), label: newLabel }
+        setVersion(approvedVersion)
+        await refreshApprovalState(version.scenario_id)
+        setTab('Results')
+        return
+      }
+
+      // ── SEC-03: approve and save the result atomically on the server
+      // (role, tenant and draft status are checked by the database) ──
+      const { error } = await supabase.rpc('approve_version', {
+        p_version_id: version.version_id, p_label: newLabel,
+        p_record: { irr: output.irr, npv: output.npv, equity_multiple: output.equity_multiple,
+                    dscr_series: output.dscr_series, cash_flows: output.cash_flows },
       })
-      if (insertError) throw insertError
+      if (error) throw error
 
       const approvedVersion = { ...version, status: 'approved', approved_at: new Date().toISOString(), label: newLabel }
       setVersion(approvedVersion)
@@ -628,7 +754,7 @@ export default function FeasibilityProject() {
             dscrBreachYear: extraKPIs.dscrBreachYear,
             isPPP:          pppAP,
             irrHurdle:      pppAP ? PPP_IRR_HURDLE : IRR_HURDLE,
-            pppDscrFloor:   PPP_DSCR_FLOOR,
+            pppDscrFloor:   underwritingDSCR,
           })
         : null
 
@@ -1099,6 +1225,28 @@ export default function FeasibilityProject() {
         { label: 'Equity Multiple',                       value: feasEMVal,  color: feasEMColor  },
         { label: 'NPV (Feasibility Baseline)',            value: feasNPVVal, color: feasNPVColor },
         { label: 'Payback Period',                        value: feasPBVal,  color: feasPBColor  },
+        // P-022 / Phase 6: provenance of the PPP result in the export, so a
+        // historical or outdated approval is not mistaken for a current one.
+        ...(pppAP && modelOutput && modelOutput._persistence ? [
+          { label: 'Result basis', color: [92, 127, 146],
+            value: pppResultBasis(modelOutput, { engineVersion: PPP_ENGINE_VERSION, compatibleVersions: PPP_ENGINE_COMPATIBLE_VERSIONS }) },
+          // P-028: tax basis of the result — modelling assumptions, not confirmed tax treatment
+          ...(modelOutput.tax_assumptions ? [
+            { label: 'Tax basis (assumptions, unconfirmed)', color: [92, 127, 146],
+              value: (modelOutput.tax_assumptions.tax_rate * 100).toFixed(1) + '% combined; SL ' + modelOutput.tax_assumptions.depreciation_life_years +
+                ' yrs; losses ' + modelOutput.tax_assumptions.loss_carry_forward_years + ' yrs; paid +' + modelOutput.tax_assumptions.payment_lag_months + ' mo' },
+          ] : []),
+          ...(modelOutput.debt_sizing && modelOutput.debt_sizing.underwriting_dscr !== undefined ? [
+            { label: 'Underwriting DSCR minimum / met', color: modelOutput.debt_sizing.meets_underwriting ? [21, 128, 61] : [185, 28, 28],
+              value: Number(modelOutput.debt_sizing.underwriting_dscr).toFixed(2) + 'x / ' + (modelOutput.debt_sizing.meets_underwriting ? 'Yes' : 'No') },
+          ] : []),
+          ...(modelOutput.project_irr !== undefined ? [
+            { label: 'Project IRR (unlevered, post-tax)', color: [92, 127, 146],
+              value: modelOutput.project_irr === null ? '---' : Number(modelOutput.project_irr).toFixed(1) + '%' },
+            { label: 'Capitalised IDC / Senior debt at COD', color: [92, 127, 146],
+              value: fmtJOD(modelOutput.idc_capitalized) + ' / ' + fmtJOD(modelOutput.debt_amount) },
+          ] : []),
+        ] : []),
         ...(hasDevEngine ? [
           { label: 'Total Development Cost (Dev Engine)',   value: fmtJOD(totalDevCost), color: [92, 127, 146] },
           { label: 'Gross Development Value (Dev Engine)',  value: fmtJOD(totalGDV),     color: [92, 127, 146] },
@@ -1131,6 +1279,39 @@ export default function FeasibilityProject() {
         y += 10
       }
       gap(6)
+
+      // ── P-028 (D2): Tax Methodology & Assumptions (taxable PPP results) ──
+      var taxDisc = pppAP && modelOutput ? pppTaxDisclosure(modelOutput) : null
+      if (taxDisc) {
+        var fmtTaxItem = function(it) {
+          if (it.unit === 'fraction') return (Number(it.value) * 100).toFixed(1) + '%'
+          if (it.unit === 'JOD') return fmtJOD(it.value)
+          if (it.unit === 'years') return it.value === 'unlimited' ? 'Unlimited' : it.value + ' years'
+          if (it.unit === 'months') return it.value + ' months'
+          return String(it.value)
+        }
+        secHead(taxDisc.title)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(180, 83, 9)
+        var taxStatus = doc.splitTextToSize(safe(taxDisc.status), TW - 6)
+        guard(taxStatus.length * 4 + 4)
+        doc.text(taxStatus, ML + 3, y); y += taxStatus.length * 4 + 3
+        taxDisc.items.forEach(function(it) {
+          guard(6)
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(60, 70, 90)
+          doc.text(safe(it.label), ML + 3, y)
+          doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 40, 60)
+          doc.text(safe(fmtTaxItem(it)), MR - 3, y, { align: 'right' })
+          y += 5.5
+        })
+        y += 2
+        taxDisc.notes.forEach(function(n) {
+          doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(100, 110, 125)
+          var lines = doc.splitTextToSize(safe(n), TW - 6)
+          guard(lines.length * 3.6 + 2)
+          doc.text(lines, ML + 3, y); y += lines.length * 3.6 + 2
+        })
+        gap(4)
+      }
 
       // ── IRR interpretation notes ──
       if (hasDevEngine) {
@@ -1599,17 +1780,63 @@ export default function FeasibilityProject() {
 
   // ── Project-type branch — drives engine selection and all conditional UI ──
   const pppAP = isPPPAvailabilityPayment(project, assumptions)
+  // Item 4: project-finance contract models without a validated engine
+  const unsupportedPF = isUnsupportedProjectFinance(project, assumptions)
 
-  // ── Target DSCR — user-defined or default 1.20 ──
-  const targetDSCR = pppAP ? (pppVal(assumptions, 'Target DSCR') || 1.20) : null
+  // ── P-018: two distinct DSCR concepts ──
+  // targetDSCR       — debt-SCULPTING target (sizing input; explicit 0 = no
+  //                    sculpting constraint, consistent with the engine).
+  // underwritingDSCR — lender minimum / underwriting ACCEPTANCE threshold used
+  //                    by every pass/fail gate (bankability, KPI, verdict).
+  //                    The saved result's threshold applies to an approved
+  //                    result; otherwise the 'Lender Minimum DSCR' input, else
+  //                    PPP_DSCR_FLOOR (1.20×).
+  const targetInput = pppAP ? pppVal(assumptions, 'Target DSCR') : null
+  const targetDSCR = pppAP ? (targetInput === null ? PPP_DSCR_FLOOR : targetInput) : null
+  const shownOutput = modelOutput || latestApprovedOutput
+  const underwritingDSCR = !pppAP ? null
+    : (shownOutput && shownOutput.debt_sizing && Number.isFinite(shownOutput.debt_sizing.underwriting_dscr))
+      ? shownOutput.debt_sizing.underwriting_dscr
+      : (pppVal(assumptions, 'Lender Minimum DSCR') ?? PPP_DSCR_FLOOR)
 
-  // ── PPP bankability — uses user-defined target DSCR as floor ──
-  const pppBankability = pppAP ? computePPPBankability(modelOutput || latestApprovedOutput, targetDSCR) : null
+  // ── PPP bankability — gated on the underwriting threshold, never the sculpting target ──
+  const pppBankability = pppAP ? computePPPBankability(shownOutput, underwritingDSCR) : null
 
-  // ── Required payment solver ──
-  const requiredPaymentResult = pppAP && assumptions.length
-    ? computeRequiredPayment(assumptions, targetDSCR)
-    : null
+  // ── P-023: live input check — one engine run on the current assumptions.
+  // Blocking input errors are shown instead of crashing the page; the
+  // render-time solver below only runs when the inputs are valid.
+  let pppLiveCheck = null
+  if (pppAP && assumptions.length) {
+    try {
+      const live = runPPPEngine(assumptions)
+      pppLiveCheck = { error: null, warnings: live.warnings || [], hasDebt: live.debt_amount > 0.01, output: live }
+    } catch (err) {
+      pppLiveCheck = { error: err, warnings: [] }
+    }
+  }
+
+  // ── Underwriting remediation (live analysis on current inputs) ──
+  // With DSCR-sculpted debt, the minimum DSCR equals the sculpting target
+  // whatever the payment, so a payment solver cannot lift coverage above a
+  // target set below the underwriting threshold (it would run 2,000 times
+  // without converging). In that case the analysis instead re-sizes debt at
+  // the underwriting threshold. Otherwise the payment solver targets the
+  // underwriting threshold. Skipped when there is no debt.
+  let requiredPaymentResult = null
+  let underwritingAlternative = null
+  if (pppLiveCheck && !pppLiveCheck.error && pppLiveCheck.hasDebt) {
+    if (targetDSCR > 0 && targetDSCR < underwritingDSCR) {
+      try {
+        const alt = runPPPEngine(assumptions.map(a => a.name === 'Target DSCR' ? { ...a, value: underwritingDSCR } : a)
+          .concat(assumptions.some(a => a.name === 'Target DSCR') ? [] : [{ name: 'Target DSCR', value: underwritingDSCR }]))
+        underwritingAlternative = { debt: alt.debt_amount, equity: alt.equity_amount, irr: alt.irr, npv: alt.npv,
+          currentDebt: pppLiveCheck.output.debt_amount, currentEquity: pppLiveCheck.output.equity_amount }
+      } catch { underwritingAlternative = null }
+    } else if (targetDSCR > 0) {
+      try { requiredPaymentResult = computeRequiredPayment(assumptions, underwritingDSCR) }
+      catch { requiredPaymentResult = null }
+    }
+  }
 
   // Stale output: detect stored DSCR values from old engine runs (threshold was 0.01, not 1)
   // These produce absurd ratios (100M+). Flag so user knows to re-approve.
@@ -1647,8 +1874,12 @@ export default function FeasibilityProject() {
 
     // Fix 3&4: exclude null DSCR from min and breach detection
     const dscrVals   = (modelOutput.dscr_series || []).filter(d => d.dscr !== null)
-    const minDSCR    = dscrVals.length > 0 ? Math.min(...dscrVals.map(d => d.dscr)) : null
-    const dscrFloor  = pppAP ? PPP_DSCR_FLOOR : 1.0
+    const seriesMin  = dscrVals.length > 0 ? Math.min(...dscrVals.map(d => d.dscr)) : null
+    // P-018: gate on the covenant-frequency minimum (quarterly for quarterly
+    // models) when the saved result carries it.
+    const periodMin  = modelOutput.debt_sizing && Number.isFinite(modelOutput.debt_sizing.min_dscr) ? modelOutput.debt_sizing.min_dscr : null
+    const minDSCR    = seriesMin === null ? periodMin : periodMin === null ? seriesMin : Math.min(seriesMin, periodMin)
+    const dscrFloor  = pppAP ? underwritingDSCR : 1.0
     const breachEntry = dscrVals.find(d => d.dscr < dscrFloor)
 
     extraKPIs = {
@@ -1666,7 +1897,7 @@ export default function FeasibilityProject() {
     : (modelOutput !== null && modelOutput !== undefined && Number(modelOutput.irr) >= IRR_HURDLE)
   const npvPass = modelOutput !== null && modelOutput !== undefined && Number(modelOutput.npv) >= 0
   const dscrPass = pppAP
-    ? (extraKPIs !== null && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= PPP_DSCR_FLOOR)
+    ? (extraKPIs !== null && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= underwritingDSCR)
     : (extraKPIs !== null && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= 1.0)
 
   return (
@@ -1740,8 +1971,25 @@ export default function FeasibilityProject() {
       </div>
 
       {/* ══════════════════ ASSUMPTIONS TAB ══════════════════ */}
+      {unsupportedPF && (tab === 'Assumptions' || tab === 'Results') && (
+        <div style={{background:colors.dangerSoft,border:`1px solid ${colors.danger}`,borderRadius:'8px',padding:'0.85rem 1.25rem',marginBottom:'1.5rem'}}>
+          <p style={{fontSize:'0.82rem',color:colors.danger,fontWeight:'600',marginBottom:'0.25rem'}}>
+            Contract model not supported: {project.revenue_model || 'non-availability-payment project finance'}
+          </p>
+          <p style={{fontSize:'0.76rem',color:colors.textSecondary,lineHeight:1.5}}>
+            XCEPTA has a validated engine for availability-payment project finance only. Calculation and approval are disabled
+            for this project, and any earlier result shown for it was not produced by a validated project-finance engine.
+            For demand-based revenue, create an Availability Payment project and enter a Revenue Profile with
+            Revenue Basis = Demand Estimate.
+          </p>
+        </div>
+      )}
       {tab === 'Assumptions' && (
         <div>
+          {pppLiveCheck && (
+            <PPPMessages error={pppLiveCheck.error} warnings={pppLiveCheck.warnings}
+              title="Checks on the current inputs" />
+          )}
           {isApproved && assumptionsModified && (
             <div style={{background:colors.warningSoft,border:`1px solid ${colors.warning}`,borderRadius:'8px',
               padding:'1rem 1.5rem',marginBottom:'1.5rem',display:'flex',
@@ -1844,9 +2092,9 @@ export default function FeasibilityProject() {
                                   <input type="date" value={editingValue} onChange={e => setEditingValue(e.target.value)} autoFocus
                                     style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.2rem 0.5rem',fontSize:'0.875rem'}} />
                                 ) : (
-                                  <input type="number" value={editingValue} onChange={e => setEditingValue(e.target.value)} autoFocus
+                                  <input type={type === 'text' ? 'text' : 'number'} placeholder={type === 'text' ? 'e.g. 10, 20, 30' : undefined} value={editingValue} onChange={e => setEditingValue(e.target.value)} autoFocus
                                     onKeyDown={e => { if(e.key==='Enter') handleSaveAssumption(a.assumption_id,a.name); if(e.key==='Escape'){setEditingId(null);setEditingValue('')} }}
-                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.2rem 0.5rem',fontSize:'0.875rem',width:'110px'}} />
+                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.2rem 0.5rem',fontSize:'0.875rem',width: type === 'text' ? '220px' : '110px'}} />
                                 )
                               ) : pppAP ? fmtPPPAssumptionValue(a) : displayVal(a)}
                             </td>
@@ -1922,6 +2170,65 @@ export default function FeasibilityProject() {
                     : 'Enter Construction Period and Operations / Revenue Period above to see the full timeline.'
                   }
                 </p>
+                {/* Calendar placement for FP&A (pppTimeline.js); for taxable projects also the tax years (P-028). */}
+                {(() => {
+                  const startDate = pppStartDateOf(assumptions)
+                  const hasRow = assumptions.some(a => a.name === PPP_START_DATE)
+                  const cod = derivePPPOperationsStart(assumptions)
+                  if (!startDate) {
+                    return (
+                      <div style={{marginTop:'0.75rem',padding:'0.6rem 0.8rem',border:`1px solid ${colors.warning}`,borderRadius:'6px',
+                        background:colors.warningSoft,fontSize:'0.75rem',color:colors.warning,lineHeight:1.5}}>
+                        Required for FP&amp;A: {PPP_START_DATE_LABEL}. It places the model years on the calendar for monthly budgets;
+                        for tax-exempt projects it does not change any financial result; for taxable projects it also sets the
+                        tax-year boundaries. {hasRow ? 'Enter the date in Project Structure above.' : ''}
+                        {!hasRow && (
+                          <button onClick={() => handleAddPPPInput({ name: PPP_START_DATE, category: 'ppp_structure', unit: null })}
+                            style={{marginLeft:'0.5rem',padding:'0.2rem 0.7rem',background:'none',border:`1px solid ${colors.warning}`,
+                              borderRadius:'4px',color:colors.warning,cursor:'pointer',fontSize:'0.72rem'}}>
+                            + Add {PPP_START_DATE_LABEL}
+                          </button>
+                        )}
+                      </div>
+                    )
+                  }
+                  return (
+                    <p style={{fontSize:'0.72rem',color:colors.textSecondary,marginTop:'0.5rem',lineHeight:1.5}}>
+                      Calendar: construction starts {startDate}
+                      {cod && cod.date ? ` · operations start (derived) ${cod.date}` : ' · operations start: enter a valid date'}
+                      {cod && cod.modelledMonths !== cod.enteredMonths
+                        ? ` — the model rounds ${cod.enteredMonths} construction months up to ${cod.modelledMonths} (whole model periods)`
+                        : ''}
+                    </p>
+                  )
+                })()}
+              </div>
+            )
+          })()}
+
+          {/* ── P-016 / Phase 3: optional PPP inputs not yet on this project ── */}
+          {pppAP && (() => {
+            const missing = PPP_OPTIONAL_INPUTS.filter(d => !assumptions.some(a => a.name === d.name))
+            if (!missing.length) return null
+            return (
+              <div style={{marginBottom:'2rem'}}>
+                <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'0.4rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
+                  Optional PPP inputs
+                </h3>
+                <p style={{fontSize:'0.75rem',color:colors.textMuted,marginBottom:'0.75rem',lineHeight:1.5}}>
+                  Quarterly calculation, escalation, revenue/demand profiles, construction timing, repayment profile and tax
+                  assumptions. Each input is added with the value already assumed, so results do not change until you edit it.
+                  Tax inputs are modelling assumptions, not confirmed Jordanian tax treatment — confirm them with a tax adviser.
+                </p>
+                <div style={{display:'flex',flexWrap:'wrap',gap:'0.5rem'}}>
+                  {missing.map(d => (
+                    <button key={d.name} onClick={() => handleAddPPPInput(d)}
+                      style={{padding:'0.35rem 0.8rem',background:'none',border:`1px solid ${colors.border}`,borderRadius:'6px',
+                        color:colors.textSecondary,cursor:'pointer',fontSize:'0.75rem'}}>
+                      + {PPP_DISPLAY_LABELS[d.name] || d.name}
+                    </button>
+                  ))}
+                </div>
               </div>
             )
           })()}
@@ -2357,11 +2664,19 @@ export default function FeasibilityProject() {
                   Approving this version locks it as the baseline for FP&A variance tracking and generates the basic feasibility results.
                 </p>
               </div>
-              <button onClick={handleApprove} disabled={approving}
+              {pppLiveCheck && (
+                <PPPMessages error={pppLiveCheck.error} warnings={pppLiveCheck.warnings}
+                  title="Checks on the current inputs" />
+              )}
+              <button onClick={handleApprove} disabled={approving || unsupportedPF || !canApprove || !!(pppLiveCheck && pppLiveCheck.error)}
+                title={!canApprove ? 'Approving requires the manager or admin role' : undefined}
                 style={{padding:'0.55rem 1.4rem',background:colors.success,color:'white',border:`1px solid ${colors.success}`,
-                  borderRadius:'6px',cursor:approving?'not-allowed':'pointer',fontSize:'0.875rem',fontWeight:'500',opacity:approving?0.6:1}}>
+                  borderRadius:'6px',cursor:approving||!canApprove?'not-allowed':'pointer',fontSize:'0.875rem',fontWeight:'500',opacity:approving||!canApprove?0.6:1}}>
                 {approving ? 'Approving & running model...' : 'Approve Version'}
               </button>
+              {!canApprove && (
+                <p style={{fontSize:'0.72rem',color:colors.textMuted,marginTop:'0.4rem'}}>Approving a version requires the manager or admin role.</p>
+              )}
             </div>
           ) : (
             <div>
@@ -2413,6 +2728,15 @@ export default function FeasibilityProject() {
                       </button>
                     </div>
                   )}
+                  {pppAP && (
+                    <PPPResultProvenance modelOutput={modelOutput} assumptions={assumptions}
+                      engineVersion={PPP_ENGINE_VERSION} compatibleVersions={PPP_ENGINE_COMPATIBLE_VERSIONS}
+                      onNewDraft={handleCreateDraft} creatingDraft={creatingDraft} />
+                  )}
+                  {pppAP && (
+                    <PPPMessages warnings={modelOutput.warnings}
+                      title="Model checks saved with this approved result" />
+                  )}
                   {pppAP && pppBankability && (
                     <div style={{marginBottom:'2rem'}}>
                       {/* Recommendation banner */}
@@ -2455,7 +2779,7 @@ export default function FeasibilityProject() {
                             value: pppBankability.npvOk ? 'PASS' : 'FAIL',
                           },
                           {
-                            label: 'Min DSCR ≥ ' + pppBankability.PPP_DSCR_FLOOR + 'x',
+                            label: 'Min DSCR ≥ ' + pppBankability.PPP_DSCR_FLOOR + 'x (underwriting)',
                             pass: pppBankability.dscrOk,
                             value: pppBankability.dscrOk
                               ? 'PASS'
@@ -2540,6 +2864,35 @@ export default function FeasibilityProject() {
                         )
                       })()}
 
+                      {/* P-018: sculpting target below the underwriting minimum —
+                           show the project re-sized at the underwriting threshold. */}
+                      {underwritingAlternative && (
+                        <div style={{
+                          background: colors.surfaceElevated, border: `1px solid ${colors.warning}`,
+                          borderRadius: '6px', padding: '0.85rem 1rem', marginTop: '0.75rem',
+                        }}>
+                          <p style={{fontSize:'0.7rem',color:colors.textSecondary,marginBottom:'0.4rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
+                            Underwriting check — sculpting target {fmtDSCR(targetDSCR)} vs lender minimum {fmtDSCR(underwritingDSCR)}
+                          </p>
+                          <p style={{fontSize:'0.72rem',color:colors.textMuted,marginBottom:'0.6rem',lineHeight:1.5}}>
+                            Debt is sculpted below the underwriting threshold, so minimum DSCR stays at the target whatever the
+                            payment. Re-sizing the debt at {fmtDSCR(underwritingDSCR)} on the current inputs gives (live analysis — not
+                            part of the approved result):
+                          </p>
+                          {[
+                            ['Senior debt at COD', fmtNumber(underwritingAlternative.currentDebt) + ' → ' + fmtNumber(underwritingAlternative.debt)],
+                            ['Equity', fmtNumber(underwritingAlternative.currentEquity) + ' → ' + fmtNumber(underwritingAlternative.equity)],
+                            ['Equity IRR at ' + fmtDSCR(underwritingDSCR), fmtIRR(underwritingAlternative.irr)],
+                            ['Equity NPV at ' + fmtDSCR(underwritingDSCR), fmtNumber(underwritingAlternative.npv)],
+                          ].map(([k, v]) => (
+                            <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:'0.8rem',marginBottom:'0.25rem'}}>
+                              <span style={{color:colors.textSecondary}}>{k}</span>
+                              <span style={{color:colors.textPrimary,fontWeight:'600'}}>{v}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
                       {/* Required Availability Payment / DSCR Remediation */}
                       {requiredPaymentResult && (
                         <div style={{
@@ -2547,11 +2900,14 @@ export default function FeasibilityProject() {
                           borderRadius: '6px', padding: '0.85rem 1rem', marginTop: '0.75rem',
                         }}>
                           <p style={{fontSize:'0.7rem',color:colors.textSecondary,marginBottom:'0.6rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
-                            DSCR Remediation — Target {targetDSCR.toFixed(2)}x
+                            DSCR Remediation — Underwriting minimum {fmtDSCR(underwritingDSCR)}
+                          </p>
+                          <p style={{fontSize:'0.7rem',color:colors.textMuted,marginBottom:'0.6rem',fontStyle:'italic'}}>
+                            Live analysis on the current Assumptions tab inputs — not part of the approved, saved result.
                           </p>
                           <div style={{display:'flex',flexDirection:'column',gap:'0.35rem'}}>
                             <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.8rem'}}>
-                              <span style={{color:colors.textSecondary}}>Required Availability Payment (Target DSCR {targetDSCR.toFixed(2)}x)</span>
+                              <span style={{color:colors.textSecondary}}>Required Availability Payment (DSCR {fmtDSCR(underwritingDSCR)})</span>
                               <span style={{color:colors.textPrimary,fontWeight:'600'}}>
                                 {Math.round(requiredPaymentResult.required_payment).toLocaleString('en-US')} JOD/yr
                               </span>
@@ -2590,7 +2946,7 @@ export default function FeasibilityProject() {
                       dscrBreachYear: extraKPIs ? extraKPIs.dscrBreachYear : null,
                       isPPP:          pppAP,
                       irrHurdle:      pppAP ? PPP_IRR_HURDLE : IRR_HURDLE,
-                      pppDscrFloor:   PPP_DSCR_FLOOR,
+                      pppDscrFloor:   underwritingDSCR,
                     })
 
                     const verdictColor =
@@ -2783,7 +3139,7 @@ export default function FeasibilityProject() {
                       ))}
                       {(() => {
                         const dscrPassFinal = pppAP
-                          ? (extraKPIs && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= PPP_DSCR_FLOOR)
+                          ? (extraKPIs && extraKPIs.minDSCR !== null && extraKPIs.minDSCR >= underwritingDSCR)
                           : dscrPass
                         const dscrVerdict = dscrPassFinal
                           ? 'SERVICEABLE'
@@ -2880,7 +3236,7 @@ export default function FeasibilityProject() {
                   {modelOutput.dscr_series && modelOutput.dscr_series.length > 0 && (
                     <div style={{marginBottom:'2rem'}}>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem',flexWrap:'wrap',gap:'0.5rem'}}>
-                        <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,textTransform:'uppercase',letterSpacing:'0.05em'}}>DSCR — Annual Series</h3>
+                        <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,textTransform:'uppercase',letterSpacing:'0.05em'}}>DSCR — Annual Series{modelOutput.periodicity === 'quarterly' ? ' (Σ CFADS ÷ Σ debt service per year; quarterly minimum ' + fmtDSCR(modelOutput.debt_sizing && modelOutput.debt_sizing.min_dscr) + ')' : ''}</h3>
                         {extraKPIs && extraKPIs.dscrBreachYear && (
                           <span style={{fontSize:'0.75rem',padding:'3px 10px',borderRadius:'20px',
                             background:colors.dangerSoft,color:colors.danger,border:`1px solid ${colors.danger}`}}>
@@ -2931,16 +3287,16 @@ export default function FeasibilityProject() {
 
                   {/* Annual Cash Flows */}
                   <div>
-                    <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'1rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>Annual Cash Flows (JOD)</h3>
+                    <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'1rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>Annual Cash Flows (JOD){modelOutput.periodicity === 'quarterly' ? ' — aggregated from the quarterly model' : ''}</h3>
                     <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',overflow:'auto'}}>
                       <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.8rem',minWidth:'900px'}}>
                         <thead><tr style={{borderBottom:`1px solid ${colors.border}`}}>
-                          {['Year','Phase','Revenue','Opex','EBITDA','Interest','PBT','Tax','Net Income','Principal','Equity CF'].map(h => (
+                          {(pppAP ? PPP_CASH_FLOW_HEADERS : ['Year','Phase','Revenue','Opex','EBITDA','Interest','PBT','Tax','Net Income','Principal','Equity CF']).map(h => (
                             <th key={h} style={{padding:'0.6rem 0.75rem',textAlign:'right',color:colors.textSecondary,fontWeight:'500',fontSize:'0.7rem',whiteSpace:'nowrap'}}>{h}</th>
                           ))}
                         </tr></thead>
                         <tbody>
-                          {cfRows.map((row, index) => (
+                          {(pppAP ? pppCashFlowRows(cfRows) : cfRows).map((row, index) => (
                             <tr key={row.year} style={{borderBottom:`1px solid ${colors.border}`,background:index%2===0?colors.accentBgSubtle:'transparent'}}>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{row.year}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textMuted,textAlign:'right',fontSize:'0.7rem'}}>{row.phase}</td>
@@ -2949,6 +3305,7 @@ export default function FeasibilityProject() {
                               <td style={{padding:'0.6rem 0.75rem',color:Number(row.ebitda)>=0?colors.textPrimary:colors.danger,textAlign:'right'}}>{fmtNumber(row.ebitda)}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.interest)}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:Number(row.pbt)>=0?colors.textPrimary:colors.danger,textAlign:'right'}}>{fmtNumber(row.pbt)}</td>
+                              {pppAP && <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.tax_expense)}</td>}
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.tax)}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:Number(row.net_income)>=0?colors.textPrimary:colors.danger,textAlign:'right'}}>{fmtNumber(row.net_income)}</td>
                               <td style={{padding:'0.6rem 0.75rem',color:colors.textSecondary,textAlign:'right'}}>{fmtNumber(row.principal)}</td>
@@ -2958,6 +3315,11 @@ export default function FeasibilityProject() {
                         </tbody>
                       </table>
                     </div>
+                    {pppAP && (
+                      <p style={{fontSize:'0.72rem',color:colors.textMuted,marginTop:'0.5rem',lineHeight:1.5}}>
+                        Net Income = PBT − Tax Expense (accrual). CFADS and Equity CF use Cash Tax Paid, which follows the tax-year payment dates.
+                      </p>
+                    )}
                     {modelOutput.cash_flows && modelOutput.cash_flows.length > 6 && (
                       <button onClick={() => setShowFullCF(!showFullCF)}
                         style={{marginTop:'0.75rem',background:'none',border:'none',color:colors.accent,cursor:'pointer',fontSize:'0.8rem'}}>
@@ -2966,61 +3328,30 @@ export default function FeasibilityProject() {
                     )}
                   </div>
 
-                  {/* Debt Schedule — PPP only. P-015D: when the engine emits
-                       debt_schedule (opening/draw/IDC/interest/principal/
-                       closing computed from the same variables as the cash
-                       flows), render it verbatim — the UI does no debt math.
-                       Older approved baselines predate debt_schedule; for
-                       those we keep the legacy reconstruction below
-                       (P-015A debt_draw ramp, or "opening = startingDebt"). */}
-                  {pppAP && modelOutput.cash_flows && modelOutput.cash_flows.length > 0 && (() => {
-                    // Starting term-loan balance. Prefer the engine's sized figure; fall back to
-                    // debt_amount; finally derive from cash_flows (total principal repaid = original
-                    // debt, since the loan fully amortizes). The last fallback lets the schedule
-                    // render on older approved baselines whose cached output predates debt_sizing
-                    // (P-022: approved baselines carry old-engine output shapes).
-                    const principalSum = modelOutput.cash_flows.reduce(
-                      (s, r) => s + (Number(r.principal) || 0), 0)
-                    const startingDebt =
-                      (modelOutput.debt_sizing && modelOutput.debt_sizing.actual_debt != null)
-                        ? Number(modelOutput.debt_sizing.actual_debt)
-                        : (modelOutput.debt_amount != null)
-                          ? Number(modelOutput.debt_amount)
-                          : (principalSum > 0 ? principalSum : null)
-                    const engineSchedule = Array.isArray(modelOutput.debt_schedule) && modelOutput.debt_schedule.length > 0
-                    if (!engineSchedule && (startingDebt === null || !Number.isFinite(startingDebt))) return null
+                  {/* P-028 tax schedule (taxable results with tax depreciation) */}
+                  {pppAP && <PPPTaxSchedule modelOutput={modelOutput} />}
 
-                    // P-015A: detect whether the engine emitted construction
-                    // debt_draw fields. If present, ramp construction rows
-                    // from 0; operations rows then continue from the
-                    // construction closing balance. If absent (legacy
-                    // baselines), use the old "all rows open at startingDebt"
-                    // shape so older PPP exports still render.
-                    const hasDebtDrawField = modelOutput.cash_flows.some(
-                      r => r.debt_draw != null
-                    )
-                    let opening = hasDebtDrawField ? 0 : startingDebt
-                    const rows = engineSchedule ? modelOutput.debt_schedule : modelOutput.cash_flows.map(r => {
-                      const principal = Number(r.principal)  || 0
-                      const interest  = Number(r.interest)   || 0
-                      const draw      = Number(r.debt_draw)  || 0
-                      const closing = (hasDebtDrawField && r.phase === 'Construction')
-                        ? opening + draw
-                        : opening - principal
-                      const row = {
-                        year: r.year, phase: r.phase,
-                        opening, draw, idc: 0,
-                        interest, principal, closing,
-                      }
-                      opening = closing
-                      return row
-                    })
+                  {/* Debt Schedule — PPP only (P-010 / P-015D). Built by
+                       buildDebtScheduleRows() from the persisted engine
+                       cash_flows (opening + draw + IDC − principal), so it
+                       reconciles for every stored output shape. */}
+                  {pppAP && modelOutput.cash_flows && modelOutput.cash_flows.length > 0 && (() => {
+                    const rows = showQuarterlyDebt && Array.isArray(modelOutput.debt_schedule_periodic)
+                      ? modelOutput.debt_schedule_periodic.map((r, i) => ({ ...r, year: r.phase === 'Construction' ? 'C-Q' + (i + 1) : 'O-Q' + (i + 1 - (modelOutput.construction_periods || 0)) }))
+                      : buildDebtScheduleRows(modelOutput)
+                    if (!rows) return null
                     const finalClosing   = rows[rows.length - 1].closing
                     const fullyAmortized = Math.abs(finalClosing) <= 1   // ±1 JOD tolerance
 
                     return (
                       <div style={{marginTop:'2rem'}}>
-                        <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'1rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>Debt Schedule (JOD)</h3>
+                        <h3 style={{fontSize:'0.8rem',color:colors.textSecondary,marginBottom:'1rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>Debt Schedule (JOD){showQuarterlyDebt && modelOutput.debt_schedule_periodic ? ' — quarterly' : ' — annual'}</h3>
+                        {Array.isArray(modelOutput.debt_schedule_periodic) && (
+                          <button onClick={() => setShowQuarterlyDebt(v => !v)}
+                            style={{marginBottom:'0.75rem',background:'none',border:'none',color:colors.accent,cursor:'pointer',fontSize:'0.78rem',padding:0}}>
+                            {showQuarterlyDebt ? 'Show annual totals' : 'Show quarterly detail'}
+                          </button>
+                        )}
                         <div style={{background:colors.surfaceElevated,border:`1px solid ${colors.border}`,borderRadius:'8px',overflow:'auto'}}>
                           <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.8rem',minWidth:'900px'}}>
                             <thead><tr style={{borderBottom:`1px solid ${colors.border}`}}>
@@ -3167,7 +3498,8 @@ export default function FeasibilityProject() {
                           </span>
                           {isDraft && (
                             <button onClick={() => handleApproveScenario(sc)}
-                              disabled={scApproving === sc.scenario_id}
+                              disabled={scApproving === sc.scenario_id || !canApprove}
+                              title={!canApprove ? 'Approving requires the manager or admin role' : undefined}
                               style={{padding:'0.3rem 0.8rem',background:colors.success,color:'white',border:'none',
                                 borderRadius:'5px',cursor:'pointer',fontSize:'0.75rem',
                                 opacity:scApproving===sc.scenario_id?0.6:1}}>
@@ -3340,9 +3672,9 @@ export default function FeasibilityProject() {
                                                   <input type="date" value={scEditingValue} onChange={e => setScEditingValue(e.target.value)} autoFocus
                                                     style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.15rem 0.4rem',fontSize:'0.82rem'}} />
                                                 ) : (
-                                                  <input type="number" value={scEditingValue} onChange={e => setScEditingValue(e.target.value)} autoFocus
+                                                  <input type={type === 'text' ? 'text' : 'number'} value={scEditingValue} onChange={e => setScEditingValue(e.target.value)} autoFocus
                                                     onKeyDown={e => { if(e.key==='Enter') handleSaveScenarioAssumption(a.assumption_id, a.name); if(e.key==='Escape'){setScEditingId(null);setScEditingValue('')} }}
-                                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.15rem 0.4rem',fontSize:'0.82rem',width:'90px',textAlign:'right'}} />
+                                                    style={{background:colors.surfaceMuted,border:`1px solid ${colors.accent}`,borderRadius:'4px',color:colors.textPrimary,padding:'0.15rem 0.4rem',fontSize:'0.82rem',width: type === 'text' ? '180px' : '90px',textAlign:'right'}} />
                                                 )
                                               ) : (
                                                 <span>{a.value !== null ? a.value : (a.unit || '—')}</span>

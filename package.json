@@ -8,7 +8,15 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "verify:staging": "node scripts/staging/verify-lifecycle.mjs",
+    "verify:staging:isolation": "node scripts/staging/verify-isolation.mjs",
+    "staging:build": "powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1",
+    "staging:inspect": "powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1 -Mode Inspect",
+    "staging:resume": "powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1 -Mode Resume",
+    "staging:seed": "powershell -ExecutionPolicy Bypass -File scripts/staging/build-staging.ps1 -Mode SeedUsers",
+    "staging:check-env": "node scripts/staging/check-env.mjs",
+    "staging:set-test-password": "node scripts/staging/set-test-password.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.1",
@@ -24,6 +32,7 @@
     "recharts": "^3.8.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@eslint/js": "^10.0.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

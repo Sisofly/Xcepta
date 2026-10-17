@@ -1,0 +1,3 @@
+# Exported production schema / data dumps stay local unless the repository is private.
+*.sql
+!.gitignore

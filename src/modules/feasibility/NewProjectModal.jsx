@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import colors from '../../theme/colors.js'
+import { PPP_START_DATE, PPP_START_DATE_LABEL, parseStartDate, derivePPPOperationsStart } from './pppTimeline.js'
 
 // ── Section titles ──
 const RE_SECTIONS        = ['Project Identity', 'Capital Structure', 'Revenue & Market', 'Costs (Optional)']
@@ -82,11 +83,13 @@ export default function NewProjectModal({ onClose }) {
     ppp_annual_payment: '',
     ppp_concession_years: 25,
     ppp_construction_months: 24,
+    ppp_construction_start_date: '',
     ppp_opex_pct: 5,
     ppp_interest_rate: 7,
     ppp_loan_tenor_years: 10,
     ppp_grace_period_years: 2,
     ppp_tax_rate: 20,
+    ppp_depreciable_share: 100,
     ppp_wacc: 10,
     target_dscr: 1.20,
   })
@@ -155,7 +158,8 @@ export default function NewProjectModal({ onClose }) {
           pfCapValid && Number(form.ppp_tpc) > 0,
           Number(form.ppp_annual_payment) > 0 &&
             Number(form.ppp_concession_years) > 0 &&
-            Number(form.ppp_construction_months) > 0,
+            Number(form.ppp_construction_months) > 0 &&
+            !!parseStartDate(form.ppp_construction_start_date),
           true,
         ]
       : [
@@ -244,12 +248,14 @@ export default function NewProjectModal({ onClose }) {
           { name: 'Equity %',                    category: 'ppp_structure', value: Number(form.ppp_equity_pct),          unit: 'percent' },
           { name: 'Concession Period',           category: 'ppp_structure', value: Number(form.ppp_concession_years),    unit: 'years' },
           { name: 'Construction Period',         category: 'ppp_structure', value: Number(form.ppp_construction_months), unit: 'months' },
+          { name: PPP_START_DATE,                category: 'ppp_structure', value: null, unit: form.ppp_construction_start_date },
           { name: 'Annual Availability Payment', category: 'ppp_revenue',   value: Number(form.ppp_annual_payment),      unit: 'JOD' },
           { name: 'OPEX % of Revenue',           category: 'ppp_revenue',   value: Number(form.ppp_opex_pct),            unit: 'percent' },
           { name: 'Interest Rate',               category: 'ppp_financing', value: Number(form.ppp_interest_rate),       unit: 'percent' },
           { name: 'Loan Tenor',                  category: 'ppp_financing', value: Number(form.ppp_loan_tenor_years),    unit: 'years' },
           { name: 'Grace Period',                category: 'ppp_financing', value: Number(form.ppp_grace_period_years),  unit: 'years' },
           { name: 'Tax Rate',                    category: 'ppp_financing', value: Number(form.ppp_tax_rate),            unit: 'percent' },
+          { name: 'Depreciable Share %',         category: 'ppp_financing', value: Number(form.ppp_depreciable_share),   unit: 'percent' },
           { name: 'WACC',                        category: 'ppp_financing', value: Number(form.ppp_wacc),                unit: 'percent' },
           { name: 'Target DSCR',                 category: 'ppp_financing', value: Number(form.target_dscr),             unit: 'ratio' },
         ] : []
@@ -722,6 +728,21 @@ export default function NewProjectModal({ onClose }) {
                 })()}
               </p>
             )}
+            <Field label={PPP_START_DATE_LABEL} required>
+              <input type="date" value={form.ppp_construction_start_date}
+                onChange={e => update('ppp_construction_start_date', e.target.value)} style={inputStyle} />
+            </Field>
+            <p style={{ fontSize: '0.72rem', color: colors.textMuted, marginTop: '-0.5rem', lineHeight: 1.5 }}>
+              {(() => {
+                const cod = derivePPPOperationsStart([
+                  { name: PPP_START_DATE, unit: form.ppp_construction_start_date },
+                  { name: 'Construction Period', value: Number(form.ppp_construction_months) },
+                ])
+                return cod
+                  ? `Operations start (derived from the construction period): ${cod.date}. Used by FP&A to place model years on the calendar and, for taxable projects, to set the tax-year boundaries.`
+                  : 'Places the model years on the calendar for FP&A monthly budgets. Operations start is derived from the construction period.'
+              })()}
+            </p>
             <Field label="OPEX % of Annual Payment">
               <input type="number" step="0.5" min="0" max="100" value={form.ppp_opex_pct}
                 onChange={e => update('ppp_opex_pct', e.target.value)}
@@ -788,11 +809,21 @@ export default function NewProjectModal({ onClose }) {
                 <input type="number" value={form.ppp_grace_period_years}
                   onChange={e => update('ppp_grace_period_years', e.target.value)} style={inputStyle} />
               </Field>
-              <Field label="Tax Rate (%)">
+              <Field label="Tax Rate — combined income tax + national contribution (%)">
                 <input type="number" step="0.5" value={form.ppp_tax_rate}
                   onChange={e => update('ppp_tax_rate', e.target.value)} style={inputStyle} />
               </Field>
             </div>
+            <Field label="Depreciable Share of Project Cost + IDC (%)">
+              <input type="number" step="1" min="0" max="100" value={form.ppp_depreciable_share}
+                onChange={e => update('ppp_depreciable_share', e.target.value)} style={inputStyle} />
+            </Field>
+            <p style={{ fontSize: '0.72rem', color: colors.textMuted, marginTop: '-0.5rem', lineHeight: 1.5 }}>
+              Tax assumptions (modelling assumptions, not confirmed Jordanian tax treatment): enter the combined tax burden for the
+              project's sector (e.g. 20% + 1% national contribution for general companies; 0% if exempt) and exclude land and other
+              non-depreciable costs from the depreciable share. Depreciation life, loss carry-forward and payment timing use
+              preliminary defaults that can be edited under Assumptions.
+            </p>
             <Field label="WACC — Weighted Average Cost of Capital (%)">
               <input type="number" step="0.1" value={form.ppp_wacc}
                 onChange={e => update('ppp_wacc', e.target.value)} style={inputStyle} />

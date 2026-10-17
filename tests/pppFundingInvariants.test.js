@@ -86,6 +86,11 @@ function rollForward(out) {
 }
 
 const sum = (rows, k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0)
+// P-028: this test verifies the 2.0.0 tax method (tax on EBITDA − interest, no
+// depreciation or loss relief), now selected explicitly with Tax Depreciation =
+// None. Its assertions and expected values are unchanged; the default P-028
+// method is covered independently in tests/pppTax.test.js.
+const LEGACY_TAX = { 'Tax Depreciation': 'None' }
 
 describe.each(Object.entries(FIXTURES))('PPP funding invariants — %s', (_label, fx) => {
   const out    = runPPPEngine(A(fx))
@@ -167,7 +172,8 @@ describe.each(Object.entries(FIXTURES))('PPP funding invariants — %s', (_label
   })
 
   test('I10: DSCR = CFADS / (interest + principal), CFADS = EBITDA − tax', () => {
-    ops.forEach(r => {
+    const opsL = runPPPEngine(A({ ...fx, ...LEGACY_TAX })).cash_flows.filter(r => r.phase === 'Operations')
+    opsL.forEach(r => {
       const cfads = r.ebitda - r.tax
       const ds    = r.interest + r.principal
       expect(Math.abs(r.tax - Math.max(0, (r.ebitda - r.interest) * tax))).toBeLessThanOrEqual(CURR_TOL)
@@ -312,7 +318,7 @@ describe('P-015C regression anchors', () => {
   test.each(Object.keys(baseline.cases))(
     'R1: construction rate 0 reproduces the frozen pre-IDC baseline exactly — %s', key => {
       const { inputs, output: frozen } = baseline.cases[key]
-      const out = runPPPEngine(A({ ...inputs, 'Construction Interest Rate': 0 }))
+      const out = runPPPEngine(A({ ...inputs, 'Construction Interest Rate': 0, ...LEGACY_TAX }))
       expect(out.idc_capitalized).toBe(0)
       ;['irr', 'npv', 'equity_multiple', 'tdc', 'debt_amount', 'equity_amount']
         .forEach(k => expect(out[k]).toBe(frozen[k]))
@@ -327,7 +333,7 @@ describe('P-015C regression anchors', () => {
 
   test('R2: DSCR-bound — IDC consumes capacity: COD debt and DSCR unchanged, equity rises by IDC', () => {
     const { inputs, output: frozen } = baseline.cases.MADABA_JUNE
-    const out = runPPPEngine(A(inputs))
+    const out = runPPPEngine(A({ ...inputs, ...LEGACY_TAX }))
     expect(out.debt_sizing.binding_constraint).toBe('dscr')
     expect(out.debt_amount).toBeCloseTo(frozen.debt_amount, 2)   // capacity is CFADS-determined
     expect(out.debt_sizing.min_dscr).toBe(1)
@@ -345,7 +351,7 @@ describe('P-015C regression anchors', () => {
   })
 
   test('R4: higher construction rate → more IDC, less principal, more equity (DSCR-bound)', () => {
-    const outs = [0, 4, 7, 10, 14].map(r => runPPPEngine(A({ ...BASE, 'Construction Interest Rate': r })))
+    const outs = [0, 4, 7, 10, 14].map(r => runPPPEngine(A({ ...BASE, 'Construction Interest Rate': r, ...LEGACY_TAX })))
     for (let i = 1; i < outs.length; i++) {
       expect(outs[i].idc_capitalized).toBeGreaterThan(outs[i - 1].idc_capitalized)
       expect(outs[i].debt_sizing.principal_drawn).toBeLessThan(outs[i - 1].debt_sizing.principal_drawn)

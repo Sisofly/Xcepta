@@ -1,0 +1,5 @@
+# Reference-data dumps and reports from staging runs stay local.
+reference_*.sql
+verify_report.txt
+inspect_report.txt
+s0_precheck*
