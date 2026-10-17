@@ -5,6 +5,8 @@
  * Implements exactly the query-builder subset used by the PPP result store:
  *   from(t).insert(rows).select()      from(t).update(v).eq(c, x)
  *   from(t).delete().eq(c, x)          from(t).select('*').eq().order().limit()
+ *   from(t).delete().eq(c, x).select() (returns the deleted rows, like Prefer: return=representation)
+ *   from(t).select().eq().maybeSingle() (one row or null; more than one → error, like PostgREST)
  * Results are { data, error } like supabase-js; errors carry the Postgres
  * SQLSTATE `code` and `message`. numeric columns are returned as JS numbers
  * and json/jsonb as parsed values, matching PostgREST's JSON responses.
@@ -33,7 +35,8 @@ const toParam = v => (v !== null && typeof v === 'object' && !(v instanceof Date
 
 class Query {
   constructor(pg, table) { this.pg = pg; this.table = table; this.op = 'select'; this.filters = []; this.returning = false }
-  select() { if (this.op === 'insert' || this.op === 'update') this.returning = true; return this }
+  select() { if (this.op === 'insert' || this.op === 'update' || this.op === 'delete') this.returning = true; return this }
+  maybeSingle() { this.maybe = true; return this }
   insert(v) { this.op = 'insert'; this.rows = Array.isArray(v) ? v : [v]; return this }
   update(v) { this.op = 'update'; this.values = v; return this }
   delete() { this.op = 'delete'; return this }
@@ -55,7 +58,7 @@ class Query {
       sql = 'update ' + ident(this.table) + ' set ' + Object.keys(this.values).map(c => ident(c) + ' = ' + p(this.values[c])).join(', ') +
         where + (this.returning ? ' returning *' : '')
     } else if (this.op === 'delete') {
-      sql = 'delete from ' + ident(this.table) + where
+      sql = 'delete from ' + ident(this.table) + where + (this.returning ? ' returning *' : '')
     } else {
       sql = 'select * from ' + ident(this.table) + where +
         (this.orderBy ? ' order by ' + ident(this.orderBy[0]) + (this.orderBy[1] ? ' asc' : ' desc') : '') +
@@ -63,7 +66,11 @@ class Query {
     }
     try {
       const res = await this.pg.query(sql, params)
-      return { data: this.op === 'delete' ? null : res.rows, error: null }
+      if (this.maybe) {
+        if (res.rows.length > 1) return { data: null, error: { code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned', details: null, hint: null } }
+        return { data: res.rows[0] || null, error: null }
+      }
+      return { data: this.op === 'delete' && !this.returning ? null : res.rows, error: null }
     } catch (e) {
       return { data: null, error: { code: e.code, message: e.message, details: e.detail || null, hint: e.hint || null } }
     }

@@ -13,6 +13,7 @@ import PPPMessages from '../modules/feasibility/PPPMessages'
 import PPPResultProvenance from '../modules/feasibility/PPPResultProvenance'
 import PPPTaxSchedule from '../modules/feasibility/PPPTaxSchedule'
 import { savePPPApproval, loadLatestModelOutput } from '../modules/feasibility/pppResultStore'
+import { removeBenchmarkOverride, deleteAssumption } from '../modules/feasibility/assumptionWrites'
 import { pppResultBasis, isUnsupportedProjectFinance, PPP_CASH_FLOW_HEADERS, pppCashFlowRows, pppTaxDisclosure } from '../modules/feasibility/pppReporting'
 import { PPP_START_DATE, PPP_START_DATE_LABEL, pppStartDateOf, derivePPPOperationsStart } from '../modules/feasibility/pppTimeline'
 import colors from '../theme/colors.js'
@@ -364,9 +365,9 @@ export default function FeasibilityProject() {
   }
 
   async function handleRemoveOverride(key) {
-    const { data: existing } = await supabase.from('assumptions').select('assumption_id')
-      .eq('project_id', projectId).eq('category', 'benchmark_override').eq('name', key).maybeSingle()
-    if (existing) await supabase.from('assumptions').delete().eq('assumption_id', existing.assumption_id)
+    // Local state changes only once the database confirms the override is gone.
+    const result = await removeBenchmarkOverride(supabase, projectId, key)
+    if (!result.ok) { alert('Remove override failed: ' + result.message); return }
     setOverrides(prev => { const n = { ...prev }; delete n[key]; return n })
     if (version && version.status === 'approved') setAssumptionsModified(true)
   }
@@ -515,7 +516,8 @@ export default function FeasibilityProject() {
   async function handleResetScenarioDriver(sc, driverKey) {
     const existing = sc.drivers && sc.drivers[driverKey]
     if (!existing) return
-    await supabase.from('assumptions').delete().eq('assumption_id', existing.assumption_id)
+    const result = await deleteAssumption(supabase, existing.assumption_id)
+    if (!result.ok) alert('Reset failed: ' + result.message)
     await loadScenarios()
   }
 
